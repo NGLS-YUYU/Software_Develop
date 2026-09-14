@@ -1,0 +1,92 @@
+# ===========================================================================
+# UAMS 高校教务教学管理系统
+# 依据: CLAUDE.md §23 安全规则 / §27 禁止事项
+#       docs/OPENGAUSS_SETUP.docx §9.2
+# ===========================================================================
+
+# --- 敏感配置：绝对不能提交 ---------------------------------------------
+# CLAUDE.md §23: .env 中保存 DATABASE_URL / JWT_SECRET 等敏感配置
+# CLAUDE.md §27: 禁止将数据库密码提交到 Git
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib60/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+env/
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node / 前端 ----------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- 数据库与数据 ---------------------------------------------------------
+# 数据库数据目录不进版本库（见 OPENGAUSS_SETUP.docx §4.2，数据在 ~/uams-infra）
+*.sql.gz
+*.dump
+backup/
+data/
+
+# --- 日志 -----------------------------------------------------------------
+# CLAUDE.md §24: 日志不可包含密码、令牌等敏感信息
+logs/
+*.log
+
+# --- Excel 导入导出临时文件（CLAUDE.md §22）-------------------------------
+uploads/
+exports/
+~$*.xlsx
+~$*.docx
+
+# --- IDE / 编辑器 ---------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- 操作系统 -------------------------------------------------------------
+.DS_Store
+Thumbs.db
