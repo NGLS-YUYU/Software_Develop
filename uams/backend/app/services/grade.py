@@ -22,6 +22,7 @@ from app.models.grade import Grade, GradeStatus
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
+from app.services.score_service import ScoreService
 
 
 class GradeService:
@@ -136,8 +137,9 @@ class GradeService:
                 g.final_theory_score = item["final_theory_score"]
             if "final_practice_score" in item:
                 g.final_practice_score = item["final_practice_score"]
-            # 总评由后端算，忽略前端可能传来的 total_score
-            g.compute(course.regular_weight, course.final_weight)
+            # 总评由统一成绩计算服务计算（TASK-003）；忽略前端可能传来的 total_score。
+            # 草稿保存允许成绩不完整：此时总评置空，提交时再拦截。
+            ScoreService.compute_for_draft(course, g)
             g.status = GradeStatus.DRAFT
         self.db.commit()
         return self.list_by_class(teaching_class_id)

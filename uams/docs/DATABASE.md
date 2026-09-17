@@ -646,12 +646,22 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（对学生可�
 
 > ⚠️ 以下为 V0.1 实现的基础规则。GPA 细化、排名等属 V0.2 待设计内容（见本节开头说明）。
 
-总评由后端按课程权重计算：
+总评由统一成绩计算服务 `services/score_service.py` 计算（TASK-003），按课程的 `assessment_type` 读取权重规则 `WEIGHT_RULES`，不硬编码比例：
 
 ```
-total_score = regular_score × courses.regular_weight
-            + final_score   × courses.final_weight
+WEIGHT_RULES:
+  "32"  → { regular: 0.2, mid: None, final: 0.8 }
+  "48"  → { regular: 0.2, mid: 0.3,  final: 0.5 }
+  "64"  → { regular: 0.2, mid: 0.3,  final: 0.5 }
+
+total_score = regular_score × w.regular
+            + mid_score    × w.mid      （仅 48/64 课时）
+            + final_score  × w.final
 ```
+
+期中/期末成绩若提供「理论 + 实践」拆分（`mid_theory_score`/`mid_practice_score`、`final_theory_score`/`final_practice_score`），先取平均再参与计算；二者必须同时存在，只填一个则报错。
+
+调用链：`API → GradeService → ScoreService`（原 `Grade.compute()` 已移除，模型不参与计算）。
 
 绩点换算（4.0 制，可配置）：
 

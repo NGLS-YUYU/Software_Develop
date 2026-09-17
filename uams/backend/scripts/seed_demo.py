@@ -30,6 +30,7 @@ from app.models.selection import CourseSelection, SelectionPeriod, SelectionStat
 from app.models.teaching import Schedule, TeachingClass, TeachingTask  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.services.person import StudentService, TeacherService  # noqa: E402
+from app.services.score_service import ScoreService  # noqa: E402
 
 random.seed(20260915)
 
@@ -54,6 +55,13 @@ COURSES = [
 ]
 
 PREREQS = [("CS201", "CS101"), ("CS301", "CS201"), ("CS302", "CS201"), ("CS203", "CS202")]
+
+
+def assessment_type_for(total_hours: int) -> str:
+    """按总学时推导考核方式（TASK-003）：32h 两段式，其余三段式。"""
+    if total_hours <= 32:
+        return "32"
+    return "48" if total_hours <= 48 else "64"
 
 
 def get_or_create(db: Session, model, defaults: dict | None = None, **kw):
@@ -157,9 +165,12 @@ def main() -> None:
                 db, Course,
                 {"name": name, "college_id": college.id, "course_type": ctype,
                  "credits": Decimal(str(cr)), "total_hours": th,
-                 "theory_hours": theory, "practice_hours": prac},
+                 "theory_hours": theory, "practice_hours": prac,
+                 "assessment_type": assessment_type_for(th)},
                 code=code,
             )
+            if c.assessment_type is None:
+                c.assessment_type = assessment_type_for(th)  # 回填历史课程
             courses[code] = c
         db.commit()
 
@@ -293,16 +304,18 @@ def main() -> None:
                 # 分数同样确定性生成，保证重复执行结果一致
                 seed_n = (sel.student_id * 7 + tc.id * 13) % 100
                 reg = Decimal(str(70 + seed_n % 29))
+                mid = Decimal(str(60 + seed_n % 40))
                 fin = Decimal(str(55 + seed_n % 45))
                 g = Grade(
                     student_id=sel.student_id, teaching_class_id=tc.id,
                     course_id=tc.course_id, semester=SEMESTER,
-                    credits=course.credits, regular_score=reg, final_score=fin,
+                    credits=course.credits, regular_score=reg,
+                    mid_score=mid, final_score=fin,
                     status=GradeStatus.APPROVED,
                     submitted_by=tc.teacher_id, submitted_at=now,
                     approved_by=admin.id, approved_at=now,
                 )
-                g.compute(course.regular_weight, course.final_weight)
+                ScoreService.compute(course, g)
                 db.add(g)
                 n_grade += 1
         db.commit()

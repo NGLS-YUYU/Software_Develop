@@ -176,18 +176,3 @@ class Grade(Base, IdMixin, TimestampMixin):
     student: Mapped["Student"] = relationship()
     teaching_class: Mapped["TeachingClass"] = relationship()
     course: Mapped["Course"] = relationship()
-
-    def compute(self, regular_weight: Decimal, final_weight: Decimal) -> None:
-        """按课程权重计算总评、绩点与及格标记（CLAUDE.md §21）。"""
-        if self.regular_score is None or self.final_score is None:
-            self.total_score = None
-            self.grade_point = None
-            self.is_passed = None
-            return
-        total = (
-            Decimal(str(self.regular_score)) * Decimal(str(regular_weight))
-            + Decimal(str(self.final_score)) * Decimal(str(final_weight))
-        ).quantize(Decimal("0.01"))
-        self.total_score = total
-        self.grade_point = score_to_point(total)
-        self.is_passed = total >= PASS_SCORE

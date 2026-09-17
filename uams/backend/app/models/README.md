@@ -15,7 +15,7 @@
 | `course.py` | courses / course_prerequisites / curriculum_plans / curriculum_courses |
 | `teaching.py` | teaching_tasks / teaching_classes / schedules |
 | `selection.py` | course_selections / selection_periods |
-| `grade.py` | grades（含 `Grade.compute()` 总评与绩点计算） |
+| `grade.py` | grades（含绩点换算函数 `score_to_point`；总评计算在 Service 层） |
 | `exam.py` | exams / exam_rooms / exam_students |
 | `misc.py` | evaluation_tasks / evaluations / announcements / operation_logs |
 | `__init__.py` | **集中导入全部模型** |
@@ -35,7 +35,7 @@ alembic/env.py           →  models/__init__.py（发现全部表以生成迁�
 4. 状态字段用 `VARCHAR(20)` + `CheckConstraint`，取值用同文件中的常量类
 5. 成绩、学分、绩点**必须用 `Numeric`**（DECIMAL），禁止 FLOAT/DOUBLE
 6. 表参数统一 `mysql_engine=InnoDB` / `mysql_charset=utf8mb4`
-7. 模型本身不写业务逻辑；`Grade.compute()` 属少量领域方法，可接受
+7. 模型本身不写业务逻辑；成绩总评计算集中在 `services/score_service.py`（TASK-003）
 8. 修改表结构后必须生成 migration，并同步更新 [docs/DATABASE.md](../../docs/DATABASE.md)
 
 ## 当前状态

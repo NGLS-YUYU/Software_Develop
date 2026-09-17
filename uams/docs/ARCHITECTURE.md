@@ -60,7 +60,7 @@ backend/
 │   ├── models/               SQLAlchemy 模型（10 个模块文件）
 │   ├── schemas/              Pydantic 请求/响应模型（6 个模块文件）
 │   ├── repositories/         BaseRepository + UserRepository
-│   ├── services/             BaseCrudService + 8 个业务 Service
+│   ├── services/             BaseCrudService + 8 个业务 Service + ScoreService（成绩计算）
 │   ├── api/
 │   │   ├── deps.py           get_current_user / RequireRoles / RequirePermissions
 │   │   └── v1/               11 个路由模块 + __init__.py 汇总
@@ -182,7 +182,7 @@ MainLayout 依据当前路由子树动态生成侧边菜单
 | 选课防超卖 | `services/selection.py` | `SELECT ... FOR UPDATE` 行级锁 + `uk_selection` 唯一约束兜底 |
 | 排课冲突检测 | `services/teaching.py` → `ConflictChecker` | 教室/教师/学生三类冲突，含单双周相容判定 |
 | 先修课环路检测 | `services/course.py` | 图遍历，`CHECK` 只能挡直接自引用 |
-| 总评与绩点 | `models/grade.py` → `Grade.compute()` | 后端按课程权重计算，不接受前端传入 |
+| 总评与绩点 | `services/score_service.py` → `ScoreService` | 按 `course.assessment_type` 读取 `WEIGHT_RULES`，理论+实践先平均，不接受前端传入 |
 | 学分与 GPA 汇总 | `services/grade.py` → `_refresh_student_credits()` | 审核通过后重算，仅统计及格成绩 |
 | 登录失败锁定 | `services/auth.py` | 连续失败达阈值后锁定账号 |
 | 二级冗余同步 | `services/person.py` 等 | 学生 → 班级 → 专业 → 学院 写入时保持一致 |
