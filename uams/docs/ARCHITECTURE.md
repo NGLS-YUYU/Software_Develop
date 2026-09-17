@@ -60,7 +60,7 @@ backend/
 │   ├── models/               SQLAlchemy 模型（10 个模块文件）
 │   ├── schemas/              Pydantic 请求/响应模型（6 个模块文件）
 │   ├── repositories/         BaseRepository + UserRepository
-│   ├── services/             BaseCrudService + 8 个业务 Service + ScoreService（成绩计算）
+│   ├── services/             BaseCrudService + 8 个业务 Service + ScoreService/GpaService/RankingService
 │   ├── api/
 │   │   ├── deps.py           get_current_user / RequireRoles / RequirePermissions
 │   │   └── v1/               11 个路由模块 + __init__.py 汇总
@@ -184,6 +184,7 @@ MainLayout 依据当前路由子树动态生成侧边菜单
 | 先修课环路检测 | `services/course.py` | 图遍历，`CHECK` 只能挡直接自引用 |
 | 总评与绩点 | `services/score_service.py` → `ScoreService` | 按 `course.assessment_type` 读取 `WEIGHT_RULES`，理论+实践先平均，不接受前端传入 |
 | 学分与 GPA 汇总 | `services/grade.py` → `_refresh_student_credits()` | 审核通过后重算，仅统计及格成绩 |
+| GPA 与排名 | `services/gpa_service.py` / `ranking_service.py` | GPA 实时计算不落库；班级/专业排名按 GPA 降序（TASK-004） |
 | 登录失败锁定 | `services/auth.py` | 连续失败达阈值后锁定账号 |
 | 二级冗余同步 | `services/person.py` 等 | 学生 → 班级 → 专业 → 学院 写入时保持一致 |
 
