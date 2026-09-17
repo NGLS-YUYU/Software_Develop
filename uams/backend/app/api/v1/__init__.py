@@ -7,6 +7,7 @@ from app.api.v1 import (
     course,
     exam,
     grade,
+    imports,
     misc,
     organization,
     person,
@@ -28,6 +29,7 @@ for _m in (
     schedule,
     grade,
     exam,
+    imports,
     misc,
 ):
     api_router.include_router(_m.router)

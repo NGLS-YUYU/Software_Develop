@@ -368,11 +368,46 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 ---
 
-## 15. 未实现接口（V0.2 待开发）
+## 15. 批量导入 `/api/v1/imports`
+
+仅教务管理员（`ACADEMIC_ADMIN`）可调用；`TEACHER` / `STUDENT` 一律 403。权限复用现有 `student:write` / `course:write` / `grade:write`。文件仅支持 `.xlsx`（openpyxl），单文件上限 10MB。
+
+| 方法 | 路径 | 说明 | 权限 |
+|---|---|---|---|
+| GET | `/imports/templates/students` | 下载学生导入模板（含示例行） | `student:write` |
+| GET | `/imports/templates/courses` | 下载课程导入模板（含示例行） | `course:write` |
+| GET | `/imports/templates/grades` | 下载成绩导入模板（含示例行） | `grade:write` |
+| POST | `/imports/students` | 批量导入学生 | `student:write` |
+| POST | `/imports/courses` | 批量导入课程 | `course:write` |
+| POST | `/imports/grades` | 批量导入成绩 | `grade:write` |
+
+**模板字段（首行必须与之一致）**
+
+| 模板 | 字段 |
+|---|---|
+| 学生 | `student_no`、`name`、`username`、`college`、`major`、`class_name` |
+| 课程 | `course_code`、`course_name`、`college`、`credits`、`total_hours`、`course_type`、`assessment_type` |
+| 成绩 | `student_no`、`teaching_class_code`、`regular_score`、`mid_score`、`final_score`、`mid_theory_score`、`mid_practice_score`、`final_theory_score`、`final_practice_score` |
+
+**导入结果**（无论成功与否均返回 200）
+
+```json
+{"total": 100, "success": 96, "failed": 4,
+ "errors": [{"row": 3, "field": "student_no", "message": "学号已存在"}]}
+```
+
+- 校验规则（每行取首个错误）：字段非空 → 学院/专业/行政班存在且层级匹配 → 学号/登录名/课程编号不重复（含文件内重复）→ 课程类型/考核方式合法 → 学分与学时范围合法 → 成绩 0-100 且理论/实践成对填写。
+- 学生导入复用 `StudentService.create_student`（`username` 缺省取学号；`enrollment_year` 取行政班 `grade_year`），并在一个事务内创建 User + Student + 角色绑定。
+- 课程导入复用 `CourseService.create`，**不会**自动创建学院。
+- 成绩导入复用 `GradeService.import_scores` → `ScoreService.compute_for_draft` 统一计算，**一律保存为 DRAFT**；`SUBMITTED` / `APPROVED` 不可覆盖，`DRAFT` / `REJECTED` 可更新，未录入（NOT_ENTERED）可新建。**不写 GPA / 排名**，不自动创建教学班/选课记录。
+
+---
+
+## 16. 未实现接口（V0.2 待开发）
 
 | 接口 | 说明 |
 |---|---|
-| Excel 导入导出 | 学生/教师/课程/成绩的批量导入与导出（CLAUDE.md §22）—— **V0.2 planned** |
+| Excel 导出 | 学生名单/成绩/课程/选课结果的批量导出（CLAUDE.md §22）—— **V0.2 planned**（导入已于 TASK-010 完成） |
 | 教学资料 | 教师上传课件与资料（PRD §9.7）—— **V0.2+ planned** |
 | 调停课申请 | 调课/停课/补课申请与审核（PRD §9.8）—— **V0.2+ planned** |
 | 学生端培养方案查询 | PRD §8.7 学生查看培养方案 —— **V0.2 planned** |
@@ -380,7 +415,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 ---
 
-## 16. 权限码清单（40 项）
+## 17. 权限码清单（40 项）
 
 | 模块 | 权限码 |
 |---|---|

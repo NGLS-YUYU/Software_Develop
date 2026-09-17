@@ -49,12 +49,16 @@ class StudentService(BaseCrudService[Student]):
 
     def create_student(self, data: dict[str, Any]) -> Student:
         no = data["student_no"]
+        # 登录名默认取学号；Excel 批量导入可显式指定 username（TASK-010）
+        username = data.get("username") or no
         if self.db.execute(
             select(Student).where(Student.student_no == no)
         ).scalar_one_or_none():
             raise Conflict(f"学号已存在：{no}")
-        if self.db.execute(select(User).where(User.username == no)).scalar_one_or_none():
-            raise Conflict(f"登录名已被占用：{no}")
+        if self.db.execute(
+            select(User).where(User.username == username)
+        ).scalar_one_or_none():
+            raise Conflict(f"登录名已被占用：{username}")
 
         klass = self.db.get(Class, data["class_id"])
         if klass is None:
@@ -64,7 +68,7 @@ class StudentService(BaseCrudService[Student]):
             raise NotFound("班级未关联专业，数据异常")
 
         user = User(
-            username=no,
+            username=username,
             # 默认密码为学号本身，首次登录应提示修改
             password_hash=hash_password(data.get("password") or no),
             real_name=data["real_name"],

@@ -197,6 +197,47 @@ class GradeService:
         self.db.commit()
         return self.list_by_class(teaching_class_id)
 
+    def import_scores(self, rows: list[dict]) -> int:
+        """教务 Excel 批量导入成绩（TASK-010）。
+
+        复用 ScoreService 统一计算，禁止自行计算权重/绩点；一律保存为 DRAFT，
+        不写 GPA / 排名。rows 中的每一行已由 ImportService 完成业务校验：
+        ``{student_id, teaching_class_id, scores: {field: Decimal}}``。
+        """
+        for row in rows:
+            tc = self.db.get(TeachingClass, row["teaching_class_id"])
+            if tc is None:
+                raise NotFound("教学班不存在")
+            course = self.db.get(Course, tc.course_id)
+
+            g = self.db.execute(
+                select(Grade).where(
+                    Grade.student_id == row["student_id"],
+                    Grade.teaching_class_id == row["teaching_class_id"],
+                )
+            ).scalar_one_or_none()
+            if g is None:
+                g = Grade(
+                    student_id=row["student_id"],
+                    teaching_class_id=tc.id,
+                    course_id=tc.course_id,
+                    semester=tc.semester,
+                    # 学分快照与手工录入一致（DATABASE.md §9.1）
+                    credits=course.credits if course else Decimal("0"),
+                )
+                self.db.add(g)
+            elif g.status in (GradeStatus.SUBMITTED, GradeStatus.APPROVED):
+                # 防御性校验：正常情况下 ImportService 已拦截
+                raise Conflict("成绩已提交或已审核，不能通过导入覆盖")
+
+            for field, value in row["scores"].items():
+                setattr(g, field, value)
+            # 总评由统一成绩计算服务计算（TASK-003）；草稿允许不完整。
+            ScoreService.compute_for_draft(course, g)
+            g.status = GradeStatus.DRAFT
+        self.db.commit()
+        return len(rows)
+
     def submit(self, teacher: Teacher, teaching_class_id: int) -> int:
         """提交整个教学班的成绩。"""
         self.ensure_teacher_owns(teacher, teaching_class_id)
