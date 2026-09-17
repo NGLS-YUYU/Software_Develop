@@ -22,6 +22,8 @@ from app.models.grade import Grade, GradeStatus
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
+from app.services.gpa_service import GpaService, NoGradesError
+from app.services.ranking_service import RankingService
 from app.services.score_service import ScoreService
 
 
@@ -299,6 +301,45 @@ class GradeService:
         if semester:
             stmt = stmt.where(Grade.semester == semester)
         return list(self.db.execute(stmt.order_by(Grade.semester.desc())).scalars())
+
+    def student_overview(self, student: Student) -> dict:
+        """学生成绩总览（TASK-007）：APPROVED 成绩 + 实时 GPA + 班级/专业排名。
+
+        GPA 与排名均复用 TASK-004 的 GpaService / RankingService 实时计算，不落库；
+        学生无任何有效成绩时，gpa / 排名返回 None。
+        """
+        grades = self.list_by_student(student.id)
+
+        gpa = None
+        try:
+            gpa = GpaService(self.db).gpa_of(student.id)
+        except NoGradesError:
+            pass
+
+        ranking = RankingService(self.db)
+        class_rank = next(
+            (
+                r.ranking
+                for r in ranking.class_ranking(student.class_id)
+                if r.student_id == student.id
+            ),
+            None,
+        )
+        major_rank = next(
+            (
+                r.ranking
+                for r in ranking.major_ranking(student.major_id)
+                if r.student_id == student.id
+            ),
+            None,
+        )
+
+        return {
+            "grades": grades,
+            "gpa": gpa,
+            "class_rank": class_rank,
+            "major_rank": major_rank,
+        }
 
     def pending_approval(self, semester: str | None = None) -> list[Grade]:
         stmt = self.base_stmt().where(Grade.status == GradeStatus.SUBMITTED)

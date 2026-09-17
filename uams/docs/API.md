@@ -1,7 +1,7 @@
 # 后端 API 文档
 
 > 依据当前 FastAPI 路由实际代码整理（TASK-DOC-001，2026-09-17）。
-> **72 个路径 / 110 个操作**，与代码一一对应，未列出的接口均不存在。
+> **73 个路径 / 111 个操作**，与代码一一对应，未列出的接口均不存在。
 
 ---
 
@@ -260,6 +260,7 @@ POST /api/v1/auth/login
 |---|---|---|---|
 | GET | `/grades/mine` | 我的成绩（**仅 APPROVED**） | 登录（学生） |
 | GET | `/grades/mine/summary` | 我的学分与绩点统计 | 登录（学生） |
+| GET | `/grades/my` | 我的成绩（含实时 GPA 与班级/专业排名，TASK-007） | 登录（学生） |
 | GET | `/grades/teaching-classes/{class_id}` | 教学班成绩单（教师仅限本人教学班） | `grade:read` |
 | GET | `/grades/teaching-classes/{class_id}/students` | 课程学生名单（含成绩录入状态：未录入/草稿/待审核/已通过/已驳回，教师仅限本人） | `grade:read` |
 | POST | `/grades/teaching-classes/{class_id}/init` | 生成成绩单（按已选学生，幂等） | `grade:write` |
@@ -283,6 +284,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 - `APPROVED` 后教师不可直接修改
 - 审核通过后自动重算学生 `total_credits` 与 `gpa`
 - 待审核列表（`GET /grades/pending`）同时返回 `teaching_class_code`（教学班）与 `teacher_name`（教师），供教务审核时核对（TASK-006）
+- `GET /grades/my` 返回 `{ items, gpa, class_rank, major_rank }`：`items` 为 `GradeOut`（含 `assessment_type`），`gpa` 与排名由 GpaService / RankingService 实时计算，**不落库**；无有效成绩时三者返回 `null`（TASK-007）
 
 ---
 

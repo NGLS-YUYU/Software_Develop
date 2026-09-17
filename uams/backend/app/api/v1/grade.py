@@ -46,6 +46,7 @@ class GradeOut(BaseModel):
     course_id: int
     course_code: str | None = None
     course_name: str | None = None
+    assessment_type: str | None = None
     semester: str
     regular_score: Decimal | None = None
     mid_score: Decimal | None = None
@@ -81,6 +82,15 @@ class RosterStudent(BaseModel):
     entry_status: str  # NOT_ENTERED / DRAFT / SUBMITTED / APPROVED / REJECTED
 
 
+class StudentGradeOverview(BaseModel):
+    """学生成绩查询结果（TASK-007）：成绩明细 + 实时 GPA + 班级/专业排名。"""
+
+    items: list[GradeOut]
+    gpa: float | None = None
+    class_rank: int | None = None
+    major_rank: int | None = None
+
+
 def _out(g) -> GradeOut:
     d = GradeOut.model_validate(g)
     if g.student:
@@ -88,6 +98,7 @@ def _out(g) -> GradeOut:
         d.student_name = g.student.user.real_name if g.student.user else None
     if g.course:
         d.course_code, d.course_name = g.course.code, g.course.name
+        d.assessment_type = g.course.assessment_type
     if g.teaching_class:
         d.teaching_class_code = g.teaching_class.code
         t = g.teaching_class.teacher
@@ -129,6 +140,25 @@ def my_grades(
 def my_summary(db: Session = Depends(get_db), current: User = Depends(get_current_user)):
     stu = _me_student(db, current)
     return GradeService(db).student_summary(stu.id)
+
+
+@router.get("/my", response_model=StudentGradeOverview, summary="我的成绩（含 GPA 与排名）")
+def my_grades_overview(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """学生查看自己的已审核成绩，并附带实时 GPA 与班级/专业排名（TASK-007）。
+
+    学生身份取自 token，不接受任何 student_id/user_id 参数，天然杜绝越权。
+    """
+    stu = _me_student(db, current)
+    data = GradeService(db).student_overview(stu)
+    return StudentGradeOverview(
+        items=[_out(g) for g in data["grades"]],
+        gpa=float(data["gpa"]) if data["gpa"] is not None else None,
+        class_rank=data["class_rank"],
+        major_rank=data["major_rank"],
+    )
 
 
 # --- 教师 ---
