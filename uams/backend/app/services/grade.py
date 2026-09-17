@@ -126,8 +126,16 @@ class GradeService:
                 g.regular_score = item["regular_score"]
             if "mid_score" in item:
                 g.mid_score = item["mid_score"]
+            if "mid_theory_score" in item:
+                g.mid_theory_score = item["mid_theory_score"]
+            if "mid_practice_score" in item:
+                g.mid_practice_score = item["mid_practice_score"]
             if "final_score" in item:
                 g.final_score = item["final_score"]
+            if "final_theory_score" in item:
+                g.final_theory_score = item["final_theory_score"]
+            if "final_practice_score" in item:
+                g.final_practice_score = item["final_practice_score"]
             # 总评由后端算，忽略前端可能传来的 total_score
             g.compute(course.regular_weight, course.final_weight)
             g.status = GradeStatus.DRAFT

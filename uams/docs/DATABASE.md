@@ -49,8 +49,9 @@
 | `bc0a832224a4` | `20260915_0114_bc0a832224a4_create_rbac_tables.py` | RBAC 五张表 |
 | `7d34560e8aba` | `20260915_0128_7d34560e8aba_create_business_tables.py` | 其余 23 张业务表 |
 | `ce5a2a2a3f11` | `20260917_1745_ce5a2a2a3f11_add_assessment_type_and_mid_score.py` | 课程 `assessment_type`、成绩 `mid_score`（TASK-002） |
+| `d81e869930fb` | `20260917_1757_d81e869930fb_add_theory_and_practice_score_columns.py` | 成绩 `mid_theory_score`/`mid_practice_score`/`final_theory_score`/`final_practice_score`（TASK-002 补充） |
 
-> 当前 head 为 `ce5a2a2a3f11`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
+> 当前 head 为 `d81e869930fb`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
 
 本文档是 `CLAUDE.md §5/§6` 与 `PRD §12` 的字段级落地。表结构变更必须先改本文档，再写 Alembic migration。
 
@@ -593,7 +594,11 @@ KEY idx_selection_period (semester, status)
 | semester | VARCHAR(16) | NOT NULL | 冗余 |
 | regular_score | DECIMAL(5,2) | NULL | 平时成绩 |
 | mid_score | DECIMAL(5,2) | NULL | 期中成绩（TASK-002） |
+| mid_theory_score | DECIMAL(5,2) | NULL | 期中理论成绩（TASK-002 补充） |
+| mid_practice_score | DECIMAL(5,2) | NULL | 期中实践成绩（TASK-002 补充） |
 | final_score | DECIMAL(5,2) | NULL | 期末成绩 |
+| final_theory_score | DECIMAL(5,2) | NULL | 期末理论成绩（TASK-002 补充） |
+| final_practice_score | DECIMAL(5,2) | NULL | 期末实践成绩（TASK-002 补充） |
 | total_score | DECIMAL(5,2) | NULL | 总评，后端按课程权重计算 |
 | grade_point | DECIMAL(3,2) | NULL | 绩点 |
 | credits | DECIMAL(4,1) | NOT NULL | 学分快照 |
@@ -611,7 +616,11 @@ CONSTRAINT ck_grades_status CHECK (status IN
   ('DRAFT','SUBMITTED','APPROVED','REJECTED'))
 CONSTRAINT ck_grades_regular CHECK (regular_score IS NULL OR regular_score BETWEEN 0 AND 100)
 CONSTRAINT ck_grades_mid     CHECK (mid_score     IS NULL OR mid_score     BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_mid_theory     CHECK (mid_theory_score     IS NULL OR mid_theory_score     BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_mid_practice   CHECK (mid_practice_score   IS NULL OR mid_practice_score   BETWEEN 0 AND 100)
 CONSTRAINT ck_grades_final   CHECK (final_score   IS NULL OR final_score   BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_final_theory   CHECK (final_theory_score   IS NULL OR final_theory_score   BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_final_practice CHECK (final_practice_score IS NULL OR final_practice_score BETWEEN 0 AND 100)
 CONSTRAINT ck_grades_total   CHECK (total_score   IS NULL OR total_score   BETWEEN 0 AND 100)
 KEY idx_grades_student_sem (student_id, semester)
 KEY idx_grades_tc_status (teaching_class_id, status)

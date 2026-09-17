@@ -22,7 +22,11 @@ class GradeItem(BaseModel):
     grade_id: int
     regular_score: Decimal | None = Field(None, ge=0, le=100)
     mid_score: Decimal | None = Field(None, ge=0, le=100)
+    mid_theory_score: Decimal | None = Field(None, ge=0, le=100)
+    mid_practice_score: Decimal | None = Field(None, ge=0, le=100)
     final_score: Decimal | None = Field(None, ge=0, le=100)
+    final_theory_score: Decimal | None = Field(None, ge=0, le=100)
+    final_practice_score: Decimal | None = Field(None, ge=0, le=100)
 
 
 class GradeBatchSave(BaseModel):
@@ -43,7 +47,11 @@ class GradeOut(BaseModel):
     semester: str
     regular_score: Decimal | None = None
     mid_score: Decimal | None = None
+    mid_theory_score: Decimal | None = None
+    mid_practice_score: Decimal | None = None
     final_score: Decimal | None = None
+    final_theory_score: Decimal | None = None
+    final_practice_score: Decimal | None = None
     total_score: Decimal | None = None
     grade_point: Decimal | None = None
     credits: Decimal
