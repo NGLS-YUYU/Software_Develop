@@ -33,7 +33,9 @@ class GradeService:
         return select(Grade).options(
             selectinload(Grade.course),
             selectinload(Grade.student).selectinload(Student.user),
-            selectinload(Grade.teaching_class),
+            selectinload(Grade.teaching_class)
+            .selectinload(TeachingClass.teacher)
+            .selectinload(Teacher.user),
         )
 
     def get_or_404(self, grade_id: int) -> Grade:

@@ -41,6 +41,8 @@ class GradeOut(BaseModel):
     student_no: str | None = None
     student_name: str | None = None
     teaching_class_id: int
+    teaching_class_code: str | None = None
+    teacher_name: str | None = None
     course_id: int
     course_code: str | None = None
     course_name: str | None = None
@@ -86,6 +88,11 @@ def _out(g) -> GradeOut:
         d.student_name = g.student.user.real_name if g.student.user else None
     if g.course:
         d.course_code, d.course_name = g.course.code, g.course.name
+    if g.teaching_class:
+        d.teaching_class_code = g.teaching_class.code
+        t = g.teaching_class.teacher
+        if t and t.user:
+            d.teacher_name = t.user.real_name
     return d
 
 

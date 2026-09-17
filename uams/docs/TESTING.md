@@ -28,10 +28,11 @@ backend/tests/
 ├── test_models.py        # 模型字段完整性与约束（13 个用例）
 ├── test_score_service.py # 统一成绩计算服务（15 个用例）
 ├── test_gpa_ranking.py   # GPA 换算与班级/专业排名（16 个用例）
-└── test_teacher_grade.py # 教师成绩录入与状态机（15 个用例）
+├── test_teacher_grade.py # 教师成绩录入与状态机（15 个用例）
+└── test_grade_review.py  # 教务处成绩审核（18 个用例）
 ```
 
-**合计 89 个用例，全部通过。**
+**合计 107 个用例，全部通过。**
 
 | 文件 | 覆盖内容 |
 |---|---|
@@ -42,6 +43,7 @@ backend/tests/
 | `test_score_service.py` | 32/48/64 课时总评、理论+实践合并、100/0 分边界、缺失/非法考核方式/越界异常、草稿容错（TASK-003） |
 | `test_gpa_ranking.py` | 百分制→绩点、单课程贡献、学分加权 GPA、班级/专业排名、无成绩/无学分/零学分/空成绩异常、Grade 表未新增 GPA 字段（TASK-004） |
 | `test_teacher_grade.py` | 教师我的课程、跨教师/跨学生越权防护、学生名单（含成绩状态）、草稿保存、非法成绩拒绝、32/48 课时与理论+实践录入、完整/不完整提交、SUBMITTED/APPROVED/REJECTED 状态流转（TASK-005） |
+| `test_grade_review.py` | 待审核列表权限、审核通过/驳回、非法状态流转（APPROVED/DRAFT/REJECTED/NOT_ENTERED 禁止审核）、审核后教师联动、教师/学生越权防护、审核权限隔离（TASK-006） |
 
 ### 2.2 测试不足的部分 ⚠️
 

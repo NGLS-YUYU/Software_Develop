@@ -282,6 +282,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 - 前端传入的 `total_score` 被忽略
 - `APPROVED` 后教师不可直接修改
 - 审核通过后自动重算学生 `total_credits` 与 `gpa`
+- 待审核列表（`GET /grades/pending`）同时返回 `teaching_class_code`（教学班）与 `teacher_name`（教师），供教务审核时核对（TASK-006）
 
 ---
 
