@@ -5,11 +5,51 @@
 | 项目 | 值 |
 |---|---|
 | 数据库 | MySQL 8.4 LTS |
+| 数据库版本 | 8.4.11（本机原生安装，非容器） |
+| 连接地址 | `127.0.0.1:3306`（仅回环监听） |
+| 应用用户 | `uams_app`（仅授权 `uams.*` / `uams_test.*`） |
 | 存储引擎 | InnoDB |
 | 字符集 | utf8mb4 / utf8mb4_0900_ai_ci |
 | 时区 | +08:00 |
 | 迁移管理 | Alembic |
-| 文档版本 | V1.0（2026-09-15） |
+| 表数量 | 28 张业务表 + 1 张 `alembic_version` |
+| 约束 | 47 个外键 / 46 个 CHECK 约束 |
+| 文档版本 | V1.0（2026-09-15）｜2026-09-17 补充模型与迁移位置说明 |
+
+### 代码位置
+
+| 内容 | 位置 |
+|---|---|
+| ORM 模型 | `backend/app/models/`（10 个模块文件，见下表） |
+| 模型注册入口 | `backend/app/models/__init__.py` —— **新增模型必须在此登记**，否则 Alembic autogenerate 会漏表 |
+| Alembic 配置 | `backend/alembic.ini` + `backend/alembic/env.py` |
+| 迁移文件 | `backend/alembic/versions/` |
+| 连接串来源 | `app/core/config.py` 的 `DATABASE_URL`（`env.py` 从配置读取，不在 `alembic.ini` 中维护） |
+| 种子数据 | `backend/scripts/seed_rbac.py`（角色权限）、`backend/scripts/seed_demo.py`（演示数据） |
+
+### 模型文件划分
+
+| 文件 | 表 |
+|---|---|
+| `models/user.py` | users |
+| `models/role.py` | roles / permissions / user_roles / role_permissions |
+| `models/organization.py` | colleges / majors / classes / classrooms |
+| `models/person.py` | students / teachers |
+| `models/course.py` | courses / course_prerequisites / curriculum_plans / curriculum_courses |
+| `models/teaching.py` | teaching_tasks / teaching_classes / schedules |
+| `models/selection.py` | course_selections / selection_periods |
+| `models/grade.py` | grades |
+| `models/exam.py` | exams / exam_rooms / exam_students |
+| `models/misc.py` | evaluation_tasks / evaluations / announcements / operation_logs |
+
+### 已有迁移
+
+| 版本 | 文件 | 内容 |
+|---|---|---|
+| `bc0a832224a4` | `20260915_0114_bc0a832224a4_create_rbac_tables.py` | RBAC 五张表 |
+| `7d34560e8aba` | `20260915_0128_7d34560e8aba_create_business_tables.py` | 其余 23 张业务表 |
+
+> 当前 head 为 `7d34560e8aba`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
 
 本文档是 `CLAUDE.md §5/§6` 与 `PRD §12` 的字段级落地。表结构变更必须先改本文档，再写 Alembic migration。
 
@@ -524,6 +564,19 @@ KEY idx_selection_period (semester, status)
 
 # 9. 成绩
 
+> ⚠️ **V0.2 待重新设计**
+>
+> 当前 `grades` 表与本节描述对应的是 **V0.1 基础版本**（平时成绩 + 期末成绩 → 加权总评 → 绩点）。
+> 以下内容属于 **V0.2 业务开发范围，尚未实现**，本文档仅作记录，不在本任务中设计最终模型：
+>
+> - 实践成绩 / 理论成绩拆分
+> - GPA 计算规则细化
+> - 专业排名 / 班级排名
+> - 成绩构成与考核项细化
+> - Excel 成绩导入
+>
+> 上述需求确定后需**先更新本节**，再编写 Alembic migration。
+
 ## 9.1 grades
 
 | 字段 | 类型 | 约束 | 说明 |
@@ -574,6 +627,8 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（对学生可�
 - 每次状态变更写入 `operation_logs`
 
 ## 9.3 总评与绩点
+
+> ⚠️ 以下为 V0.1 实现的基础规则。GPA 细化、排名等属 V0.2 待设计内容（见本节开头说明）。
 
 总评由后端按课程权重计算：
 
