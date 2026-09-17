@@ -104,3 +104,24 @@ class TeachingClassCourseImmutable(Conflict):
 class TeachingClassTermImmutable(Conflict):
     code = "TEACHING_CLASS_TERM_IMMUTABLE"
     message = "教学班所属学期不可修改"
+
+
+# --- 排课专项（TASK-013） ---
+class TeachingScheduleTermEnded(Conflict):
+    code = "TEACHING_SCHEDULE_TERM_ENDED"
+    message = "该学期已结束，不能操作教学安排"
+
+
+class TeachingScheduleTeacherConflict(Conflict):
+    code = "TEACHING_SCHEDULE_TEACHER_CONFLICT"
+    message = "该教师在该时段已有其他教学安排"
+
+
+class TeachingScheduleClassroomConflict(Conflict):
+    code = "TEACHING_SCHEDULE_CLASSROOM_CONFLICT"
+    message = "该教室在该时段已被占用"
+
+
+class TeachingScheduleClassConflict(Conflict):
+    code = "TEACHING_SCHEDULE_CLASS_CONFLICT"
+    message = "该教学班在该时段已有其他教学安排"

@@ -174,9 +174,20 @@ class SelectionService:
         if same_course:
             raise Conflict("本学期已选过该课程的其他教学班")
 
-        # 容量（此处读到的是加锁后的值）
-        if tc.selected_count >= tc.capacity:
-            raise TeachingClassFull(f"该教学班已满（{tc.selected_count}/{tc.capacity}）")
+        # 容量（TASK-013）：锁定教学班行后，按 CourseSelection 动态统计已选人数。
+        # 必须用锁定读（当前读）：REPEATABLE READ 下普通 COUNT 会读到事务建立时的
+        # 旧快照（调用方先加载了 Student），无法看到其他事务刚提交的选课记录。
+        enrolled_rows = self.db.execute(
+            select(CourseSelection.id)
+            .where(
+                CourseSelection.teaching_class_id == tc.id,
+                CourseSelection.status == SelectionState.SELECTED,
+            )
+            .with_for_update()
+        ).scalars().all()
+        enrolled = len(enrolled_rows)
+        if enrolled >= tc.capacity:
+            raise TeachingClassFull(f"该教学班已满（{enrolled}/{tc.capacity}）")
 
         # 时间冲突
         hit = ConflictChecker(self.db).student_conflict(student.id, tc.id, tc.semester)
@@ -204,7 +215,6 @@ class SelectionService:
                     semester=tc.semester,
                 )
                 self.db.add(sel)
-            tc.selected_count += 1
             self.db.commit()
         except IntegrityError as e:
             self.db.rollback()
@@ -250,8 +260,6 @@ class SelectionService:
 
         sel.status = SelectionState.DROPPED
         sel.dropped_at = datetime.now()
-        if tc:
-            tc.selected_count = max(0, tc.selected_count - 1)
         self.db.commit()
 
     # --- 必修课预排 ---
@@ -322,7 +330,6 @@ class SelectionService:
                 )
                 self.db.add(sel)
             assigned += 1
-        tc.selected_count += assigned
         try:
             self.db.commit()
         except IntegrityError as e:
@@ -400,5 +407,4 @@ class SelectionService:
             "selected": total,
             "capacity": tc.capacity if tc else 0,
             "remaining": max(0, (tc.capacity - total)) if tc else 0,
-            "counter_consistent": (tc.selected_count == total) if tc else False,
         }

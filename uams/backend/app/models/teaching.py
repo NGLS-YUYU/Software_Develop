@@ -88,7 +88,6 @@ class TeachingClass(Base, IdMixin, TimestampMixin):
         ),
         CheckConstraint("status IN ('ACTIVE','CANCELLED')", name="ck_tc_status"),
         CheckConstraint("capacity > 0", name="ck_tc_capacity"),
-        CheckConstraint("selected_count >= 0", name="ck_tc_count"),
         # 教学班编号仅在同一学期内唯一，跨学期允许复用（TASK-011）
         UniqueConstraint("term_id", "code", name="uk_tc_term_code"),
         Index("idx_tc_term", "term_id"),
@@ -126,10 +125,6 @@ class TeachingClass(Base, IdMixin, TimestampMixin):
         nullable=True, comment="授课教师，排课前可为空",
     )
     capacity: Mapped[int] = mapped_column(SmallInteger, nullable=False, comment="容量上限")
-    selected_count: Mapped[int] = mapped_column(
-        SmallInteger, nullable=False, default=0, server_default="0",
-        comment="已选人数；必须在事务内与选课记录同步",
-    )
     selection_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="CLOSED", server_default="CLOSED"
     )

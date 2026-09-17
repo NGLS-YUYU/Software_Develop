@@ -119,7 +119,8 @@ def available(
 
     stu = _current_student(db, current)
     rows = SelectionService(db).available_classes(stu, semester, keyword)
-    return [_tc_out(r) for r in rows]
+    counts = TeachingClassService(db).selection_counts([r.id for r in rows])
+    return [_tc_out(r, counts.get(r.id, 0)) for r in rows]
 
 
 @sel.get("/mine", response_model=list[SelectionOut], summary="我的选课")

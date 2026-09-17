@@ -191,8 +191,7 @@ def env():
         select_into(tca1, by_no[f"{P}s01"])
         select_into(tca2, by_no[f"{P}s01"])
         select_into(tca1, by_no[f"{P}s02"])
-        tca1.selected_count = 2
-        tca2.selected_count = 1
+        # TASK-013：已选人数由 CourseSelection 动态统计，不再维护 selected_count
 
         db.commit()
 

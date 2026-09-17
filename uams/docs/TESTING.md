@@ -1,6 +1,6 @@
 # 测试规范与现状
 
-> 记录当前测试实际情况（TASK-DOC-001，2026-09-17；TASK-011 更新，2026-09-18；TASK-012 更新，2026-09-18）。
+> 记录当前测试实际情况（TASK-DOC-001，2026-09-17；TASK-011 更新，2026-09-18；TASK-012 更新，2026-09-18；TASK-013 更新，2026-09-18）。
 
 ---
 
@@ -33,11 +33,12 @@ backend/tests/
 ├── test_student_grade.py # 学生成绩查询（18 个用例）
 ├── test_teaching_class.py # 教学班基础管理 + 开课计划规则（44 个用例）
 ├── test_selection.py     # 必修课预安排 + 选修课自主选课 + 容量并发（30 个用例）
+├── test_teaching_schedule.py # 教学安排与课表管理（38 个用例）
 ├── test_academic_term.py # 学期管理与教学班学期绑定（39 个用例）
 └── test_import.py        # 基础数据 Excel 批量导入（40 个用例）
 ```
 
-**合计 278 个用例，全部通过。**
+**合计 316 个用例，全部通过。**
 
 | 文件 | 覆盖内容 |
 |---|---|
@@ -52,6 +53,7 @@ backend/tests/
 | `test_student_grade.py` | 学生查看本人 APPROVED 成绩、DRAFT/SUBMITTED/REJECTED/NOT_ENTERED 不可见、grade_id/student_id 越权防护、GPA 正确/加权/不及格计入/两位小数/不落库、班级/专业排名且与 RankingService 一致、教师/学生反向越权（TASK-007） |
 | `test_teaching_class.py` | 教务处创建教学班（课程/教师/教师身份/唯一性校验）、教务/教师/学生数据权限隔离、教学班学生名单（含专业与行政班）、教务处添加/移除学生、同一学生多教学班、不同课程/学期教学班共存、同一学期内编号唯一且跨学期可复用（TASK-011）、TASK-005/006/007 回归（TASK-008）；**TASK-012**：`name` 字段、`teacher_id` 必填、已结束学期增删改拒绝、`term_id`/`course_id` 不可变、换教师（无成绩可换/SUBMITTED/APPROVED 锁定）、容量不得小于已选人数、删除（空班可删/有选课/有成绩拒绝）、教务添加学生容量边界、按 `course_id`/`teacher_id` DB 层过滤 |
 | `test_selection.py` | 必修课预排（学院/专业/行政班范围、幂等、选修课不可预排、教师/学生不可预排）、选修课自主选课/退课、必修课不可自主选择/退选、重复/同课程多教学班/越权防护、可选列表只含选修课且排除已选、退选不删成绩、非 ACTIVE 学期不可选课与 ENDED 学期不可退课（TASK-011）、TASK-005/006/007/008 回归（TASK-009）；**TASK-012**：教学班满员选课拒绝（`TEACHING_CLASS_FULL`）、并发选课不超卖（4 线程抢 2 名额，计数一致） |
+| `test_teaching_schedule.py` | 教学安排增删改查、参数校验（星期/节次/周次/单双周/教室）、三类冲突（教师/教室/教学班自身，分别 `TEACHING_SCHEDULE_TEACHER_CONFLICT`/`TEACHING_SCHEDULE_CLASSROOM_CONFLICT`/`TEACHING_SCHEDULE_CLASS_CONFLICT`）、学期生命周期（PLANNED/ACTIVE 可操作、ENDED 只读 `TEACHING_SCHEDULE_TERM_ENDED`）、修改排除自身、教室容量校验、教务全量列表与 4 个过滤条件（teaching_class/teacher/weekday/classroom）及排序、角色权限隔离（教师/学生写 403、教务列表/详情仅 ACADEMIC_ADMIN）、教师 `/mine`（含 term 过滤）、学生 `/my`（含 term 过滤、未选课空列表）（TASK-013） |
 | `test_academic_term.py` | 学期增删改查、状态单向流转 PLANNED→ACTIVE→ENDED、单激活约束、(学年,学期) 唯一、日期校验、删除引用保护、教学班 `term_id` 必填与已结束学期不可开课、按学期过滤、`term:read`/`term:write` 权限隔离（TASK-011） |
 | `test_import.py` | 学生/课程/成绩 Excel 批量导入、三种模板下载、`.xlsx` 格式校验、字段缺失/编号与登录名重复/学院/专业/行政班层级校验、课程类型/考核方式/学分校验、成绩 0-100 范围与理论/实践成对校验、DRAFT/REJECTED 可覆盖而 SUBMITTED/APPROVED 禁止覆盖、成绩复用 ScoreService 计算（32/48/64 课时与理论+实践）、不写 GPA/排名、教师/学生越权 403、错误行号（TASK-010） |
 
@@ -64,7 +66,7 @@ backend/tests/
 | organization（学院/专业/班级/教室） | ❌ 无测试 | 引用保护、唯一约束未回归 |
 | person（学生/教师） | ❌ 无测试 | 账号联动创建、冗余字段同步未回归 |
 | course（课程/先修/培养方案） | ❌ 无测试 | **环路检测**、权重校验未回归 |
-| teaching（开课/排课） | ❌ 无测试 | **冲突检测**、单双周相容未回归 |
+| teaching（开课/排课） | ✅ 已测试 | **教学安排冲突检测、单双周相容、学期生命周期**已于 TASK-013 补回归（`test_teaching_schedule.py` 38 用例） |
 | selection（选课） | ⚠️ 部分 | 必修课预排/选修课选退课已有测试（TASK-009）；**并发防超卖**已于 TASK-012 补回归测试（4 线程抢 2 名额，断言不超卖且计数一致） |
 | grade（成绩） | ⚠️ 部分 | **总评计算已有单测**（TASK-003）；四态状态机、学分汇总仍未回归 |
 | exam（考试） | ❌ 无测试 | 自动排座未回归 |
@@ -150,7 +152,7 @@ def student_user():
 | 优先级 | 测试项 | 说明 |
 |---|---|---|
 | ~~P1~~ ✅ | ~~选课并发测试~~ | **已在 TASK-012 完成**：`test_selection.py::test_concurrent_selection_no_oversell` 多线程抢容量，断言不超卖、计数一致 |
-| P1 | 排课冲突测试 | 教室冲突、教师冲突、单双周相容 |
+| P1 | ~~排课冲突测试~~ | **已在 TASK-013 完成**：`test_teaching_schedule.py` 覆盖教师/教室/教学班自身三类冲突与单双周相容 |
 | ~~P1~~ ✅ | ~~成绩状态机测试~~ | **已在 TASK-005 完成**：`test_teacher_grade.py` 覆盖 DRAFT → SUBMITTED → APPROVED/REJECTED 全流转与非法流转 |
 | ~~P1~~ ✅ | ~~成绩计算测试~~ | **已在 TASK-003 完成**：`test_score_service.py` 覆盖 32/48/64 课时、理论+实践合并、边界与异常 |
 | P1 | 先修课环路测试 | A→B→C→A 被拒绝 |

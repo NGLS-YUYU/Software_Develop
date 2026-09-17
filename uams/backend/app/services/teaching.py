@@ -22,6 +22,10 @@ from app.core.exceptions import (
     TeachingClassTeacherLocked,
     TeachingClassTermEnded,
     TeachingClassTermImmutable,
+    TeachingScheduleClassConflict,
+    TeachingScheduleClassroomConflict,
+    TeachingScheduleTeacherConflict,
+    TeachingScheduleTermEnded,
 )
 from app.models.course import Course
 from app.models.grade import Grade, GradeStatus
@@ -104,6 +108,20 @@ class ConflictChecker:
                 TeachingClass.teacher_id == teacher_id,
                 TeachingClass.status == "ACTIVE",
             )
+        )
+        if exclude_schedule_id:
+            stmt = stmt.where(Schedule.id != exclude_schedule_id)
+        return self.db.execute(stmt.limit(1)).scalar_one_or_none()
+
+    def class_conflict(
+        self,
+        sched: dict[str, Any],
+        teaching_class_id: int,
+        exclude_schedule_id: int | None = None,
+    ) -> Schedule | None:
+        """同一教学班自身是否已有时间重叠的安排（TASK-013）。"""
+        stmt = self._base(sched).where(
+            Schedule.teaching_class_id == teaching_class_id
         )
         if exclude_schedule_id:
             stmt = stmt.where(Schedule.id != exclude_schedule_id)
@@ -206,6 +224,58 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
             selectinload(TeachingClass.teacher).selectinload(Teacher.user),
             selectinload(TeachingClass.schedules).selectinload(Schedule.classroom),
         )
+
+    @staticmethod
+    def _selection_count_stmt(teaching_class_id: int) -> Select:
+        return (
+            select(func.count())
+            .select_from(CourseSelection)
+            .where(
+                CourseSelection.teaching_class_id == teaching_class_id,
+                CourseSelection.status == SelectionState.SELECTED,
+            )
+        )
+
+    def selection_count(self, teaching_class_id: int) -> int:
+        """已选人数 = COUNT(CourseSelection)，不再持久化（TASK-013）。"""
+        return (
+            self.db.execute(
+                self._selection_count_stmt(teaching_class_id)
+            ).scalar()
+            or 0
+        )
+
+    def selection_counts(self, teaching_class_ids: list[int]) -> dict[int, int]:
+        """批量统计已选人数，避免列表场景 N+1。"""
+        if not teaching_class_ids:
+            return {}
+        rows = self.db.execute(
+            select(
+                CourseSelection.teaching_class_id, func.count()
+            )
+            .where(
+                CourseSelection.teaching_class_id.in_(teaching_class_ids),
+                CourseSelection.status == SelectionState.SELECTED,
+            )
+            .group_by(CourseSelection.teaching_class_id)
+        ).all()
+        return {tid: cnt for tid, cnt in rows}
+
+    def locked_selection_count(self, teaching_class_id: int) -> int:
+        """锁定读取已选人数（当前读），用于持有 TeachingClass 行锁后的容量校验。
+
+        REPEATABLE READ 下普通 COUNT 会读取事务建立时的旧快照（调用方可能先加载了
+        Student/User），必须用锁定读才能看到其他事务刚提交的选课记录（TASK-013）。
+        """
+        rows = self.db.execute(
+            select(CourseSelection.id)
+            .where(
+                CourseSelection.teaching_class_id == teaching_class_id,
+                CourseSelection.status == SelectionState.SELECTED,
+            )
+            .with_for_update()
+        ).scalars().all()
+        return len(rows)
 
     def my_classes(
         self, teacher_id: int, semester: str | None = None, term_id: int | None = None
@@ -311,10 +381,12 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
                         f"该教师在 周{s.day_of_week} 第{s.start_period}-{s.end_period}节 已有其他授课安排"
                     )
 
-        if "capacity" in data and data["capacity"] < tc.selected_count:
-            raise CapacityBelowEnrolled(
-                f"容量不能小于已选人数（已选 {tc.selected_count}）"
-            )
+        if "capacity" in data:
+            enrolled = self.selection_count(tc.id)
+            if data["capacity"] < enrolled:
+                raise CapacityBelowEnrolled(
+                    f"容量不能小于已选人数（已选 {enrolled}）"
+                )
 
         for k, v in data.items():
             setattr(tc, k, v)
@@ -358,45 +430,22 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
     # --- 排课 ---
 
     def add_schedule(self, class_id: int, data: dict[str, Any]) -> Schedule:
-        tc = self.get_or_404(class_id)
-        room = self.db.get(Classroom, data["classroom_id"])
-        if room is None:
-            raise NotFound(f"教室不存在（id={data['classroom_id']}）")
-        if room.status != "ACTIVE":
-            raise Conflict(f"教室 {room.code} 当前不可用（{room.status}）")
-        if room.capacity < tc.capacity:
-            raise Conflict(
-                f"教室容量 {room.capacity} 小于教学班容量 {tc.capacity}"
-            )
+        """教学班下新增排课（委托 ScheduleService，TASK-013）。"""
+        return ScheduleService(self.db).create({**data, "teaching_class_id": class_id})
 
-        sched = {**data, "semester": tc.semester}
-        checker = ConflictChecker(self.db)
-
-        hit = checker.classroom_conflict(sched)
-        if hit:
-            other = self.db.get(TeachingClass, hit.teaching_class_id)
-            raise Conflict(
-                f"教室冲突：{room.code} 在该时段已被 {other.code if other else '其他教学班'} 占用"
-            )
-
-        hit = checker.teacher_conflict(sched, tc.teacher_id)
-        if hit:
-            other = self.db.get(TeachingClass, hit.teaching_class_id)
-            raise Conflict(
-                f"教师冲突：该教师在该时段已有 {other.code if other else '其他'} 的课"
-            )
-
-        obj = Schedule(teaching_class_id=tc.id, semester=tc.semester, **data)
-        self.db.add(obj)
-        self._commit()
-        return obj
+    def update_schedule(self, class_id: int, schedule_id: int, data: dict[str, Any]) -> Schedule:
+        """修改教学班下的排课（TASK-013）。"""
+        s = ScheduleService(self.db).get_or_404(schedule_id)
+        if s.teaching_class_id != class_id:
+            raise NotFound("排课不存在")
+        return ScheduleService(self.db).update(schedule_id, data)
 
     def remove_schedule(self, class_id: int, schedule_id: int) -> None:
-        s = self.db.get(Schedule, schedule_id)
-        if s is None or s.teaching_class_id != class_id:
+        """删除教学班下的排课（TASK-013）。"""
+        s = ScheduleService(self.db).get_or_404(schedule_id)
+        if s.teaching_class_id != class_id:
             raise NotFound("排课不存在")
-        self.db.delete(s)
-        self._commit()
+        ScheduleService(self.db).delete(schedule_id)
 
     def open_selection(self, class_id: int, open_: bool) -> TeachingClass:
         tc = self.get_or_404(class_id)
@@ -432,9 +481,10 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         if sel is not None and sel.status == SelectionState.SELECTED:
             raise Conflict("该学生已在此教学班中")
 
-        # 容量约束（TASK-012）：教务处添加同样不得超容
-        if tc.selected_count >= tc.capacity:
-            raise TeachingClassFull(f"该教学班已满（{tc.selected_count}/{tc.capacity}）")
+        # 容量约束（TASK-012/013）：已选人数由 CourseSelection 动态统计，不得超容
+        enrolled = self.locked_selection_count(class_id)
+        if enrolled >= tc.capacity:
+            raise TeachingClassFull(f"该教学班已满（{enrolled}/{tc.capacity}）")
 
         if sel is not None:  # 曾退课，复用该行
             sel.status = SelectionState.SELECTED
@@ -448,7 +498,6 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
                 semester=tc.semester,
             )
             self.db.add(sel)
-        tc.selected_count += 1
         self._commit()
         return sel
 
@@ -465,5 +514,216 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
             raise NotFound("该学生不在此教学班中")
         sel.status = SelectionState.DROPPED
         sel.dropped_at = datetime.now()
-        tc.selected_count = max(0, tc.selected_count - 1)
         self._commit()
+
+
+class ScheduleService:
+    """教学安排（排课）业务逻辑（TASK-013）。
+
+    复用既有 ``Schedule`` 模型（`schedules` 表）作为教学安排实体；
+    一个教学班可有多条安排，冲突检测统一走 :class:`ConflictChecker`。
+    """
+
+    entity_name = "教学安排"
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def base_stmt(self) -> Select:
+        return select(Schedule).options(
+            selectinload(Schedule.teaching_class).selectinload(TeachingClass.course),
+            selectinload(Schedule.teaching_class)
+            .selectinload(TeachingClass.teacher)
+            .selectinload(Teacher.user),
+            selectinload(Schedule.teaching_class).selectinload(TeachingClass.term),
+            selectinload(Schedule.classroom),
+        )
+
+    def get_or_404(self, schedule_id: int) -> Schedule:
+        row = self.db.execute(
+            self.base_stmt().where(Schedule.id == schedule_id)
+        ).scalar_one_or_none()
+        if row is None:
+            raise NotFound(f"{self.entity_name}不存在（id={schedule_id}）")
+        return row
+
+    @staticmethod
+    def _term_guard(tc: TeachingClass) -> None:
+        if tc.term is not None and tc.term.status == TermStatus.ENDED:
+            raise TeachingScheduleTermEnded("该学期已结束，不能操作教学安排")
+
+    def _room_guard(self, classroom_id: int, tc: TeachingClass) -> None:
+        room = self.db.get(Classroom, classroom_id)
+        if room is None:
+            raise NotFound(f"教室不存在（id={classroom_id}）")
+        if room.status != "ACTIVE":
+            raise Conflict(f"教室 {room.code} 当前不可用（{room.status}）")
+        if room.capacity < tc.capacity:
+            raise Conflict(f"教室容量 {room.capacity} 小于教学班容量 {tc.capacity}")
+
+    @staticmethod
+    def _sched_dict(tc: TeachingClass, data: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "semester": tc.semester,
+            "day_of_week": data["day_of_week"],
+            "start_period": data["start_period"],
+            "end_period": data["end_period"],
+            "start_week": data["start_week"],
+            "end_week": data["end_week"],
+            "week_type": data.get("week_type", WeekType.ALL),
+            "classroom_id": data["classroom_id"],
+        }
+
+    def _check_conflicts(
+        self,
+        sched: dict[str, Any],
+        tc: TeachingClass,
+        exclude_schedule_id: int | None = None,
+    ) -> None:
+        """三类冲突检测：教学班自身 → 教室 → 教师（TASK-013 §8）。"""
+        checker = ConflictChecker(self.db)
+        hit = checker.class_conflict(sched, tc.id, exclude_schedule_id)
+        if hit:
+            raise TeachingScheduleClassConflict(
+                f"该教学班在 周{sched['day_of_week']} "
+                f"第{sched['start_period']}-{sched['end_period']}节 已有其他安排"
+            )
+        hit = checker.classroom_conflict(sched, exclude_schedule_id)
+        if hit:
+            raise TeachingScheduleClassroomConflict(
+                f"教室在该时段已被其他教学班占用"
+            )
+        hit = checker.teacher_conflict(sched, tc.teacher_id, exclude_schedule_id)
+        if hit:
+            raise TeachingScheduleTeacherConflict(
+                f"该教师在该时段已有其他教学安排"
+            )
+
+    def create(self, data: dict[str, Any]) -> Schedule:
+        tc = self.db.get(TeachingClass, data["teaching_class_id"])
+        if tc is None:
+            raise NotFound(f"教学班不存在（id={data['teaching_class_id']}）")
+        self._term_guard(tc)
+        self._room_guard(data["classroom_id"], tc)
+
+        sched = self._sched_dict(tc, data)
+        self._check_conflicts(sched, tc)
+
+        obj = Schedule(
+            teaching_class_id=tc.id,
+            semester=tc.semester,
+            classroom_id=data["classroom_id"],
+            day_of_week=data["day_of_week"],
+            start_period=data["start_period"],
+            end_period=data["end_period"],
+            start_week=data["start_week"],
+            end_week=data["end_week"],
+            week_type=data.get("week_type", WeekType.ALL),
+        )
+        self.db.add(obj)
+        self.db.commit()
+        return obj
+
+    def update(self, schedule_id: int, data: dict[str, Any]) -> Schedule:
+        s = self.get_or_404(schedule_id)
+        tc = s.teaching_class
+        self._term_guard(tc)
+
+        # teaching_class_id 不可变：换教学班应删除后重建（TASK-013 §14）
+        if "teaching_class_id" in data and data["teaching_class_id"] != tc.id:
+            raise Conflict("教学安排所属教学班不可修改，请删除后重建")
+
+        merged = {
+            "day_of_week": data.get("day_of_week", s.day_of_week),
+            "start_period": data.get("start_period", s.start_period),
+            "end_period": data.get("end_period", s.end_period),
+            "start_week": data.get("start_week", s.start_week),
+            "end_week": data.get("end_week", s.end_week),
+            "week_type": data.get("week_type", s.week_type),
+            "classroom_id": data.get("classroom_id", s.classroom_id),
+        }
+        # 合并后校验区间（节次/周次）
+        if merged["end_period"] < merged["start_period"]:
+            raise Conflict("结束节次不能早于开始节次")
+        if merged["end_week"] < merged["start_week"]:
+            raise Conflict("结束周不能早于开始周")
+        if "classroom_id" in data:
+            self._room_guard(merged["classroom_id"], tc)
+
+        sched = self._sched_dict(tc, merged)
+        self._check_conflicts(sched, tc, exclude_schedule_id=s.id)
+
+        for k, v in merged.items():
+            setattr(s, k, v)
+        self.db.commit()
+        return s
+
+    def delete(self, schedule_id: int) -> None:
+        s = self.get_or_404(schedule_id)
+        self._term_guard(s.teaching_class)
+        self.db.delete(s)
+        self.db.commit()
+
+    def list(
+        self,
+        *,
+        term_id: int | None = None,
+        teaching_class_id: int | None = None,
+        teacher_id: int | None = None,
+        weekday: int | None = None,
+        classroom: str | None = None,
+    ) -> list[Schedule]:
+        """教务处查询全部教学安排，过滤条件均在数据库层完成（TASK-013 §18）。"""
+        stmt = self.base_stmt()
+        if teaching_class_id is not None:
+            stmt = stmt.where(Schedule.teaching_class_id == teaching_class_id)
+        if term_id is not None or teacher_id is not None:
+            tc_ids = select(TeachingClass.id)
+            if term_id is not None:
+                tc_ids = tc_ids.where(TeachingClass.term_id == term_id)
+            if teacher_id is not None:
+                tc_ids = tc_ids.where(TeachingClass.teacher_id == teacher_id)
+            stmt = stmt.where(Schedule.teaching_class_id.in_(tc_ids))
+        if weekday is not None:
+            stmt = stmt.where(Schedule.day_of_week == weekday)
+        if classroom is not None:
+            room_ids = select(Classroom.id).where(Classroom.code == classroom)
+            stmt = stmt.where(Schedule.classroom_id.in_(room_ids))
+        stmt = stmt.order_by(
+            Schedule.day_of_week, Schedule.start_period, Schedule.start_week
+        )
+        return list(self.db.execute(stmt).scalars())
+
+    def mine_for_teacher(self, teacher_id: int, term_id: int | None = None) -> list[Schedule]:
+        """教师本人教学班的教学安排（身份取自 token，不接受 teacher_id）。"""
+        tc_ids = select(TeachingClass.id).where(TeachingClass.teacher_id == teacher_id)
+        if term_id is not None:
+            tc_ids = tc_ids.where(TeachingClass.term_id == term_id)
+        stmt = (
+            self.base_stmt()
+            .where(Schedule.teaching_class_id.in_(tc_ids))
+            .order_by(Schedule.day_of_week, Schedule.start_period, Schedule.start_week)
+        )
+        return list(self.db.execute(stmt).scalars())
+
+    def mine_for_student(self, student_id: int, term_id: int | None = None) -> list[Schedule]:
+        """学生本人已选教学班的教学安排；未选课返回空列表而非 404（TASK-013 §17）。"""
+        sel_tc = (
+            select(CourseSelection.teaching_class_id)
+            .join(
+                TeachingClass,
+                CourseSelection.teaching_class_id == TeachingClass.id,
+            )
+            .where(
+                CourseSelection.student_id == student_id,
+                CourseSelection.status == SelectionState.SELECTED,
+            )
+        )
+        if term_id is not None:
+            sel_tc = sel_tc.where(TeachingClass.term_id == term_id)
+        stmt = (
+            self.base_stmt()
+            .where(Schedule.teaching_class_id.in_(sel_tc))
+            .order_by(Schedule.day_of_week, Schedule.start_period, Schedule.start_week)
+        )
+        return list(self.db.execute(stmt).scalars())

@@ -53,8 +53,9 @@
 | `d81e869930fb` | `20260917_1757_d81e869930fb_add_theory_and_practice_score_columns.py` | 成绩 `mid_theory_score`/`mid_practice_score`/`final_theory_score`/`final_practice_score`（TASK-002 补充） |
 | `a3f9c2e8b1d4` | `20260918_1000_a3f9c2e8b1d4_add_academic_terms.py` | 新增 `academic_terms` 表；`teaching_classes` 增加 `term_id`（NOT NULL）、编号唯一改为 `(term_id, code)`（TASK-011） |
 | `c4d8e2f6a9b1` | `20260918_1100_c4d8e2f6a9b1_add_teaching_class_name.py` | `teaching_classes` 增加 `name`（展示名，区别于编号 code）、增加 `idx_tc_course` 索引（TASK-012） |
+| `d7e5a3f1c2b4` | `20260918_1300_d7e5a3f1c2b4_drop_teaching_class_selected_count.py` | 删除 `teaching_classes.selected_count` 冗余计数列（TASK-013，已选人数改为 `COUNT(course_selections)` 动态统计） |
 
-> 当前 head 为 `c4d8e2f6a9b1`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
+> 当前 head 为 `d7e5a3f1c2b4`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
 
 本文档是 `CLAUDE.md §5/§6` 与 `PRD §12` 的字段级落地。表结构变更必须先改本文档，再写 Alembic migration。
 
@@ -484,7 +485,6 @@ KEY idx_teaching_tasks_semester (semester)
 | semester | VARCHAR(16) | NOT NULL | 冗余，同上 |
 | teacher_id | BIGINT UNSIGNED | NULL, FK → teachers(id) RESTRICT | 授课教师（API 创建时必填） |
 | capacity | SMALLINT UNSIGNED | NOT NULL | 容量上限 |
-| selected_count | SMALLINT UNSIGNED | NOT NULL, DEFAULT 0 | 已选人数 |
 | selection_status | VARCHAR(20) | NOT NULL, DEFAULT 'CLOSED' | CLOSED / OPEN / FINISHED |
 | status | VARCHAR(20) | NOT NULL, DEFAULT 'ACTIVE' | ACTIVE / CANCELLED |
 
@@ -492,7 +492,6 @@ KEY idx_teaching_tasks_semester (semester)
 CONSTRAINT ck_teaching_classes_sel CHECK (selection_status IN
   ('CLOSED','OPEN','FINISHED'))
 CONSTRAINT ck_teaching_classes_cap CHECK (capacity > 0)
-CONSTRAINT ck_teaching_classes_cnt CHECK (selected_count >= 0)
 UNIQUE KEY uk_tc_term_code (term_id, code)
 KEY idx_tc_term (term_id)
 KEY idx_tc_semester_course (semester, course_id)
@@ -501,7 +500,7 @@ KEY idx_tc_teacher (teacher_id)
 KEY idx_tc_selection (selection_status, semester)
 ```
 
-> `selected_count` 是冗余计数，必须与 `course_selections` 实际行数一致。选课/退课**必须在同一事务内**更新两者（CLAUDE.md §19），并用 `SELECT ... FOR UPDATE` 锁住本行防超卖（§20）。
+> `selected_count` 冗余计数列已于 TASK-013 删除。已选人数改为 `COUNT(course_selections WHERE status='SELECTED')` 动态统计，API 响应仍返回 `selected_count` 作为**只读输出字段**。容量校验在持有 `SELECT ... FOR UPDATE` 行锁后用**锁定读**统计（REPEATABLE READ 下普通 COUNT 会读到旧快照），唯一约束 `uk_selection` 仍作最后一道防线（CLAUDE.md §20）。
 
 **开课计划业务规则（TASK-012）**
 
@@ -549,9 +548,16 @@ KEY idx_schedules_time (semester, day_of_week, start_period, end_period)
 4. 周次区间重叠：`a.start_week <= b.end_week AND b.start_week <= a.end_week`
 5. 单双周相容：任一为 `ALL`，或两者 `week_type` 相同
 
-需检测三类冲突：**教室**冲突、**教师**冲突、**学生**冲突（选课时校验）。
+需检测三类冲突：**教室**冲突、**教师**冲突、**教学班自身**冲突（以及选课时校验的**学生**冲突）。
 
 > 这个判定无法用唯一约束表达，必须在 Service 层实现。排课与选课都要调用同一套判定逻辑，避免两处规则不一致。
+
+**教学安排（TASK-013）**
+
+- `schedules` 表即教学安排实体（优先复用既有路径体系），一个教学班可有多条安排。
+- 三类冲突在数据库查询层检测（`ConflictChecker`），修改时排除自身（`id != 当前 id`）：教学班自身 → `TEACHING_SCHEDULE_CLASS_CONFLICT`、教室 → `TEACHING_SCHEDULE_CLASSROOM_CONFLICT`、教师 → `TEACHING_SCHEDULE_TEACHER_CONFLICT`。
+- 学期生命周期：`PLANNED` / `ACTIVE` 可增删改查，`ENDED` 只读（409 `TEACHING_SCHEDULE_TERM_ENDED`）。
+- 教室校验：必须存在、`ACTIVE`、容量 ≥ 教学班容量。
 
 ---
 
@@ -585,12 +591,12 @@ KEY idx_selection_tc (teaching_class_id, status)
 BEGIN;
   SELECT ... FROM teaching_classes WHERE id = ? FOR UPDATE;   -- 行锁
   -- 校验：选课开放 / 容量未满 / 未重复 / 无时间冲突 / 先修满足 / 资格符合
+  -- 容量以锁定读统计：SELECT COUNT(*) ... FOR UPDATE（当前读，避免旧快照）
   INSERT INTO course_selections ...;
-  UPDATE teaching_classes SET selected_count = selected_count + 1 WHERE id = ?;
 COMMIT;
 ```
 
-必须保证原子性，避免「人数更新成功但选课记录未创建」（CLAUDE.md §19）。
+必须保证原子性，避免「人数更新成功但选课记录未创建」（CLAUDE.md §19）。TASK-013 起不再维护 `selected_count` 冗余计数，容量直接以 `course_selections` 行数判定。
 
 ## 8.3 selection_periods
 
@@ -893,7 +899,6 @@ KEY idx_oplogs_resource (resource_type, resource_id)
 | teaching_classes | course_id, semester | 高频过滤 | 创建时从 task 带入 |
 | course_selections | course_id, semester | 高频过滤 | 创建时从 teaching_class 带入 |
 | grades | course_id, semester, credits | 统计 + 历史快照 | 创建时带入，此后不随课程变动 |
-| teaching_classes | selected_count | 避免每次 COUNT | **事务内**与选课记录同步 |
 | classes | student_count | 避免每次 COUNT | 学籍变更时同步 |
 
 > 这些是有意识的反范式。CLAUDE.md §5 要求「第三范式为主要参考」「避免明显数据冗余」——此处冗余均有明确性能或业务理由，并在上表登记一致性责任方。不得随意新增未登记的冗余字段。

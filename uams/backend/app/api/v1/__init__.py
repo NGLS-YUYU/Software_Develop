@@ -14,6 +14,7 @@ from app.api.v1 import (
     schedule,
     selection,
     teaching,
+    teaching_schedule,
     terms,
     user,
 )
@@ -28,6 +29,7 @@ for _m in (
     teaching,
     selection,
     schedule,
+    teaching_schedule,
     terms,
     grade,
     exam,

@@ -13,6 +13,7 @@ from app.schemas.common import PageParams, PageResult
 from app.schemas.teaching import (
     ScheduleCreate,
     ScheduleOut,
+    ScheduleUpdate,
     TeachingClassCreate,
     TeachingClassOut,
     TeachingClassUpdate,
@@ -20,7 +21,11 @@ from app.schemas.teaching import (
     TeachingTaskOut,
     TeachingTaskUpdate,
 )
-from app.services.teaching import TeachingClassService, TeachingTaskService
+from app.services.teaching import (
+    ScheduleService,
+    TeachingClassService,
+    TeachingTaskService,
+)
 
 router = APIRouter(tags=["开课排课"])
 _read = Depends(get_current_user)
@@ -28,6 +33,18 @@ _read = Depends(get_current_user)
 
 def _sched_out(s) -> ScheduleOut:
     d = ScheduleOut.model_validate(s)
+    tc = s.teaching_class
+    if tc is not None:
+        d.teaching_class_code = tc.code
+        d.teaching_class_name = tc.name
+        if tc.course:
+            d.course_id, d.course_code, d.course_name = (
+                tc.course.id, tc.course.code, tc.course.name,
+            )
+        if tc.teacher and tc.teacher.user:
+            d.teacher_id, d.teacher_name = tc.teacher.id, tc.teacher.user.real_name
+        if tc.term:
+            d.term_id, d.term_name = tc.term.id, tc.term.name
     if s.classroom:
         d.classroom_code, d.building = s.classroom.code, s.classroom.building
     return d
@@ -42,7 +59,7 @@ def _task_out(t, svc) -> TeachingTaskOut:
     return d
 
 
-def _tc_out(tc) -> TeachingClassOut:
+def _tc_out(tc, selected_count: int = 0) -> TeachingClassOut:
     d = TeachingClassOut.model_validate(tc)
     if tc.course:
         d.course_code, d.course_name = tc.course.code, tc.course.name
@@ -51,7 +68,8 @@ def _tc_out(tc) -> TeachingClassOut:
         d.term_name, d.term_status = tc.term.name, tc.term.status
     if tc.teacher and tc.teacher.user:
         d.teacher_name = tc.teacher.user.real_name
-    d.remaining = max(0, tc.capacity - tc.selected_count)
+    d.selected_count = selected_count
+    d.remaining = max(0, tc.capacity - selected_count)
     d.schedules = [_sched_out(s) for s in tc.schedules]
     return d
 
@@ -136,7 +154,11 @@ def list_classes(
         teacher_id=teacher_id,
         selection_status=selection_status,
     )
-    return PageResult.build([_tc_out(i) for i in items], total, params)
+    svc = TeachingClassService(db)
+    counts = svc.selection_counts([i.id for i in items])
+    return PageResult.build(
+        [_tc_out(i, counts.get(i.id, 0)) for i in items], total, params
+    )
 
 
 @classes.get("/mine", response_model=list[TeachingClassOut], summary="我的授课课程")
@@ -155,12 +177,16 @@ def my_classes(
     if me is None:
         raise PermissionDenied("教师档案不存在")
     rows = TeachingClassService(db).my_classes(me.id, semester, term_id)
-    return [_tc_out(tc) for tc in rows]
+    svc = TeachingClassService(db)
+    counts = svc.selection_counts([tc.id for tc in rows])
+    return [_tc_out(tc, counts.get(tc.id, 0)) for tc in rows]
 
 
 @classes.get("/{class_id}", response_model=TeachingClassOut, summary="教学班详情")
 def get_class(class_id: int, db: Session = Depends(get_db), _=_read):
-    return _tc_out(TeachingClassService(db).get_or_404(class_id))
+    svc = TeachingClassService(db)
+    tc = svc.get_or_404(class_id)
+    return _tc_out(tc, svc.selection_count(class_id))
 
 
 @classes.post(
@@ -175,7 +201,8 @@ def create_class(
     _=Depends(RequirePermissions("teaching:write")),
 ):
     tc = TeachingClassService(db).create_class(payload.model_dump())
-    return _tc_out(TeachingClassService(db).get_or_404(tc.id))
+    svc = TeachingClassService(db)
+    return _tc_out(svc.get_or_404(tc.id), 0)
 
 
 @classes.put("/{class_id}", response_model=TeachingClassOut, summary="修改教学班")
@@ -187,7 +214,7 @@ def update_class(
 ):
     svc = TeachingClassService(db)
     svc.update_class(class_id, payload.model_dump(exclude_unset=True))
-    return _tc_out(svc.get_or_404(class_id))
+    return _tc_out(svc.get_or_404(class_id), svc.selection_count(class_id))
 
 
 @classes.delete("/{class_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除教学班")
@@ -212,7 +239,7 @@ def toggle_selection(
 ):
     svc = TeachingClassService(db)
     svc.open_selection(class_id, open)
-    return _tc_out(svc.get_or_404(class_id))
+    return _tc_out(svc.get_or_404(class_id), svc.selection_count(class_id))
 
 
 # --- 排课 ---
@@ -237,8 +264,25 @@ def add_schedule(
     _=Depends(RequirePermissions("schedule:write")),
 ):
     s = TeachingClassService(db).add_schedule(class_id, payload.model_dump())
-    db.refresh(s)
-    return _sched_out(s)
+    return _sched_out(ScheduleService(db).get_or_404(s.id))
+
+
+@classes.put(
+    "/{class_id}/schedules/{schedule_id}",
+    response_model=ScheduleOut,
+    summary="修改排课（重新检测冲突）",
+)
+def update_schedule(
+    class_id: int,
+    schedule_id: int,
+    payload: ScheduleUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("schedule:write")),
+):
+    s = TeachingClassService(db).update_schedule(
+        class_id, schedule_id, payload.model_dump(exclude_unset=True)
+    )
+    return _sched_out(ScheduleService(db).get_or_404(s.id))
 
 
 @classes.delete(

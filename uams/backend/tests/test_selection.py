@@ -609,7 +609,11 @@ def test_select_full_class_rejected(env):
     with SessionLocal() as db:
         tc = db.get(TeachingClass, env["e01"])
         tc.capacity = 1
-        tc.selected_count = 1
+        # TASK-013：容量以 CourseSelection 动态统计为准，不再设置 selected_count
+        db.add(CourseSelection(
+            student_id=env["s2_id"], teaching_class_id=env["e01"],
+            course_id=tc.course_id, semester=tc.semester,
+        ))
         db.commit()
     r = client.post(
         f"{PREFIX}/course-selections",
@@ -633,7 +637,6 @@ def test_concurrent_selection_no_oversell(env):
     with SessionLocal() as db:
         tc = db.get(TeachingClass, env["e01"])
         tc.capacity = 2
-        tc.selected_count = 0
         db.commit()
 
     def attempt(sid: int) -> int:
@@ -651,9 +654,8 @@ def test_concurrent_selection_no_oversell(env):
 
     assert sorted(codes) == [201, 201, 409, 409]
 
-    # 计数一致：selected_count == 实际 SELECTED 数 == 容量，未超卖
+    # 计数一致：实际 SELECTED 数 == 容量，未超卖（TASK-013：动态统计，不再读 selected_count）
     with SessionLocal() as db:
-        tc = db.get(TeachingClass, env["e01"])
         actual = db.execute(
             select(func.count()).select_from(CourseSelection).where(
                 CourseSelection.teaching_class_id == env["e01"],
@@ -661,5 +663,4 @@ def test_concurrent_selection_no_oversell(env):
             )
         ).scalar()
     assert actual == 2
-    assert tc.selected_count == 2
 

@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
@@ -296,13 +296,21 @@ def main() -> None:
                 ).scalar_one_or_none()
                 if exists:
                     continue
-                if tc.selected_count >= tc.capacity:
+                # 容量（TASK-013）：已选人数由 CourseSelection 动态统计，不再维护 selected_count
+                enrolled = db.execute(
+                    select(func.count())
+                    .select_from(CourseSelection)
+                    .where(
+                        CourseSelection.teaching_class_id == tc.id,
+                        CourseSelection.status == SelectionState.SELECTED,
+                    )
+                ).scalar() or 0
+                if enrolled >= tc.capacity:
                     continue
                 db.add(CourseSelection(
                     student_id=stu.id, teaching_class_id=tc.id,
                     course_id=tc.course_id, semester=SEMESTER,
                 ))
-                tc.selected_count += 1
                 n_sel += 1
         db.commit()
         print(f"  选课记录 {n_sel}")

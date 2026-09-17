@@ -36,6 +36,10 @@
 | `CAPACITY_BELOW_ENROLLED` | 409 | 容量不能小于已选人数（TASK-012） |
 | `TEACHING_CLASS_COURSE_IMMUTABLE` | 409 | 教学班所属课程不可修改（TASK-012） |
 | `TEACHING_CLASS_TERM_IMMUTABLE` | 409 | 教学班所属学期不可修改（TASK-012） |
+| `TEACHING_SCHEDULE_TERM_ENDED` | 409 | 学期已结束，教学安排只读（TASK-013） |
+| `TEACHING_SCHEDULE_TEACHER_CONFLICT` | 409 | 教师在该时段已有其他教学安排（TASK-013） |
+| `TEACHING_SCHEDULE_CLASSROOM_CONFLICT` | 409 | 教室在该时段已被占用（TASK-013） |
+| `TEACHING_SCHEDULE_CLASS_CONFLICT` | 409 | 教学班在该时段已有其他安排（TASK-013） |
 
 ---
 
@@ -230,6 +234,7 @@ POST /api/v1/auth/login
 | POST | `/teaching-classes/{class_id}/selection?open=true\|false` | 开放/关闭选课 | `selection:manage` |
 | GET | `/teaching-classes/{class_id}/schedules` | 排课列表 | 登录 |
 | POST | `/teaching-classes/{class_id}/schedules` | 添加排课（**冲突检测**） | `schedule:write` |
+| PUT | `/teaching-classes/{class_id}/schedules/{schedule_id}` | 修改排课（重新检测冲突） | `schedule:write` |
 | DELETE | `/teaching-classes/{class_id}/schedules/{schedule_id}` | 删除排课 | `schedule:write` |
 | GET | `/teaching-classes/{class_id}/students` | 教学班学生名单（含专业与行政班，教师仅限本人） | `selection:read` |
 | POST | `/teaching-classes/{class_id}/students` | 教务添加学生到教学班（仅建立归属关系，遵守容量约束） | `selection:manage` |
@@ -246,7 +251,29 @@ POST /api/v1/auth/login
 - 删除仅限空教学班（无 `CourseSelection` 且无 `Grade`）；`ENDED` 学期不可增删改（`TEACHING_CLASS_TERM_ENDED`）。
 - `GET /teaching-classes` 的 `term_id` / `course_id` / `teacher_id` 过滤在数据库查询层完成。
 
-**排课冲突判定**（`services/teaching.py`）：同学期 + 同星期 + 节次区间重叠 + 周次区间重叠 + 单双周相容，检测教室冲突与教师冲突两类。开放选课要求已分配教师且已排课。
+**排课冲突判定**（`services/teaching.py`）：同学期 + 同星期 + 节次区间重叠 + 周次区间重叠 + 单双周相容。检测**三类**冲突——教学班自身、教室、教师——分别返回 `TEACHING_SCHEDULE_CLASS_CONFLICT` / `TEACHING_SCHEDULE_CLASSROOM_CONFLICT` / `TEACHING_SCHEDULE_TEACHER_CONFLICT`。开放选课要求已分配教师且已排课。
+
+### 6.4 教学安排 `/api/v1/teaching-schedules`（TASK-013）
+
+复用既有 `Schedule` 模型（`schedules` 表）作为教学安排实体；一个教学班可有多条安排。权限复用 `schedule:read` / `schedule:write`（不新增权限码）。
+
+| 方法 | 路径 | 说明 | 权限 |
+|---|---|---|---|
+| GET | `/teaching-schedules` | 列表（`term_id`、`teaching_class_id`、`teacher_id`、`weekday`、`classroom` 均在数据库层过滤，按星期/节次/周次排序） | `ACADEMIC_ADMIN` |
+| GET | `/teaching-schedules/{schedule_id}` | 详情 | `ACADEMIC_ADMIN` |
+| POST | `/teaching-schedules` | 新增（`teaching_class_id` + `classroom_id` + 星期/节次/周次/单双周；**自动检测三类冲突**） | `schedule:write` |
+| PUT | `/teaching-schedules/{schedule_id}` | 修改（仅星期/节次/周次/教室；`teaching_class_id` 不可变） | `schedule:write` |
+| DELETE | `/teaching-schedules/{schedule_id}` | 删除 | `schedule:write` |
+| GET | `/teaching-schedules/mine?term_id=...` | 我的教学安排（教师，身份取自 token） | 登录（教师） |
+| GET | `/teaching-schedules/my?term_id=...` | 我的课程安排（学生，本人已选教学班；未选课返回空列表） | 登录（学生） |
+
+**教学安排业务规则（TASK-013）**
+
+- 学期生命周期：`PLANNED` / `ACTIVE` 可增删改查；`ENDED` 只读，增删改返回 409 `TEACHING_SCHEDULE_TERM_ENDED`。
+- 冲突检测在数据库查询层完成（`ConflictChecker`），修改时排除自身（`id != 当前 id`）。
+- 教室校验：必须存在、`ACTIVE`、且容量 ≥ 教学班容量。
+- `teaching_class_id` 创建后不可修改（`ScheduleUpdate` 不接收该字段）。
+- 响应富化：`teaching_class_code/name`、`course_code/name`、`teacher_name`、`term_name`、`classroom_code/building`。
 
 ---
 
@@ -268,7 +295,7 @@ POST /api/v1/auth/login
 3. **课程类型**：仅 `ELECTIVE`/`PUBLIC_ELECTIVE` 可自主选择，必修课（`REQUIRED`/`PUBLIC_REQUIRED`/`PRACTICE`）拒绝
 4. 选课时间窗口（`selection_periods`）
 5. 重复选课 / 同学期同课程其他教学班
-6. 容量（`selected_count < capacity`）
+6. 容量（动态统计 `COUNT(CourseSelection)` ≥ `capacity` 时满员，`selected_count` 已不落库）
 7. 时间冲突（与已选课程比对排课）
 8. 先修课程（已审核且达最低分）
 
