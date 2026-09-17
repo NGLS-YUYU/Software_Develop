@@ -37,6 +37,20 @@ class CourseType:
     ALL = (REQUIRED, ELECTIVE, PUBLIC_REQUIRED, PUBLIC_ELECTIVE, PRACTICE)
 
 
+class AssessmentType:
+    """考核方式（TASK-002）。
+
+    仅作方案标识，权重换算由 Service 层负责（CLAUDE.md §21：不硬编码在模型）。
+    - "32"：两段式 —— 平时 20% + 期末 80%
+    - "48" / "64"：三段式 —— 平时 20% + 期中 30% + 期末 50%
+    """
+
+    HOURS_32 = "32"
+    HOURS_48 = "48"
+    HOURS_64 = "64"
+    ALL = (HOURS_32, HOURS_48, HOURS_64)
+
+
 class Course(Base, IdMixin, TimestampMixin):
     __tablename__ = "courses"
     __table_args__ = (
@@ -48,6 +62,10 @@ class Course(Base, IdMixin, TimestampMixin):
         CheckConstraint("exam_type IN ('EXAM','CHECK')", name="ck_courses_exam_type"),
         CheckConstraint("status IN ('ACTIVE','INACTIVE')", name="ck_courses_status"),
         CheckConstraint("credits > 0", name="ck_courses_credits"),
+        CheckConstraint(
+            "assessment_type IS NULL OR assessment_type IN ('32','48','64')",
+            name="ck_courses_assessment",
+        ),
         # 权重之和恒为 1，避免总评计算出现无意义结果（CLAUDE.md §21）
         CheckConstraint(
             "regular_weight + final_weight = 1.00", name="ck_courses_weight"
@@ -66,6 +84,10 @@ class Course(Base, IdMixin, TimestampMixin):
     course_type: Mapped[str] = mapped_column(String(20), nullable=False)
     credits: Mapped[float] = mapped_column(Numeric(4, 1), nullable=False, comment="学分")
     total_hours: Mapped[int] = mapped_column(SmallInteger, nullable=False, comment="总学时")
+    assessment_type: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="考核方式：32=两段式；48/64=三段式（TASK-002）",
+    )
     theory_hours: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=0, server_default="0"
     )

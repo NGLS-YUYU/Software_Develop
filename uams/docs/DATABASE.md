@@ -48,8 +48,9 @@
 |---|---|---|
 | `bc0a832224a4` | `20260915_0114_bc0a832224a4_create_rbac_tables.py` | RBAC 五张表 |
 | `7d34560e8aba` | `20260915_0128_7d34560e8aba_create_business_tables.py` | 其余 23 张业务表 |
+| `ce5a2a2a3f11` | `20260917_1745_ce5a2a2a3f11_add_assessment_type_and_mid_score.py` | 课程 `assessment_type`、成绩 `mid_score`（TASK-002） |
 
-> 当前 head 为 `7d34560e8aba`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
+> 当前 head 为 `ce5a2a2a3f11`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
 
 本文档是 `CLAUDE.md §5/§6` 与 `PRD §12` 的字段级落地。表结构变更必须先改本文档，再写 Alembic migration。
 
@@ -335,6 +336,7 @@ KEY idx_teachers_college (college_id)
 | course_type | VARCHAR(20) | NOT NULL | 课程性质 |
 | credits | DECIMAL(4,1) | NOT NULL | 学分 |
 | total_hours | SMALLINT UNSIGNED | NOT NULL | 总学时 |
+| assessment_type | VARCHAR(20) | NULL | 考核方式：`32`=两段式；`48`/`64`=三段式（TASK-002） |
 | theory_hours | SMALLINT UNSIGNED | NOT NULL, DEFAULT 0 | 理论学时 |
 | practice_hours | SMALLINT UNSIGNED | NOT NULL, DEFAULT 0 | 实践学时 |
 | exam_type | VARCHAR(20) | NOT NULL, DEFAULT 'EXAM' | EXAM 考试 / CHECK 考查 |
@@ -346,12 +348,15 @@ KEY idx_teachers_college (college_id)
 ```sql
 CONSTRAINT ck_courses_type CHECK (course_type IN
   ('REQUIRED','ELECTIVE','PUBLIC_REQUIRED','PUBLIC_ELECTIVE','PRACTICE'))
+CONSTRAINT ck_courses_assessment CHECK (assessment_type IS NULL
+  OR assessment_type IN ('32','48','64'))
 CONSTRAINT ck_courses_weight CHECK (regular_weight + final_weight = 1.00)
 CONSTRAINT ck_courses_credits CHECK (credits > 0)
 KEY idx_courses_college_type (college_id, course_type)
 ```
 
 > 成绩权重放在课程上，由后端统一计算总评（CLAUDE.md §21：不得硬编码到前端）。`CHECK` 保证两项权重和恒为 1。
+> `assessment_type` 仅作考核方案标识，权重换算在 Service 层完成，不写入模型（TASK-002）。
 
 ## 6.2 course_prerequisites
 
@@ -587,6 +592,7 @@ KEY idx_selection_period (semester, status)
 | course_id | BIGINT UNSIGNED | NOT NULL, FK → courses(id) RESTRICT | 冗余 |
 | semester | VARCHAR(16) | NOT NULL | 冗余 |
 | regular_score | DECIMAL(5,2) | NULL | 平时成绩 |
+| mid_score | DECIMAL(5,2) | NULL | 期中成绩（TASK-002） |
 | final_score | DECIMAL(5,2) | NULL | 期末成绩 |
 | total_score | DECIMAL(5,2) | NULL | 总评，后端按课程权重计算 |
 | grade_point | DECIMAL(3,2) | NULL | 绩点 |
@@ -604,6 +610,7 @@ UNIQUE KEY uk_grades (student_id, teaching_class_id)
 CONSTRAINT ck_grades_status CHECK (status IN
   ('DRAFT','SUBMITTED','APPROVED','REJECTED'))
 CONSTRAINT ck_grades_regular CHECK (regular_score IS NULL OR regular_score BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_mid     CHECK (mid_score     IS NULL OR mid_score     BETWEEN 0 AND 100)
 CONSTRAINT ck_grades_final   CHECK (final_score   IS NULL OR final_score   BETWEEN 0 AND 100)
 CONSTRAINT ck_grades_total   CHECK (total_score   IS NULL OR total_score   BETWEEN 0 AND 100)
 KEY idx_grades_student_sem (student_id, semester)

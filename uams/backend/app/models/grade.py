@@ -75,6 +75,10 @@ class Grade(Base, IdMixin, TimestampMixin):
             name="ck_grades_regular",
         ),
         CheckConstraint(
+            "mid_score IS NULL OR mid_score BETWEEN 0 AND 100",
+            name="ck_grades_mid",
+        ),
+        CheckConstraint(
             "final_score IS NULL OR final_score BETWEEN 0 AND 100",
             name="ck_grades_final",
         ),
@@ -106,6 +110,9 @@ class Grade(Base, IdMixin, TimestampMixin):
 
     regular_score: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 2), nullable=True, comment="平时成绩"
+    )
+    mid_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2), nullable=True, comment="期中成绩（TASK-002）"
     )
     final_score: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 2), nullable=True, comment="期末成绩"

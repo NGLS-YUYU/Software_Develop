@@ -21,6 +21,7 @@ router = APIRouter(prefix="/grades", tags=["成绩"])
 class GradeItem(BaseModel):
     grade_id: int
     regular_score: Decimal | None = Field(None, ge=0, le=100)
+    mid_score: Decimal | None = Field(None, ge=0, le=100)
     final_score: Decimal | None = Field(None, ge=0, le=100)
 
 
@@ -41,6 +42,7 @@ class GradeOut(BaseModel):
     course_name: str | None = None
     semester: str
     regular_score: Decimal | None = None
+    mid_score: Decimal | None = None
     final_score: Decimal | None = None
     total_score: Decimal | None = None
     grade_point: Decimal | None = None

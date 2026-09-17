@@ -5,6 +5,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 COURSE_TYPE = "^(REQUIRED|ELECTIVE|PUBLIC_REQUIRED|PUBLIC_ELECTIVE|PRACTICE)$"
+ASSESSMENT_TYPE = "^(32|48|64)$"
 
 
 class CourseBase(BaseModel):
@@ -14,6 +15,9 @@ class CourseBase(BaseModel):
     course_type: str = Field(..., pattern=COURSE_TYPE)
     credits: Decimal = Field(..., gt=0, le=30)
     total_hours: int = Field(..., ge=0, le=500)
+    assessment_type: str | None = Field(
+        None, pattern=ASSESSMENT_TYPE, description="32=两段式；48/64=三段式"
+    )
     theory_hours: int = Field(0, ge=0, le=500)
     practice_hours: int = Field(0, ge=0, le=500)
     exam_type: str = Field("EXAM", pattern="^(EXAM|CHECK)$")
@@ -40,6 +44,7 @@ class CourseUpdate(BaseModel):
     course_type: str | None = Field(None, pattern=COURSE_TYPE)
     credits: Decimal | None = Field(None, gt=0, le=30)
     total_hours: int | None = Field(None, ge=0, le=500)
+    assessment_type: str | None = Field(None, pattern=ASSESSMENT_TYPE)
     theory_hours: int | None = Field(None, ge=0, le=500)
     practice_hours: int | None = Field(None, ge=0, le=500)
     exam_type: str | None = Field(None, pattern="^(EXAM|CHECK)$")

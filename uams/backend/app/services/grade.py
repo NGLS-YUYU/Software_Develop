@@ -124,6 +124,8 @@ class GradeService:
                 raise Conflict("成绩已提交待审核，请先由教务驳回后再修改")
             if "regular_score" in item:
                 g.regular_score = item["regular_score"]
+            if "mid_score" in item:
+                g.mid_score = item["mid_score"]
             if "final_score" in item:
                 g.final_score = item["final_score"]
             # 总评由后端算，忽略前端可能传来的 total_score
