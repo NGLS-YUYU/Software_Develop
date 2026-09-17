@@ -41,6 +41,16 @@
 | POST | `/auth/change-password` | 修改密码（204） | 登录 |
 | POST | `/auth/logout` | 退出登录（204，前端丢弃 token） | 登录 |
 
+**用户管理**（TASK-001）
+
+| 方法 | 路径 | 说明 | 权限 |
+|---|---|---|---|
+| GET | `/users` | 用户列表（分页/按类型、状态筛选） | `user:read` |
+| GET | `/users/{id}` | 用户详情 | `user:read` |
+| POST | `/users` | 新建账号（默认按 user_type 分配角色） | `user:write` |
+| PUT | `/users/{id}/password` | 重置密码（204，重置后解锁） | `user:write` |
+| PUT | `/users/{id}/status` | 停用/启用账号 | `user:write` |
+
 **请求示例**
 
 ```json
@@ -347,12 +357,13 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 ---
 
-## 16. 权限码清单（38 项）
+## 16. 权限码清单（40 项）
 
 | 模块 | 权限码 |
 |---|---|
 | 基础数据 | `college:read/write`、`major:read/write`、`class:read/write`、`classroom:read/write` |
 | 人员 | `student:read/write/export`、`teacher:read/write` |
+| 用户 | `user:read/write` |
 | 课程 | `course:read/write`、`curriculum:read/write` |
 | 开课排课 | `teaching:read/write`、`schedule:read/write` |
 | 选课 | `selection:read/write/manage` |
@@ -368,7 +379,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 |---|---|---|
 | `STUDENT` | 10 | 课程查看、培养方案、课表、选课、成绩查看、考试、评价、公告 |
 | `TEACHER` | 12 | 课程/班级/学生查看、教学任务、课表、选课查看、成绩录入与提交、考试、评价、公告 |
-| `ACADEMIC_ADMIN` | 38 | 全部权限 |
+| `ACADEMIC_ADMIN` | 40 | 全部权限 |
 
 ---
 

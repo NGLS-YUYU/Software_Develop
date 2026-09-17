@@ -18,7 +18,7 @@ backend/
 │   ├── repositories/     数据访问层
 │   ├── api/
 │   │   ├── deps.py       认证与权限依赖注入
-│   │   └── v1/           10 个路由模块，70 个路径
+│   │   └── v1/           11 个路由模块，75 个路径
 │   └── utils/            预留（当前为空）
 ├── alembic/              数据库迁移
 ├── tests/                pytest 测试

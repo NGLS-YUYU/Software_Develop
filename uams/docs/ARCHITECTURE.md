@@ -63,7 +63,7 @@ backend/
 │   ├── services/             BaseCrudService + 8 个业务 Service
 │   ├── api/
 │   │   ├── deps.py           get_current_user / RequireRoles / RequirePermissions
-│   │   └── v1/               10 个路由模块 + __init__.py 汇总
+│   │   └── v1/               11 个路由模块 + __init__.py 汇总
 │   └── utils/                预留（当前为空）
 ├── alembic/                  数据库迁移
 ├── tests/                    pytest 测试
@@ -103,6 +103,7 @@ backend/
 | 文件 | 前缀 | 说明 |
 |---|---|---|
 | `api/v1/auth.py` | `/auth` | 登录、当前用户、改密、退出 |
+| `api/v1/user.py` | `/users` | 用户账号管理（列表/新建/重置密码/停用启用） |
 | `api/v1/organization.py` | `/colleges` `/majors` `/classes` `/classrooms` | 基础数据 CRUD |
 | `api/v1/person.py` | `/students` `/teachers` | 人员档案与账号联动 |
 | `api/v1/course.py` | `/courses` `/curriculum-plans` | 课程、先修、培养方案 |

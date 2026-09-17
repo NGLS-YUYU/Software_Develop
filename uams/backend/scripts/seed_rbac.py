@@ -35,6 +35,9 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("student:export", "导出学生", "student"),
     ("teacher:read", "查看教师", "teacher"),
     ("teacher:write", "维护教师", "teacher"),
+    # 用户账号（TASK-001：用户管理）
+    ("user:read", "查看用户", "user"),
+    ("user:write", "维护用户", "user"),
     # 课程
     ("course:read", "查看课程", "course"),
     ("course:write", "维护课程", "course"),

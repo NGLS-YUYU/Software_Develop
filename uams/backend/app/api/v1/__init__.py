@@ -13,11 +13,13 @@ from app.api.v1 import (
     schedule,
     selection,
     teaching,
+    user,
 )
 
 api_router = APIRouter()
 for _m in (
     auth,
+    user,
     organization,
     person,
     course,
