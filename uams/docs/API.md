@@ -1,7 +1,7 @@
 # 后端 API 文档
 
 > 依据当前 FastAPI 路由实际代码整理（TASK-DOC-001，2026-09-17）。
-> **73 个路径 / 111 个操作**，与代码一一对应，未列出的接口均不存在。
+> **74 个路径 / 113 个操作**，与代码一一对应，未列出的接口均不存在。
 
 ---
 
@@ -203,7 +203,9 @@ POST /api/v1/auth/login
 | GET | `/teaching-classes/{class_id}/schedules` | 排课列表 | 登录 |
 | POST | `/teaching-classes/{class_id}/schedules` | 添加排课（**冲突检测**） | `schedule:write` |
 | DELETE | `/teaching-classes/{class_id}/schedules/{schedule_id}` | 删除排课 | `schedule:write` |
-| GET | `/teaching-classes/{class_id}/students` | 教学班学生名单（教师仅限本人） | `selection:read` |
+| GET | `/teaching-classes/{class_id}/students` | 教学班学生名单（含专业与行政班，教师仅限本人） | `selection:read` |
+| POST | `/teaching-classes/{class_id}/students` | 教务添加学生到教学班（仅建立归属关系，不做选课校验） | `selection:manage` |
+| DELETE | `/teaching-classes/{class_id}/students/{student_id}` | 教务移除教学班学生 | `selection:manage` |
 | GET | `/teaching-classes/{class_id}/selection-stats` | 选课统计（含计数一致性检查） | `selection:read` |
 
 **排课冲突判定**（`services/teaching.py`）：同学期 + 同星期 + 节次区间重叠 + 周次区间重叠 + 单双周相容，检测教室冲突与教师冲突两类。开放选课要求已分配教师且已排课。

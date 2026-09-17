@@ -55,6 +55,7 @@ class SelectionService:
             .options(
                 selectinload(CourseSelection.student).selectinload(Student.user),
                 selectinload(CourseSelection.student).selectinload(Student.klass),
+                selectinload(CourseSelection.student).selectinload(Student.major),
             )
             .where(
                 CourseSelection.teaching_class_id == teaching_class_id,

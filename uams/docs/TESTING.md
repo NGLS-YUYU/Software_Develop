@@ -30,10 +30,11 @@ backend/tests/
 ├── test_gpa_ranking.py   # GPA 换算与班级/专业排名（16 个用例）
 ├── test_teacher_grade.py # 教师成绩录入与状态机（15 个用例）
 ├── test_grade_review.py  # 教务处成绩审核（18 个用例）
-└── test_student_grade.py # 学生成绩查询（18 个用例）
+├── test_student_grade.py # 学生成绩查询（18 个用例）
+└── test_teaching_class.py # 教学班基础管理（23 个用例）
 ```
 
-**合计 125 个用例，全部通过。**
+**合计 148 个用例，全部通过。**
 
 | 文件 | 覆盖内容 |
 |---|---|
@@ -46,6 +47,7 @@ backend/tests/
 | `test_teacher_grade.py` | 教师我的课程、跨教师/跨学生越权防护、学生名单（含成绩状态）、草稿保存、非法成绩拒绝、32/48 课时与理论+实践录入、完整/不完整提交、SUBMITTED/APPROVED/REJECTED 状态流转（TASK-005） |
 | `test_grade_review.py` | 待审核列表权限、审核通过/驳回、非法状态流转（APPROVED/DRAFT/REJECTED/NOT_ENTERED 禁止审核）、审核后教师联动、教师/学生越权防护、审核权限隔离（TASK-006） |
 | `test_student_grade.py` | 学生查看本人 APPROVED 成绩、DRAFT/SUBMITTED/REJECTED/NOT_ENTERED 不可见、grade_id/student_id 越权防护、GPA 正确/加权/不及格计入/两位小数/不落库、班级/专业排名且与 RankingService 一致、教师/学生反向越权（TASK-007） |
+| `test_teaching_class.py` | 教务处创建教学班（课程/教师/教师身份/唯一性校验）、教务/教师/学生数据权限隔离、教学班学生名单（含专业与行政班）、教务处添加/移除学生、同一学生多教学班、不同课程/学期教学班共存、TASK-005/006/007 回归（TASK-008） |
 
 ### 2.2 测试不足的部分 ⚠️
 

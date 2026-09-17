@@ -25,6 +25,10 @@ class SelectionCreate(BaseModel):
     teaching_class_id: int
 
 
+class ClassStudentAdd(BaseModel):
+    student_id: int
+
+
 class SelectionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -45,6 +49,7 @@ class StudentBrief(BaseModel):
     student_id: int
     student_no: str
     real_name: str
+    major: str | None = None
     class_name: str | None = None
 
 
@@ -174,6 +179,7 @@ def class_students(
                 student_id=stu.id,
                 student_no=stu.student_no,
                 real_name=stu.user.real_name if stu.user else "",
+                major=stu.major.name if stu.major else None,
                 class_name=stu.klass.name if stu.klass else None,
             )
         )
@@ -187,6 +193,41 @@ def selection_stats(
     _=Depends(RequirePermissions("selection:read")),
 ):
     return SelectionService(db).stats_by_class(class_id)
+
+
+@mgmt.post(
+    "/{class_id}/students",
+    status_code=status.HTTP_201_CREATED,
+    summary="教务添加学生到教学班",
+)
+def add_student_to_class(
+    class_id: int,
+    payload: ClassStudentAdd,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("selection:manage")),
+):
+    """教务处将学生加入教学班（TASK-008），仅建立归属关系，不做选课校验。"""
+    TeachingClassService(db).add_student(class_id, payload.student_id)
+    return {
+        "student_id": payload.student_id,
+        "teaching_class_id": class_id,
+        "message": "已加入教学班",
+    }
+
+
+@mgmt.delete(
+    "/{class_id}/students/{student_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="教务移除教学班学生",
+)
+def remove_student_from_class(
+    class_id: int,
+    student_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("selection:manage")),
+):
+    """教务处将学生从教学班移除（TASK-008）。"""
+    TeachingClassService(db).remove_student(class_id, student_id)
 
 
 # =========================== 选课时间窗口 ===========================

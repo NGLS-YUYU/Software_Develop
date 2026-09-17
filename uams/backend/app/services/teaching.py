@@ -7,14 +7,18 @@
 
 from typing import Any
 
+from datetime import datetime
+
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import Conflict, NotFound
 from app.models.course import Course
 from app.models.organization import Classroom, College
-from app.models.person import Teacher
+from app.models.person import Student, Teacher
+from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import Schedule, TeachingClass, TeachingTask, WeekType
+from app.models.user import UserType
 from app.services.base import BaseCrudService
 
 
@@ -202,8 +206,18 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         task = self.db.get(TeachingTask, data["task_id"])
         if task is None:
             raise NotFound(f"教学任务不存在（id={data['task_id']}）")
-        if data.get("teacher_id") and not self.db.get(Teacher, data["teacher_id"]):
-            raise NotFound(f"教师不存在（id={data['teacher_id']}）")
+        if self.db.get(Course, task.course_id) is None:
+            raise NotFound(f"课程不存在（id={task.course_id}）")
+
+        teacher_id = data.get("teacher_id")
+        if teacher_id:
+            teacher = self.db.get(Teacher, teacher_id)
+            if teacher is None:
+                raise NotFound(f"教师不存在（id={teacher_id}）")
+            # 教学班教师必须具有教师身份（TASK-008）
+            if teacher.user is None or teacher.user.user_type != UserType.TEACHER:
+                raise Conflict("授课教师必须具有教师身份")
+
         self._check_unique({"code": data["code"]})
 
         obj = TeachingClass(
@@ -212,7 +226,7 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
             # course_id / semester 从任务带入，保持冗余字段一致（DATABASE.md §13.3）
             course_id=task.course_id,
             semester=task.semester,
-            teacher_id=data.get("teacher_id"),
+            teacher_id=teacher_id,
             capacity=data["capacity"],
         )
         self.db.add(obj)
@@ -315,3 +329,54 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         tc.selection_status = "OPEN" if open_ else "CLOSED"
         self._commit()
         return tc
+
+    # --- 学生归属管理（TASK-008，仅教务处） ---
+
+    def add_student(self, class_id: int, student_id: int) -> CourseSelection:
+        """教务处将学生加入教学班。仅建立归属关系，不做选课校验。"""
+        tc = self.get_or_404(class_id)
+        if tc.status != "ACTIVE":
+            raise Conflict("该教学班已取消，无法添加学生")
+        if self.db.get(Student, student_id) is None:
+            raise NotFound(f"学生不存在（id={student_id}）")
+
+        sel = self.db.execute(
+            select(CourseSelection).where(
+                CourseSelection.student_id == student_id,
+                CourseSelection.teaching_class_id == class_id,
+            )
+        ).scalar_one_or_none()
+        if sel is not None and sel.status == SelectionState.SELECTED:
+            raise Conflict("该学生已在此教学班中")
+
+        if sel is not None:  # 曾退课，复用该行
+            sel.status = SelectionState.SELECTED
+            sel.selected_at = datetime.now()
+            sel.dropped_at = None
+        else:
+            sel = CourseSelection(
+                student_id=student_id,
+                teaching_class_id=class_id,
+                course_id=tc.course_id,
+                semester=tc.semester,
+            )
+            self.db.add(sel)
+        tc.selected_count += 1
+        self._commit()
+        return sel
+
+    def remove_student(self, class_id: int, student_id: int) -> None:
+        """教务处将学生从教学班移除。"""
+        tc = self.get_or_404(class_id)
+        sel = self.db.execute(
+            select(CourseSelection).where(
+                CourseSelection.student_id == student_id,
+                CourseSelection.teaching_class_id == class_id,
+            )
+        ).scalar_one_or_none()
+        if sel is None or sel.status != SelectionState.SELECTED:
+            raise NotFound("该学生不在此教学班中")
+        sel.status = SelectionState.DROPPED
+        sel.dropped_at = datetime.now()
+        tc.selected_count = max(0, tc.selected_count - 1)
+        self._commit()
