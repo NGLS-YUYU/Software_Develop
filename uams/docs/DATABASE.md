@@ -52,8 +52,9 @@
 | `ce5a2a2a3f11` | `20260917_1745_ce5a2a2a3f11_add_assessment_type_and_mid_score.py` | 课程 `assessment_type`、成绩 `mid_score`（TASK-002） |
 | `d81e869930fb` | `20260917_1757_d81e869930fb_add_theory_and_practice_score_columns.py` | 成绩 `mid_theory_score`/`mid_practice_score`/`final_theory_score`/`final_practice_score`（TASK-002 补充） |
 | `a3f9c2e8b1d4` | `20260918_1000_a3f9c2e8b1d4_add_academic_terms.py` | 新增 `academic_terms` 表；`teaching_classes` 增加 `term_id`（NOT NULL）、编号唯一改为 `(term_id, code)`（TASK-011） |
+| `c4d8e2f6a9b1` | `20260918_1100_c4d8e2f6a9b1_add_teaching_class_name.py` | `teaching_classes` 增加 `name`（展示名，区别于编号 code）、增加 `idx_tc_course` 索引（TASK-012） |
 
-> 当前 head 为 `a3f9c2e8b1d4`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
+> 当前 head 为 `c4d8e2f6a9b1`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
 
 本文档是 `CLAUDE.md §5/§6` 与 `PRD §12` 的字段级落地。表结构变更必须先改本文档，再写 Alembic migration。
 
@@ -476,11 +477,12 @@ KEY idx_teaching_tasks_semester (semester)
 |---|---|---|---|
 | id | BIGINT UNSIGNED | PK | |
 | code | VARCHAR(40) | NOT NULL | 教学班号（同一学期内唯一，跨学期可复用） |
+| name | VARCHAR(100) | NULL | 教学班名称（展示用，区别于编号 code；TASK-012） |
 | term_id | BIGINT UNSIGNED | NOT NULL, FK → academic_terms(id) RESTRICT | 所属学期 |
 | task_id | BIGINT UNSIGNED | NOT NULL, FK → teaching_tasks(id) CASCADE | |
 | course_id | BIGINT UNSIGNED | NOT NULL, FK → courses(id) RESTRICT | 冗余，避免高频三表 JOIN |
 | semester | VARCHAR(16) | NOT NULL | 冗余，同上 |
-| teacher_id | BIGINT UNSIGNED | NULL, FK → teachers(id) RESTRICT | 授课教师，排课前可为空 |
+| teacher_id | BIGINT UNSIGNED | NULL, FK → teachers(id) RESTRICT | 授课教师（API 创建时必填） |
 | capacity | SMALLINT UNSIGNED | NOT NULL | 容量上限 |
 | selected_count | SMALLINT UNSIGNED | NOT NULL, DEFAULT 0 | 已选人数 |
 | selection_status | VARCHAR(20) | NOT NULL, DEFAULT 'CLOSED' | CLOSED / OPEN / FINISHED |
@@ -494,11 +496,21 @@ CONSTRAINT ck_teaching_classes_cnt CHECK (selected_count >= 0)
 UNIQUE KEY uk_tc_term_code (term_id, code)
 KEY idx_tc_term (term_id)
 KEY idx_tc_semester_course (semester, course_id)
+KEY idx_tc_course (course_id)
 KEY idx_tc_teacher (teacher_id)
 KEY idx_tc_selection (selection_status, semester)
 ```
 
 > `selected_count` 是冗余计数，必须与 `course_selections` 实际行数一致。选课/退课**必须在同一事务内**更新两者（CLAUDE.md §19），并用 `SELECT ... FOR UPDATE` 锁住本行防超卖（§20）。
+
+**开课计划业务规则（TASK-012）**
+
+- 创建：`course`（经 task）、`academic_term`、`teacher` 必须存在；`term.status != ENDED`；`teacher` 必须具有教师身份。
+- `term_id` / `course_id` 一经创建**不可修改**（提交即 409 `TEACHING_CLASS_TERM_IMMUTABLE` / `TEACHING_CLASS_COURSE_IMMUTABLE`）。
+- 更换教师：该教学班存在 `SUBMITTED` / `APPROVED` 成绩时锁定（409 `TEACHING_CLASS_TEACHER_LOCKED`）。
+- 容量：`capacity` 不得小于已选人数（409 `CAPACITY_BELOW_ENROLLED`）；选课/教务添加学生满员时 409 `TEACHING_CLASS_FULL`。
+- 删除：仅空教学班（无 `CourseSelection` 且无 `Grade`）可删除（409 `TEACHING_CLASS_HAS_DATA`）；`ENDED` 学期不可增删改（409 `TEACHING_CLASS_TERM_ENDED`）。
+- 查询：`term_id` / `course_id` / `teacher_id` 均在数据库层过滤，避免 Python 侧二次过滤与 N+1。
 
 ## 7.4 schedules
 

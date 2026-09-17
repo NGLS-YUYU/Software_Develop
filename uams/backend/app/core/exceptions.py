@@ -67,3 +67,40 @@ class Conflict(BizError):
     code = "RESOURCE_CONFLICT"
     http_status = status.HTTP_409_CONFLICT
     message = "资源冲突"
+
+
+# --- 教学班专项（TASK-012） ---
+# 复用现有 Conflict（409）体系，仅扩展出更精确的错误码，供前端区分处理。
+class TeachingClassFull(Conflict):
+    code = "TEACHING_CLASS_FULL"
+    message = "教学班容量已满"
+
+
+class TeachingClassHasData(Conflict):
+    code = "TEACHING_CLASS_HAS_DATA"
+    message = "教学班存在选课或成绩数据，无法删除"
+
+
+class TeachingClassTermEnded(Conflict):
+    code = "TEACHING_CLASS_TERM_ENDED"
+    message = "该学期已结束，不能操作教学班"
+
+
+class TeachingClassTeacherLocked(Conflict):
+    code = "TEACHING_CLASS_TEACHER_LOCKED"
+    message = "该教学班已有成绩提交或审核，无法更换教师"
+
+
+class CapacityBelowEnrolled(Conflict):
+    code = "CAPACITY_BELOW_ENROLLED"
+    message = "容量不能小于已选人数"
+
+
+class TeachingClassCourseImmutable(Conflict):
+    code = "TEACHING_CLASS_COURSE_IMMUTABLE"
+    message = "教学班所属课程不可修改"
+
+
+class TeachingClassTermImmutable(Conflict):
+    code = "TEACHING_CLASS_TERM_IMMUTABLE"
+    message = "教学班所属学期不可修改"

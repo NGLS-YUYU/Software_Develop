@@ -29,6 +29,13 @@
 | `RESOURCE_NOT_FOUND` | 404 | 资源不存在 |
 | `RESOURCE_CONFLICT` | 409 | 冲突（唯一约束、引用保护、业务规则） |
 | `VALIDATION_ERROR` | 422 | 请求参数校验失败 |
+| `TEACHING_CLASS_FULL` | 409 | 教学班容量已满（TASK-012） |
+| `TEACHING_CLASS_HAS_DATA` | 409 | 教学班存在选课或成绩数据，无法删除（TASK-012） |
+| `TEACHING_CLASS_TERM_ENDED` | 409 | 学期已结束，教学班只读（TASK-012） |
+| `TEACHING_CLASS_TEACHER_LOCKED` | 409 | 已有成绩提交/审核，无法更换教师（TASK-012） |
+| `CAPACITY_BELOW_ENROLLED` | 409 | 容量不能小于已选人数（TASK-012） |
+| `TEACHING_CLASS_COURSE_IMMUTABLE` | 409 | 教学班所属课程不可修改（TASK-012） |
+| `TEACHING_CLASS_TERM_IMMUTABLE` | 409 | 教学班所属学期不可修改（TASK-012） |
 
 ---
 
@@ -214,21 +221,30 @@ POST /api/v1/auth/login
 
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
-| GET | `/teaching-classes` | 列表（`semester`、`term_id`、`course_id`、`teacher_id`、`selection_status`） | 登录 |
+| GET | `/teaching-classes` | 列表（`semester`、`term_id`、`course_id`、`teacher_id`、`selection_status`，均在数据库层过滤） | 登录 |
 | GET | `/teaching-classes/mine` | 我的授课课程（**教师身份取自 token**，不接受 `teacher_id`；支持 `semester`、`term_id`） | 登录（教师） |
-| GET | `/teaching-classes/{class_id}` | 详情（含排课；返回 `term_id`、`term_name`、`term_status`） | 登录 |
-| POST | `/teaching-classes` | 新增（`term_id` 必填；`ENDED` 学期拒绝） | `teaching:write` |
-| PUT | `/teaching-classes/{class_id}` | 修改（换教师会重检冲突；容量不得小于已选人数） | `teaching:write` |
-| DELETE | `/teaching-classes/{class_id}` | 删除（已有人选课时 409） | `teaching:write` |
+| GET | `/teaching-classes/{class_id}` | 详情（含排课；返回 `term_id`、`term_name`、`term_status`、`name`） | 登录 |
+| POST | `/teaching-classes` | 新增（`term_id`、`teacher_id` 必填，可选 `name`；`ENDED` 学期拒绝） | `teaching:write` |
+| PUT | `/teaching-classes/{class_id}` | 修改（`code`/`name`/`teacher_id`/`capacity`/`selection_status`/`status`；`term_id`/`course_id` 不可变；换教师有 SUBMITTED/APPROVED 成绩时锁定；容量不得小于已选人数） | `teaching:write` |
+| DELETE | `/teaching-classes/{class_id}` | 删除（有选课或成绩时 409 `TEACHING_CLASS_HAS_DATA`；`ENDED` 学期拒绝） | `teaching:write` |
 | POST | `/teaching-classes/{class_id}/selection?open=true\|false` | 开放/关闭选课 | `selection:manage` |
 | GET | `/teaching-classes/{class_id}/schedules` | 排课列表 | 登录 |
 | POST | `/teaching-classes/{class_id}/schedules` | 添加排课（**冲突检测**） | `schedule:write` |
 | DELETE | `/teaching-classes/{class_id}/schedules/{schedule_id}` | 删除排课 | `schedule:write` |
 | GET | `/teaching-classes/{class_id}/students` | 教学班学生名单（含专业与行政班，教师仅限本人） | `selection:read` |
-| POST | `/teaching-classes/{class_id}/students` | 教务添加学生到教学班（仅建立归属关系，不做选课校验） | `selection:manage` |
+| POST | `/teaching-classes/{class_id}/students` | 教务添加学生到教学班（仅建立归属关系，遵守容量约束） | `selection:manage` |
 | DELETE | `/teaching-classes/{class_id}/students/{student_id}` | 教务移除教学班学生 | `selection:manage` |
 | POST | `/teaching-classes/{class_id}/assign-required` | 必修课预安排（按行政班/专业/学院范围，优先级 class_id>major_id>college_id） | `selection:manage` |
 | GET | `/teaching-classes/{class_id}/selection-stats` | 选课统计（含计数一致性检查） | `selection:read` |
+
+**教学班业务规则（TASK-012）**
+
+- 创建要求 `Course`（经 task）、`AcademicTerm`、`Teacher` 均存在，`term.status != ENDED`；`teacher_id` 必填且须具备教师身份。
+- `term_id` / `course_id` 创建后**不可修改**（提交即 409）。
+- 更换教师：存在 `SUBMITTED` / `APPROVED` 成绩时 409 `TEACHING_CLASS_TEACHER_LOCKED`，并重新检测排课冲突。
+- 容量：`capacity` 不得小于已选人数（`CAPACITY_BELOW_ENROLLED`）；学生选课与教务添加学生满员时 409 `TEACHING_CLASS_FULL`（`SELECT ... FOR UPDATE` 防超卖）。
+- 删除仅限空教学班（无 `CourseSelection` 且无 `Grade`）；`ENDED` 学期不可增删改（`TEACHING_CLASS_TERM_ENDED`）。
+- `GET /teaching-classes` 的 `term_id` / `course_id` / `teacher_id` 过滤在数据库查询层完成。
 
 **排课冲突判定**（`services/teaching.py`）：同学期 + 同星期 + 节次区间重叠 + 周次区间重叠 + 单双周相容，检测教室冲突与教师冲突两类。开放选课要求已分配教师且已排课。
 

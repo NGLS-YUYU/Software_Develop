@@ -17,7 +17,7 @@ from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.main import app
 from app.models.course import Course
-from app.models.grade import Grade
+from app.models.grade import Grade, GradeStatus
 from app.models.organization import Class, College, Major
 from app.models.person import Student, Teacher
 from app.models.role import Role, RoleCode, UserRole
@@ -513,3 +513,278 @@ def test_regression_student_grade_query(env):
     r = client.get(f"{PREFIX}/grades/my", headers=auth(env["s1_uname"]))
     assert r.status_code == 200
     assert set(r.json().keys()) == {"items", "gpa", "class_rank", "major_rank"}
+
+
+# =========================== TASK-012：开课计划与教学班管理完善 ===========================
+
+
+def _add_grade(env, tc_id: int, status: str = GradeStatus.DRAFT) -> None:
+    """给教学班直接落一条成绩记录（用于删除/换教师锁定类测试）。"""
+    with SessionLocal() as db:
+        tc = db.get(TeachingClass, tc_id)
+        db.add(Grade(
+            student_id=env["s3_id"], teaching_class_id=tc_id,
+            course_id=tc.course_id, semester=tc.semester,
+            credits=Decimal("2.0"), status=status,
+        ))
+        db.commit()
+
+
+# --- 24 创建带 name 的教学班 ---
+
+
+def test_create_class_with_name(env):
+    r = client.post(
+        f"{PREFIX}/teaching-classes",
+        json={"code": f"{P}N1", "name": "高等数学01班", "task_id": env["task_c1"],
+              "term_id": env["term1"], "teacher_id": env["ta_id"], "capacity": 40},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "高等数学01班"
+
+
+# --- 25 创建必须指定 teacher_id ---
+
+
+def test_create_class_requires_teacher(env):
+    r = client.post(
+        f"{PREFIX}/teaching-classes",
+        json={"code": f"{P}N2", "task_id": env["task_c1"],
+              "term_id": env["term1"], "capacity": 40},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 422
+
+
+# --- 26 已结束学期创建被拒（TEACHING_CLASS_TERM_ENDED） ---
+
+
+def test_create_class_in_ended_term(env):
+    with SessionLocal() as db:
+        term = db.get(AcademicTerm, env["term1"])
+        term.status = "ENDED"
+        db.commit()
+    r = client.post(
+        f"{PREFIX}/teaching-classes",
+        json={"code": f"{P}N3", "task_id": env["task_c1"],
+              "term_id": env["term1"], "teacher_id": env["ta_id"], "capacity": 40},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_TERM_ENDED"
+
+
+# --- 27 同一学期同一课程可由不同教师开多个教学班 ---
+
+
+def test_same_course_multiple_classes_same_term(env):
+    cid = client.get(
+        f"{PREFIX}/teaching-classes/{env['tca1']}", headers=admin_auth()
+    ).json()["course_id"]
+    rows = client.get(
+        f"{PREFIX}/teaching-classes", params={"course_id": cid}, headers=admin_auth()
+    ).json()["items"]
+    codes = {x["code"] for x in rows}
+    # tca1（教师甲）与 tcb1（教师乙）都是课程 c1，同属 term1
+    assert {env["tca1_code"], env["tcb1_code"]} <= codes
+    assert env["tca2_code"] not in codes  # 课程 c2 的教学班不出现
+
+
+# --- 28 修改 code / name ---
+
+
+def test_update_class_code(env):
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tca1']}",
+        json={"code": f"{P}A01-renamed"},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["code"] == f"{P}A01-renamed"
+
+
+def test_update_class_name(env):
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tca1']}",
+        json={"name": "高等数学新名称"},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "高等数学新名称"
+
+
+# --- 29 term_id / course_id 不可变 ---
+
+
+def test_update_term_id_immutable(env):
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tca1']}",
+        json={"term_id": env["term2"]},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_TERM_IMMUTABLE"
+
+
+def test_update_course_id_immutable(env):
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tca1']}",
+        json={"course_id": 99999999},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_COURSE_IMMUTABLE"
+
+
+# --- 30 更换教师：无成绩时可换，有 SUBMITTED/APPROVED 成绩时锁定 ---
+
+
+def test_change_teacher_ok(env):
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tcb1']}",
+        json={"teacher_id": env["ta_id"]},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["teacher_name"] == "教师甲"
+
+
+def test_change_teacher_locked_by_submitted_grade(env):
+    _add_grade(env, env["tcb1"], GradeStatus.SUBMITTED)
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tcb1']}",
+        json={"teacher_id": env["ta_id"]},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_TEACHER_LOCKED"
+
+
+def test_change_teacher_locked_by_approved_grade(env):
+    _add_grade(env, env["tcb1"], GradeStatus.APPROVED)
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tcb1']}",
+        json={"teacher_id": env["ta_id"]},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_TEACHER_LOCKED"
+
+
+# --- 31 容量不得小于已选人数 ---
+
+
+def test_update_capacity_below_enrolled(env):
+    # tca1 已有 2 人选课
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tca1']}",
+        json={"capacity": 1},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "CAPACITY_BELOW_ENROLLED"
+
+
+def test_update_capacity_equal_enrolled(env):
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tca1']}",
+        json={"capacity": 2},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["capacity"] == 2
+
+
+# --- 32 已结束学期不可修改 ---
+
+
+def test_update_in_ended_term(env):
+    with SessionLocal() as db:
+        term = db.get(AcademicTerm, env["term1"])
+        term.status = "ENDED"
+        db.commit()
+    r = client.put(
+        f"{PREFIX}/teaching-classes/{env['tca1']}",
+        json={"capacity": 50},
+        headers=admin_auth(),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_TERM_ENDED"
+
+
+# --- 33 删除规则：仅空教学班可删除 ---
+
+
+def test_delete_empty_class(env):
+    cid = _create_class(env, f"{P}DEL0", env["task_c1"], env["ta_id"]).json()["id"]
+    r = client.delete(f"{PREFIX}/teaching-classes/{cid}", headers=admin_auth())
+    assert r.status_code == 204
+
+
+def test_delete_class_with_selection_rejected(env):
+    r = client.delete(f"{PREFIX}/teaching-classes/{env['tca1']}", headers=admin_auth())
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_HAS_DATA"
+
+
+def test_delete_class_with_grade_rejected(env):
+    _add_grade(env, env["tcb1"])
+    r = client.delete(f"{PREFIX}/teaching-classes/{env['tcb1']}", headers=admin_auth())
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_HAS_DATA"
+
+
+def test_delete_in_ended_term(env):
+    cid = _create_class(env, f"{P}DEL1", env["task_c1"], env["ta_id"]).json()["id"]
+    with SessionLocal() as db:
+        term = db.get(AcademicTerm, env["term1"])
+        term.status = "ENDED"
+        db.commit()
+    r = client.delete(f"{PREFIX}/teaching-classes/{cid}", headers=admin_auth())
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_TERM_ENDED"
+
+
+# --- 34 教务处添加学生同样遵守容量 ---
+
+
+def test_add_student_capacity_full(env):
+    cid = _create_class(
+        env, f"{P}FULL", env["task_c1"], env["ta_id"], capacity=1
+    ).json()["id"]
+    assert client.post(
+        f"{PREFIX}/teaching-classes/{cid}/students",
+        json={"student_id": env["s3_id"]}, headers=admin_auth(),
+    ).status_code == 201
+    r = client.post(
+        f"{PREFIX}/teaching-classes/{cid}/students",
+        json={"student_id": env["s4_id"]}, headers=admin_auth(),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_FULL"
+
+
+def test_add_student_capacity_boundary(env):
+    cid = _create_class(
+        env, f"{P}BND", env["task_c1"], env["ta_id"], capacity=1
+    ).json()["id"]
+    r = client.post(
+        f"{PREFIX}/teaching-classes/{cid}/students",
+        json={"student_id": env["s3_id"]}, headers=admin_auth(),
+    )
+    assert r.status_code == 201, r.text
+
+
+# --- 35 列表按 teacher_id 过滤（DB 层） ---
+
+
+def test_list_filter_by_teacher_id(env):
+    rows = client.get(
+        f"{PREFIX}/teaching-classes", params={"teacher_id": env["ta_id"]},
+        headers=admin_auth(),
+    ).json()["items"]
+    codes = {x["code"] for x in rows}
+    assert {env["tca1_code"], env["tca2_code"]} <= codes
+    assert env["tcb1_code"] not in codes
+

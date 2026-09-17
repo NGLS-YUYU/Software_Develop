@@ -93,12 +93,16 @@ class TeachingClass(Base, IdMixin, TimestampMixin):
         UniqueConstraint("term_id", "code", name="uk_tc_term_code"),
         Index("idx_tc_term", "term_id"),
         Index("idx_tc_semester_course", "semester", "course_id"),
+        Index("idx_tc_course", "course_id"),
         Index("idx_tc_teacher", "teacher_id"),
         Index("idx_tc_selection", "selection_status", "semester"),
         {**_KW, "comment": "教学班"},
     )
 
     code: Mapped[str] = mapped_column(String(40), nullable=False)
+    name: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, comment="教学班名称（展示用，区别于编号 code）"
+    )
     task_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True),
         ForeignKey("teaching_tasks.id", ondelete="CASCADE", name="fk_tc_task"),

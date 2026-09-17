@@ -597,3 +597,69 @@ def test_cannot_drop_in_ended_term(env):
     r = client.delete(f"{PREFIX}/course-selections/{sel_id}", headers=h)
     assert r.status_code == 409
     assert "学期" in r.json()["message"]
+
+
+# =========================== TASK-012：容量与并发 ===========================
+
+
+# --- 29 教学班已满时选课被拒（TEACHING_CLASS_FULL） ---
+
+
+def test_select_full_class_rejected(env):
+    with SessionLocal() as db:
+        tc = db.get(TeachingClass, env["e01"])
+        tc.capacity = 1
+        tc.selected_count = 1
+        db.commit()
+    r = client.post(
+        f"{PREFIX}/course-selections",
+        json={"teaching_class_id": env["e01"]},
+        headers=auth(env["s1_uname"]),
+    )
+    assert r.status_code == 409
+    assert r.json()["code"] == "TEACHING_CLASS_FULL"
+
+
+# --- 30 并发选课不超卖（容量边界 + 行级锁） ---
+
+
+def test_concurrent_selection_no_oversell(env):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.core.exceptions import Conflict
+    from app.services.selection import SelectionService
+
+    # 把 e01 容量压到 2，4 名学生并发抢
+    with SessionLocal() as db:
+        tc = db.get(TeachingClass, env["e01"])
+        tc.capacity = 2
+        tc.selected_count = 0
+        db.commit()
+
+    def attempt(sid: int) -> int:
+        with SessionLocal() as db:
+            stu = db.get(Student, sid)
+            try:
+                SelectionService(db).select_course(stu, env["e01"])
+                return 201
+            except Conflict:
+                return 409
+
+    sids = [env["s1_id"], env["s2_id"], env["s3_id"], env["s4_id"]]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        codes = list(ex.map(attempt, sids))
+
+    assert sorted(codes) == [201, 201, 409, 409]
+
+    # 计数一致：selected_count == 实际 SELECTED 数 == 容量，未超卖
+    with SessionLocal() as db:
+        tc = db.get(TeachingClass, env["e01"])
+        actual = db.execute(
+            select(func.count()).select_from(CourseSelection).where(
+                CourseSelection.teaching_class_id == env["e01"],
+                CourseSelection.status == SelectionState.SELECTED,
+            )
+        ).scalar()
+    assert actual == 2
+    assert tc.selected_count == 2
+

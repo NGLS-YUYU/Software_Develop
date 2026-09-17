@@ -34,13 +34,19 @@ class TeachingTaskOut(BaseModel):
 
 class TeachingClassCreate(BaseModel):
     code: str = Field(..., min_length=1, max_length=40)
+    name: str | None = Field(None, max_length=100, description="教学班名称（展示用）")
     task_id: int
     term_id: int = Field(..., description="所属学期（TASK-011，必填）")
-    teacher_id: int | None = None
+    teacher_id: int = Field(..., description="授课教师（TASK-012，必填）")
     capacity: int = Field(..., gt=0, le=1000)
 
 
 class TeachingClassUpdate(BaseModel):
+    code: str | None = Field(None, min_length=1, max_length=40)
+    name: str | None = Field(None, max_length=100)
+    # term_id / course_id 为不可变字段（TASK-012）：提交即被 Service 以 409 拒绝
+    term_id: int | None = Field(None, description="所属学期（不可修改）")
+    course_id: int | None = Field(None, description="所属课程（不可修改）")
     teacher_id: int | None = None
     capacity: int | None = Field(None, gt=0, le=1000)
     selection_status: str | None = Field(None, pattern="^(CLOSED|OPEN|FINISHED)$")
@@ -67,6 +73,7 @@ class TeachingClassOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     code: str
+    name: str | None = None
     task_id: int
     term_id: int
     term_name: str | None = None

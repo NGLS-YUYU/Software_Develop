@@ -249,7 +249,8 @@ def main() -> None:
                 {"task_id": task.id, "course_id": course.id, "semester": SEMESTER,
                  "term_id": term.id,
                  "teacher_id": teachers[idx % len(teachers)].id,
-                 "capacity": 40, "selection_status": "OPEN"},
+                 "capacity": 40, "selection_status": "OPEN",
+                 "name": f"{course.name}（{SEMESTER}）"},
                 code=f"{code}-{SEMESTER}-01",
             )
             db.commit()

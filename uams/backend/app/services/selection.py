@@ -13,7 +13,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.exceptions import Conflict, NotFound, PermissionDenied
+from app.core.exceptions import Conflict, NotFound, PermissionDenied, TeachingClassFull
 from app.models.course import Course, CoursePrerequisite, CourseType
 from app.models.grade import Grade, GradeStatus
 from app.models.person import Student, Teacher
@@ -176,7 +176,7 @@ class SelectionService:
 
         # 容量（此处读到的是加锁后的值）
         if tc.selected_count >= tc.capacity:
-            raise Conflict(f"该教学班已满（{tc.selected_count}/{tc.capacity}）")
+            raise TeachingClassFull(f"该教学班已满（{tc.selected_count}/{tc.capacity}）")
 
         # 时间冲突
         hit = ConflictChecker(self.db).student_conflict(student.id, tc.id, tc.semester)

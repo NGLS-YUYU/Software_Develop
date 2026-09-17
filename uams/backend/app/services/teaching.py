@@ -12,8 +12,19 @@ from datetime import datetime
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.exceptions import Conflict, NotFound
+from app.core.exceptions import (
+    CapacityBelowEnrolled,
+    Conflict,
+    NotFound,
+    TeachingClassCourseImmutable,
+    TeachingClassFull,
+    TeachingClassHasData,
+    TeachingClassTeacherLocked,
+    TeachingClassTermEnded,
+    TeachingClassTermImmutable,
+)
 from app.models.course import Course
+from app.models.grade import Grade, GradeStatus
 from app.models.organization import Classroom, College
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
@@ -229,21 +240,21 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         if term is None:
             raise NotFound(f"学期不存在（id={data['term_id']}）")
         if term.status == TermStatus.ENDED:
-            raise Conflict("已结束的学期不能创建教学班")
+            raise TeachingClassTermEnded("已结束的学期不能创建教学班")
 
-        teacher_id = data.get("teacher_id")
-        if teacher_id:
-            teacher = self.db.get(Teacher, teacher_id)
-            if teacher is None:
-                raise NotFound(f"教师不存在（id={teacher_id}）")
-            # 教学班教师必须具有教师身份（TASK-008）
-            if teacher.user is None or teacher.user.user_type != UserType.TEACHER:
-                raise Conflict("授课教师必须具有教师身份")
+        # 授课教师（TASK-012）：必须指定，且必须具有教师身份
+        teacher_id = data["teacher_id"]
+        teacher = self.db.get(Teacher, teacher_id)
+        if teacher is None:
+            raise NotFound(f"教师不存在（id={teacher_id}）")
+        if teacher.user is None or teacher.user.user_type != UserType.TEACHER:
+            raise Conflict("授课教师必须具有教师身份")
 
         self._check_term_code_unique(data["term_id"], data["code"])
 
         obj = TeachingClass(
             code=data["code"],
+            name=data.get("name"),
             task_id=task.id,
             term_id=data["term_id"],
             # course_id / semester 从任务带入，保持冗余字段一致（DATABASE.md §13.3）
@@ -260,9 +271,36 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         tc = self.get_or_404(class_id)
         data = {k: v for k, v in data.items() if v is not None}
 
-        if "teacher_id" in data:
-            if not self.db.get(Teacher, data["teacher_id"]):
+        # 不可变字段保护（TASK-012）：term_id / course_id 一经创建不可修改
+        if "term_id" in data:
+            raise TeachingClassTermImmutable("教学班所属学期不可修改")
+        if "course_id" in data:
+            raise TeachingClassCourseImmutable("教学班所属课程不可修改")
+
+        # 已结束学期只读（TASK-012）
+        if tc.term is not None and tc.term.status == TermStatus.ENDED:
+            raise TeachingClassTermEnded("已结束的学期不能修改教学班")
+
+        # 更换教师（TASK-012）：校验身份、成绩锁定、排课冲突
+        if "teacher_id" in data and data["teacher_id"] != tc.teacher_id:
+            teacher = self.db.get(Teacher, data["teacher_id"])
+            if teacher is None:
                 raise NotFound(f"教师不存在（id={data['teacher_id']}）")
+            if teacher.user is None or teacher.user.user_type != UserType.TEACHER:
+                raise Conflict("授课教师必须具有教师身份")
+            # 已有成绩提交/审核后，锁定教师不可更换
+            locked = self.db.execute(
+                select(Grade.id)
+                .where(
+                    Grade.teaching_class_id == tc.id,
+                    Grade.status.in_((GradeStatus.SUBMITTED, GradeStatus.APPROVED)),
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if locked:
+                raise TeachingClassTeacherLocked(
+                    "该教学班已有成绩提交或审核，无法更换教师"
+                )
             # 换教师需重新检查其所有排课是否冲突
             for s in tc.schedules:
                 hit = ConflictChecker(self.db).teacher_conflict(
@@ -274,7 +312,7 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
                     )
 
         if "capacity" in data and data["capacity"] < tc.selected_count:
-            raise Conflict(
+            raise CapacityBelowEnrolled(
                 f"容量不能小于已选人数（已选 {tc.selected_count}）"
             )
 
@@ -284,8 +322,25 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         return tc
 
     def validate_delete(self, obj: TeachingClass) -> None:
-        if obj.selected_count > 0:
-            raise Conflict(f"该教学班已有 {obj.selected_count} 人选课，无法删除")
+        # 已结束学期只读（TASK-012）
+        if obj.term is not None and obj.term.status == TermStatus.ENDED:
+            raise TeachingClassTermEnded("已结束的学期不能删除教学班")
+        # 仅空教学班可删除：无选课记录且无成绩记录（TASK-012）
+        has_selection = self.db.execute(
+            select(CourseSelection.id)
+            .where(
+                CourseSelection.teaching_class_id == obj.id,
+                CourseSelection.status == SelectionState.SELECTED,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if has_selection:
+            raise TeachingClassHasData("该教学班已有学生选课，无法删除")
+        has_grade = self.db.execute(
+            select(Grade.id).where(Grade.teaching_class_id == obj.id).limit(1)
+        ).scalar_one_or_none()
+        if has_grade:
+            raise TeachingClassHasData("该教学班已有成绩记录，无法删除")
 
     @staticmethod
     def _sched_dict(s: Schedule) -> dict[str, Any]:
@@ -356,8 +411,13 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
     # --- 学生归属管理（TASK-008，仅教务处） ---
 
     def add_student(self, class_id: int, student_id: int) -> CourseSelection:
-        """教务处将学生加入教学班。仅建立归属关系，不做选课校验。"""
-        tc = self.get_or_404(class_id)
+        """教务处将学生加入教学班。仅建立归属关系，但遵守容量约束（TASK-012）。"""
+        # 行级锁：与选课一致，防止并发下超容（CLAUDE.md §20）
+        tc = self.db.execute(
+            select(TeachingClass).where(TeachingClass.id == class_id).with_for_update()
+        ).scalar_one_or_none()
+        if tc is None:
+            raise NotFound(f"教学班不存在（id={class_id}）")
         if tc.status != "ACTIVE":
             raise Conflict("该教学班已取消，无法添加学生")
         if self.db.get(Student, student_id) is None:
@@ -371,6 +431,10 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         ).scalar_one_or_none()
         if sel is not None and sel.status == SelectionState.SELECTED:
             raise Conflict("该学生已在此教学班中")
+
+        # 容量约束（TASK-012）：教务处添加同样不得超容
+        if tc.selected_count >= tc.capacity:
+            raise TeachingClassFull(f"该教学班已满（{tc.selected_count}/{tc.capacity}）")
 
         if sel is not None:  # 曾退课，复用该行
             sel.status = SelectionState.SELECTED
