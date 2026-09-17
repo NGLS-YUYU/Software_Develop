@@ -5,6 +5,7 @@
 状态流转、学生越权、跨教师越权。
 """
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -22,6 +23,7 @@ from app.models.person import Student, Teacher
 from app.models.role import Role, RoleCode, UserRole
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass, TeachingTask
+from app.models.term import AcademicTerm
 from app.models.user import User, UserType
 
 client = TestClient(app)
@@ -53,6 +55,7 @@ def _cleanup() -> None:
             CourseSelection.teaching_class_id.in_(test_tcs)
         ))
         db.execute(delete(TeachingClass).where(TeachingClass.code.like(f"{P}%")))
+        db.execute(delete(AcademicTerm).where(AcademicTerm.name.like(f"{P}%")))
         db.execute(delete(TeachingTask).where(
             TeachingTask.course_id.in_(test_courses)
         ))
@@ -144,13 +147,21 @@ def env():
         db.add_all([task32, task48])
         db.flush()
 
+        term = AcademicTerm(
+            name=f"{P}term", academic_year="2095-2096", semester=1,
+            start_date=date(2095, 9, 1), end_date=date(2096, 1, 15),
+            status="PLANNED",
+        )
+        db.add(term)
+        db.flush()
+
         tca = TeachingClass(
             code=f"{P}tca", task_id=task32.id, course_id=c32.id,
-            semester=SEMESTER, teacher_id=ta.id, capacity=40,
+            semester=SEMESTER, teacher_id=ta.id, capacity=40, term_id=term.id,
         )
         tcb = TeachingClass(
             code=f"{P}tcb", task_id=task48.id, course_id=c48.id,
-            semester=SEMESTER, teacher_id=tb.id, capacity=40,
+            semester=SEMESTER, teacher_id=tb.id, capacity=40, term_id=term.id,
         )
         db.add_all([tca, tcb])
         db.flush()

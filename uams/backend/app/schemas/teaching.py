@@ -35,6 +35,7 @@ class TeachingTaskOut(BaseModel):
 class TeachingClassCreate(BaseModel):
     code: str = Field(..., min_length=1, max_length=40)
     task_id: int
+    term_id: int = Field(..., description="所属学期（TASK-011，必填）")
     teacher_id: int | None = None
     capacity: int = Field(..., gt=0, le=1000)
 
@@ -67,6 +68,9 @@ class TeachingClassOut(BaseModel):
     id: int
     code: str
     task_id: int
+    term_id: int
+    term_name: str | None = None
+    term_status: str | None = None
     course_id: int
     course_code: str | None = None
     course_name: str | None = None

@@ -18,6 +18,7 @@ from app.models.organization import Classroom, College
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import Schedule, TeachingClass, TeachingTask, WeekType
+from app.models.term import AcademicTerm, TermStatus
 from app.models.user import UserType
 from app.services.base import BaseCrudService
 
@@ -182,25 +183,39 @@ class TeachingTaskService(BaseCrudService[TeachingTask]):
 class TeachingClassService(BaseCrudService[TeachingClass]):
     model = TeachingClass
     search_fields = ("code",)
-    unique_fields = ("code",)
+    # 唯一性已改为 (term_id, code) 复合唯一，由 _check_term_code_unique 手工校验
+    unique_fields = ()
     default_order = "code"
     entity_name = "教学班"
 
     def base_stmt(self) -> Select:
         return select(TeachingClass).options(
             selectinload(TeachingClass.course),
+            selectinload(TeachingClass.term),
             selectinload(TeachingClass.teacher).selectinload(Teacher.user),
             selectinload(TeachingClass.schedules).selectinload(Schedule.classroom),
         )
 
     def my_classes(
-        self, teacher_id: int, semester: str | None = None
+        self, teacher_id: int, semester: str | None = None, term_id: int | None = None
     ) -> list[TeachingClass]:
         """教师本人授课的教学班列表（TASK-005，后端强制按 token 身份过滤）。"""
         stmt = self.base_stmt().where(TeachingClass.teacher_id == teacher_id)
         if semester:
             stmt = stmt.where(TeachingClass.semester == semester)
+        if term_id:
+            stmt = stmt.where(TeachingClass.term_id == term_id)
         return list(self.db.execute(stmt.order_by(TeachingClass.course_id)).scalars())
+
+    def _check_term_code_unique(self, term_id: int, code: str) -> None:
+        """教学班编号仅在同一学期内唯一（TASK-011）。"""
+        if self.db.execute(
+            select(TeachingClass).where(
+                TeachingClass.term_id == term_id,
+                TeachingClass.code == code,
+            )
+        ).first():
+            raise Conflict(f"该学期下教学班编号已存在：{code}")
 
     def create_class(self, data: dict[str, Any]) -> TeachingClass:
         task = self.db.get(TeachingTask, data["task_id"])
@@ -208,6 +223,13 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
             raise NotFound(f"教学任务不存在（id={data['task_id']}）")
         if self.db.get(Course, task.course_id) is None:
             raise NotFound(f"课程不存在（id={task.course_id}）")
+
+        # 学期校验（TASK-011）：必须指定学期，且已结束的学期不能创建教学班
+        term = self.db.get(AcademicTerm, data["term_id"])
+        if term is None:
+            raise NotFound(f"学期不存在（id={data['term_id']}）")
+        if term.status == TermStatus.ENDED:
+            raise Conflict("已结束的学期不能创建教学班")
 
         teacher_id = data.get("teacher_id")
         if teacher_id:
@@ -218,11 +240,12 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
             if teacher.user is None or teacher.user.user_type != UserType.TEACHER:
                 raise Conflict("授课教师必须具有教师身份")
 
-        self._check_unique({"code": data["code"]})
+        self._check_term_code_unique(data["term_id"], data["code"])
 
         obj = TeachingClass(
             code=data["code"],
             task_id=task.id,
+            term_id=data["term_id"],
             # course_id / semester 从任务带入，保持冗余字段一致（DATABASE.md §13.3）
             course_id=task.course_id,
             semester=task.semester,

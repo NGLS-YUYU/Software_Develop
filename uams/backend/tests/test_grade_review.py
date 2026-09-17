@@ -4,6 +4,7 @@
 禁止审核）、审核通过后教师不可修改、驳回后可修改并重新提交、教师/学生越权防护。
 """
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -21,6 +22,7 @@ from app.models.person import Student, Teacher
 from app.models.role import Role, RoleCode, UserRole
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass, TeachingTask
+from app.models.term import AcademicTerm
 from app.models.user import User, UserType
 
 client = TestClient(app)
@@ -48,6 +50,7 @@ def _cleanup() -> None:
             CourseSelection.teaching_class_id.in_(test_tcs)
         ))
         db.execute(delete(TeachingClass).where(TeachingClass.code.like(f"{P}%")))
+        db.execute(delete(AcademicTerm).where(AcademicTerm.name.like(f"{P}%")))
         db.execute(delete(TeachingTask).where(
             TeachingTask.course_id.in_(test_courses)
         ))
@@ -127,9 +130,16 @@ def env():
         )
         db.add(task)
         db.flush()
+        term = AcademicTerm(
+            name=f"{P}term", academic_year="2096-2097", semester=1,
+            start_date=date(2096, 9, 1), end_date=date(2097, 1, 15),
+            status="PLANNED",
+        )
+        db.add(term)
+        db.flush()
         tc = TeachingClass(
             code=f"{P}tc", task_id=task.id, course_id=course.id,
-            semester=SEMESTER, teacher_id=teacher.id, capacity=40,
+            semester=SEMESTER, teacher_id=teacher.id, capacity=40, term_id=term.id,
         )
         db.add(tc)
         db.flush()

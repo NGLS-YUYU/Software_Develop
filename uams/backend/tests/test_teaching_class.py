@@ -5,6 +5,7 @@
 同一学生多教学班、不同课程/学期教学班共存、以及 TASK-005/006/007 回归。
 """
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -22,6 +23,7 @@ from app.models.person import Student, Teacher
 from app.models.role import Role, RoleCode, UserRole
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass, TeachingTask
+from app.models.term import AcademicTerm
 from app.models.user import User, UserType
 
 client = TestClient(app)
@@ -54,6 +56,7 @@ def _cleanup() -> None:
             CourseSelection.teaching_class_id.in_(test_tcs)
         ))
         db.execute(delete(TeachingClass).where(TeachingClass.code.like(f"{P}%")))
+        db.execute(delete(AcademicTerm).where(AcademicTerm.name.like(f"{P}%")))
         db.execute(delete(TeachingTask).where(
             TeachingTask.course_id.in_(test_courses)
         ))
@@ -150,18 +153,33 @@ def env():
         task_c2 = make_task(c2, S1)
         task_c1_s2 = make_task(c1, S2)
 
-        def make_tc(code, task, course, teacher, capacity=40):
+        # 两个学期：同一学年第 1、2 学期（TASK-011）
+        term1 = AcademicTerm(
+            name=f"{P}term1", academic_year="2098-2099", semester=1,
+            start_date=date(2098, 9, 1), end_date=date(2099, 1, 15),
+            status="PLANNED",
+        )
+        term2 = AcademicTerm(
+            name=f"{P}term2", academic_year="2098-2099", semester=2,
+            start_date=date(2099, 2, 20), end_date=date(2099, 7, 5),
+            status="PLANNED",
+        )
+        db.add_all([term1, term2])
+        db.flush()
+
+        def make_tc(code, task, course, teacher, term, capacity=40):
             tc = TeachingClass(
                 code=code, task_id=task.id, course_id=course.id,
                 semester=task.semester, teacher_id=teacher.id, capacity=capacity,
+                term_id=term.id,
             )
             db.add(tc)
             db.flush()
             return tc
 
-        tca1 = make_tc(f"{P}A01", task_c1, c1, ta)
-        tca2 = make_tc(f"{P}A02", task_c2, c2, ta)
-        tcb1 = make_tc(f"{P}B01", task_c1, c1, tb)
+        tca1 = make_tc(f"{P}A01", task_c1, c1, ta, term1)
+        tca2 = make_tc(f"{P}A02", task_c2, c2, ta, term1)
+        tcb1 = make_tc(f"{P}B01", task_c1, c1, tb, term1)
 
         def select_into(tc, stu):
             db.add(CourseSelection(
@@ -182,6 +200,7 @@ def env():
             "major": major.id,
             "task_c1": task_c1.id, "task_c2": task_c2.id,
             "task_c1_s2": task_c1_s2.id,
+            "term1": term1.id, "term2": term2.id,
             "tca1": tca1.id, "tca2": tca2.id, "tcb1": tcb1.id,
             "tca1_code": f"{P}A01", "tca2_code": f"{P}A02", "tcb1_code": f"{P}B01",
             "c1_code": f"{P}c1", "c2_code": f"{P}c2",
@@ -195,11 +214,11 @@ def env():
     _cleanup()
 
 
-def _create_class(env, code, task_id, teacher_id, capacity=40):
+def _create_class(env, code, task_id, teacher_id, capacity=40, term_id=None):
     return client.post(
         f"{PREFIX}/teaching-classes",
-        json={"code": code, "task_id": task_id, "teacher_id": teacher_id,
-              "capacity": capacity},
+        json={"code": code, "task_id": task_id, "term_id": term_id or env["term1"],
+              "teacher_id": teacher_id, "capacity": capacity},
         headers=admin_auth(),
     )
 
@@ -382,8 +401,8 @@ def test_student_cannot_manage_classes(env):
     # 创建教学班
     r1 = client.post(
         f"{PREFIX}/teaching-classes",
-        json={"code": f"{P}ST1", "task_id": env["task_c1"], "teacher_id": env["ta_id"],
-              "capacity": 40},
+        json={"code": f"{P}ST1", "task_id": env["task_c1"], "term_id": env["term1"],
+              "teacher_id": env["ta_id"], "capacity": 40},
         headers=auth(env["s1_uname"]),
     )
     assert r1.status_code == 403
@@ -435,14 +454,20 @@ def test_different_course_classes_coexist(env):
     assert by_code[env["tca2_code"]]["course_code"] == env["c2_code"]
 
 
-# --- 19 不同学期相同教学班代码符合现有唯一规则（全局唯一 → 409） ---
+# --- 19 同一学期内教学班代码唯一，跨学期允许复用（TASK-011） ---
 
 
-def test_same_code_across_semester_unique(env):
+def test_same_code_across_terms_allowed(env):
     code = f"{P}SEM"
+    # 同一学期（term1）内同码 → 409
     assert _create_class(env, code, env["task_c1"], env["ta_id"]).status_code == 201
-    r = _create_class(env, code, env["task_c1_s2"], env["ta_id"])
-    assert r.status_code == 409  # code 全局唯一，跨学期同码被拒
+    r_same_term = _create_class(env, code, env["task_c2"], env["ta_id"])
+    assert r_same_term.status_code == 409  # 同一学期内同码被拒
+    # 跨学期（term2）同码 → 201
+    r_other_term = _create_class(
+        env, code, env["task_c1_s2"], env["ta_id"], term_id=env["term2"]
+    )
+    assert r_other_term.status_code == 201
 
 
 # --- 20 TASK-005 我的授课课程接口继续通过 ---

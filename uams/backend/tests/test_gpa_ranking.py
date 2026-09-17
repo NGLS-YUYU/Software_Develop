@@ -4,6 +4,7 @@
 以及「Grade 表未新增 GPA 字段」的解耦约束。
 """
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -16,6 +17,7 @@ from app.models.grade import Grade, GradeStatus
 from app.models.organization import Class, College, Major
 from app.models.person import Student
 from app.models.teaching import TeachingClass, TeachingTask
+from app.models.term import AcademicTerm
 from app.models.user import User, UserType
 from app.services.gpa_service import (
     GpaService,
@@ -113,6 +115,7 @@ def _cleanup():
             )
         )
         db.execute(delete(TeachingClass).where(TeachingClass.code.like(f"{TEST_PREFIX}tc%")))
+        db.execute(delete(AcademicTerm).where(AcademicTerm.name.like(f"{TEST_PREFIX}term%")))
         db.execute(
             delete(TeachingTask).where(
                 TeachingTask.course_id.in_(
@@ -165,9 +168,16 @@ def ranking_env():
         )
         db.add(task)
         db.flush()
+        term = AcademicTerm(
+            name=f"{TEST_PREFIX}term", academic_year="2101-2102", semester=1,
+            start_date=date(2101, 9, 1), end_date=date(2102, 1, 15),
+            status="PLANNED",
+        )
+        db.add(term)
+        db.flush()
         tc = TeachingClass(
             code=f"{TEST_PREFIX}tc", task_id=task.id, course_id=course.id,
-            semester=SEMESTER, capacity=40,
+            semester=SEMESTER, capacity=40, term_id=term.id,
         )
         db.add(tc)
         db.flush()

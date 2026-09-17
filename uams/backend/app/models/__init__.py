@@ -46,6 +46,7 @@ from app.models.teaching import (
     TeachingTask,
     WeekType,
 )
+from app.models.term import AcademicTerm, TermStatus
 from app.models.user import User, UserStatus, UserType
 
 __all__ = [
@@ -62,6 +63,8 @@ __all__ = [
     "CurriculumPlan", "CurriculumCourse",
     # 教学
     "TeachingTask", "TeachingClass", "Schedule", "SelectionStatus", "WeekType",
+    # 学期
+    "AcademicTerm", "TermStatus",
     # 选课
     "CourseSelection", "SelectionPeriod", "SelectionState",
     # 成绩

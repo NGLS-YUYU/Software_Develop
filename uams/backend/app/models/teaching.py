@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from app.models.course import Course
     from app.models.organization import Classroom, College
     from app.models.person import Teacher
+    from app.models.term import AcademicTerm
 
 _KW = {
     "mysql_engine": "InnoDB",
@@ -88,17 +89,25 @@ class TeachingClass(Base, IdMixin, TimestampMixin):
         CheckConstraint("status IN ('ACTIVE','CANCELLED')", name="ck_tc_status"),
         CheckConstraint("capacity > 0", name="ck_tc_capacity"),
         CheckConstraint("selected_count >= 0", name="ck_tc_count"),
+        # 教学班编号仅在同一学期内唯一，跨学期允许复用（TASK-011）
+        UniqueConstraint("term_id", "code", name="uk_tc_term_code"),
+        Index("idx_tc_term", "term_id"),
         Index("idx_tc_semester_course", "semester", "course_id"),
         Index("idx_tc_teacher", "teacher_id"),
         Index("idx_tc_selection", "selection_status", "semester"),
         {**_KW, "comment": "教学班"},
     )
 
-    code: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
+    code: Mapped[str] = mapped_column(String(40), nullable=False)
     task_id: Mapped[int] = mapped_column(
         BIGINT(unsigned=True),
         ForeignKey("teaching_tasks.id", ondelete="CASCADE", name="fk_tc_task"),
         nullable=False,
+    )
+    term_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True),
+        ForeignKey("academic_terms.id", ondelete="RESTRICT", name="fk_tc_term"),
+        nullable=False, comment="所属学期（TASK-011）",
     )
     # course_id / semester 为有意冗余，避免课表等高频查询三表 JOIN（DATABASE.md §13.3）
     course_id: Mapped[int] = mapped_column(
@@ -126,6 +135,7 @@ class TeachingClass(Base, IdMixin, TimestampMixin):
 
     task: Mapped["TeachingTask"] = relationship(back_populates="teaching_classes")
     course: Mapped["Course"] = relationship()
+    term: Mapped["AcademicTerm"] = relationship(back_populates="teaching_classes")
     teacher: Mapped["Teacher | None"] = relationship()
     schedules: Mapped[list["Schedule"]] = relationship(
         back_populates="teaching_class", cascade="all, delete-orphan"

@@ -19,6 +19,7 @@ from app.models.grade import Grade, GradeStatus
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionPeriod, SelectionState
 from app.models.teaching import Schedule, TeachingClass
+from app.models.term import TermStatus
 from app.services.teaching import ConflictChecker
 
 # 必修 / 选修分类（TASK-009）：复用 CourseType 枚举，不修改课程类型体系。
@@ -126,7 +127,10 @@ class SelectionService:
         tc = self.db.execute(
             select(TeachingClass)
             .where(TeachingClass.id == teaching_class_id)
-            .options(selectinload(TeachingClass.course))
+            .options(
+                selectinload(TeachingClass.course),
+                selectinload(TeachingClass.term),
+            )
             .with_for_update()
         ).scalar_one_or_none()
         if tc is None:
@@ -136,6 +140,10 @@ class SelectionService:
             raise Conflict("该教学班已取消")
         if tc.selection_status != "OPEN":
             raise Conflict("该教学班未开放选课")
+
+        # 学期校验（TASK-011）：只有进行中的学期允许学生选课
+        if tc.term is None or tc.term.status != TermStatus.ACTIVE:
+            raise Conflict("当前学期未在进行中，无法选课")
 
         # 课程类型校验：必修课只能由教务处预排，学生不能自主选择（TASK-009）
         if not _is_elective(tc.course.course_type if tc.course else None):
@@ -220,10 +228,15 @@ class SelectionService:
         tc = self.db.execute(
             select(TeachingClass)
             .where(TeachingClass.id == sel.teaching_class_id)
+            .options(selectinload(TeachingClass.term))
             .with_for_update()
         ).scalar_one_or_none()
         if tc and tc.selection_status != "OPEN":
             raise Conflict("当前不在选课时间内，无法退课")
+
+        # 学期校验（TASK-011）：已结束的学期不能退课
+        if tc and tc.term and tc.term.status == TermStatus.ENDED:
+            raise Conflict("该学期已结束，无法退课")
 
         # 已有成绩不允许退课
         g = self.db.execute(

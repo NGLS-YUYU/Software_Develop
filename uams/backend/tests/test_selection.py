@@ -5,7 +5,7 @@
 必修课不可自主选择/退选、数据隔离、以及 TASK-005/006/007/008 回归。
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -23,6 +23,7 @@ from app.models.person import Student, Teacher
 from app.models.role import Role, RoleCode, UserRole
 from app.models.selection import CourseSelection, SelectionPeriod, SelectionState
 from app.models.teaching import TeachingClass, TeachingTask
+from app.models.term import AcademicTerm, TermStatus
 from app.models.user import User, UserType
 
 client = TestClient(app)
@@ -54,6 +55,7 @@ def _cleanup() -> None:
             CourseSelection.teaching_class_id.in_(test_tcs)
         ))
         db.execute(delete(TeachingClass).where(TeachingClass.code.like(f"{P}%")))
+        db.execute(delete(AcademicTerm).where(AcademicTerm.name.like(f"{P}%")))
         db.execute(delete(TeachingTask).where(
             TeachingTask.course_id.in_(test_courses)
         ))
@@ -158,10 +160,20 @@ def env():
         task_elec = make_task(elec)
         task_elec2 = make_task(elec2)
 
+        # 进行中的学期（TASK-011：只有 ACTIVE 学期允许学生选课）
+        term = AcademicTerm(
+            name=f"{P}term", academic_year="2099-2100", semester=1,
+            start_date=date(2099, 9, 1), end_date=date(2100, 1, 15),
+            status=TermStatus.ACTIVE,
+        )
+        db.add(term)
+        db.flush()
+
         def make_tc(code, task, course, selection_status="OPEN"):
             tc = TeachingClass(
                 code=code, task_id=task.id, course_id=course.id, semester=S1,
                 teacher_id=ta.id, capacity=40, selection_status=selection_status,
+                term_id=term.id,
             )
             db.add(tc)
             db.flush()
@@ -184,6 +196,7 @@ def env():
 
         yield {
             "college_id": college.id,
+            "term": term.id,
             "m1_id": m1.id, "m2_id": m2.id,
             "c1_id": c1.id, "c2_id": c2.id, "c3_id": c3.id, "c4_id": c4.id,
             "req_id": req.id, "elec_id": elec.id, "elec2_id": elec2.id,
@@ -548,3 +561,39 @@ def test_regression_student_grade_query(env):
     r = client.get(f"{PREFIX}/grades/my", headers=auth(env["s1_uname"]))
     assert r.status_code == 200
     assert set(r.json().keys()) == {"items", "gpa", "class_rank", "major_rank"}
+
+
+# --- 27 非进行中的学期不能选课（TASK-011） ---
+
+
+def test_cannot_select_in_non_active_term(env):
+    with SessionLocal() as db:
+        term = db.get(AcademicTerm, env["term"])
+        term.status = TermStatus.PLANNED
+        db.commit()
+    r = client.post(
+        f"{PREFIX}/course-selections",
+        json={"teaching_class_id": env["e01"]},
+        headers=auth(env["s1_uname"]),
+    )
+    assert r.status_code == 409
+    assert "学期" in r.json()["message"]
+
+
+# --- 28 已结束的学期不能退课（TASK-011） ---
+
+
+def test_cannot_drop_in_ended_term(env):
+    h = auth(env["s1_uname"])
+    created = client.post(
+        f"{PREFIX}/course-selections", json={"teaching_class_id": env["e01"]}, headers=h
+    )
+    assert created.status_code == 201
+    sel_id = created.json()["id"]
+    with SessionLocal() as db:
+        term = db.get(AcademicTerm, env["term"])
+        term.status = TermStatus.ENDED
+        db.commit()
+    r = client.delete(f"{PREFIX}/course-selections/{sel_id}", headers=h)
+    assert r.status_code == 409
+    assert "学期" in r.json()["message"]

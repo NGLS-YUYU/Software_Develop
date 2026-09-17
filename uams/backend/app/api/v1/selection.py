@@ -35,6 +35,8 @@ class SelectionOut(BaseModel):
     student_id: int
     teaching_class_id: int
     teaching_class_code: str | None = None
+    term_id: int | None = None
+    term_name: str | None = None
     course_id: int
     course_code: str | None = None
     course_name: str | None = None
@@ -85,6 +87,9 @@ def _sel_out(s) -> SelectionOut:
         t = s.teaching_class.teacher
         if t and t.user:
             d.teacher_name = t.user.real_name
+        if s.teaching_class.term:
+            d.term_id = s.teaching_class.term.id
+            d.term_name = s.teaching_class.term.name
     return d
 
 

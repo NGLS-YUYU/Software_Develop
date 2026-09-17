@@ -6,6 +6,7 @@ GPA/排名不落库，以及 TASK-005~TASK-009 回归。
 """
 
 import io
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -24,6 +25,7 @@ from app.models.person import Student, Teacher
 from app.models.role import Role, RoleCode, UserRole
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import Schedule, TeachingClass, TeachingTask
+from app.models.term import AcademicTerm
 from app.models.user import User, UserType
 
 client = TestClient(app)
@@ -100,6 +102,7 @@ def _cleanup() -> None:
         )))
         db.execute(delete(Schedule).where(Schedule.teaching_class_id.in_(test_tcs)))
         db.execute(delete(TeachingClass).where(TeachingClass.code.like(f"{P}%")))
+        db.execute(delete(AcademicTerm).where(AcademicTerm.name.like(f"{P}%")))
         db.execute(delete(TeachingTask).where(TeachingTask.course_id.in_(test_courses)))
         db.execute(delete(Student).where(Student.student_no.like(f"{P}%")))
         db.execute(delete(Teacher).where(Teacher.teacher_no.like(f"{P}%")))
@@ -187,6 +190,14 @@ def env():
         s1 = make_student(f"{P}s1", c1, "学生十甲")
         s2 = make_student(f"{P}s2", c1, "学生十乙")
 
+        term = AcademicTerm(
+            name=f"{P}term", academic_year="2100-2101", semester=1,
+            start_date=date(2100, 9, 1), end_date=date(2101, 1, 15),
+            status="PLANNED",
+        )
+        db.add(term)
+        db.flush()
+
         def make_tc(code, course):
             task = TeachingTask(
                 semester=S1, course_id=course.id, college_id=college.id,
@@ -196,7 +207,7 @@ def env():
             db.flush()
             tc = TeachingClass(
                 code=code, task_id=task.id, course_id=course.id, semester=S1,
-                teacher_id=ta.id, capacity=60,
+                teacher_id=ta.id, capacity=60, term_id=term.id,
             )
             db.add(tc)
             db.flush()

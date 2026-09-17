@@ -48,6 +48,9 @@ PERMISSIONS: list[tuple[str, str, str]] = [
     ("teaching:write", "维护教学任务", "teaching"),
     ("schedule:read", "查看排课", "schedule"),
     ("schedule:write", "维护排课", "schedule"),
+    # 学期（TASK-011）
+    ("term:read", "查看学期", "term"),
+    ("term:write", "维护学期", "term"),
     # 选课
     ("selection:read", "查看选课", "selection"),
     ("selection:write", "选课/退课", "selection"),
@@ -82,6 +85,7 @@ ROLE_DEFS: dict[str, tuple[str, str, list[str]]] = {
             "course:read",
             "curriculum:read",
             "schedule:read",
+            "term:read",
             "selection:read",
             "selection:write",
             "grade:read",
@@ -100,6 +104,7 @@ ROLE_DEFS: dict[str, tuple[str, str, list[str]]] = {
             "student:read",
             "teaching:read",
             "schedule:read",
+            "term:read",
             "selection:read",
             "grade:read",
             "grade:write",

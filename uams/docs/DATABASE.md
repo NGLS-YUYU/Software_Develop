@@ -20,7 +20,7 @@
 
 | 内容 | 位置 |
 |---|---|
-| ORM 模型 | `backend/app/models/`（10 个模块文件，见下表） |
+| ORM 模型 | `backend/app/models/`（11 个模块文件，见下表） |
 | 模型注册入口 | `backend/app/models/__init__.py` —— **新增模型必须在此登记**，否则 Alembic autogenerate 会漏表 |
 | Alembic 配置 | `backend/alembic.ini` + `backend/alembic/env.py` |
 | 迁移文件 | `backend/alembic/versions/` |
@@ -37,6 +37,7 @@
 | `models/person.py` | students / teachers |
 | `models/course.py` | courses / course_prerequisites / curriculum_plans / curriculum_courses |
 | `models/teaching.py` | teaching_tasks / teaching_classes / schedules |
+| `models/term.py` | academic_terms |
 | `models/selection.py` | course_selections / selection_periods |
 | `models/grade.py` | grades |
 | `models/exam.py` | exams / exam_rooms / exam_students |
@@ -50,8 +51,9 @@
 | `7d34560e8aba` | `20260915_0128_7d34560e8aba_create_business_tables.py` | 其余 23 张业务表 |
 | `ce5a2a2a3f11` | `20260917_1745_ce5a2a2a3f11_add_assessment_type_and_mid_score.py` | 课程 `assessment_type`、成绩 `mid_score`（TASK-002） |
 | `d81e869930fb` | `20260917_1757_d81e869930fb_add_theory_and_practice_score_columns.py` | 成绩 `mid_theory_score`/`mid_practice_score`/`final_theory_score`/`final_practice_score`（TASK-002 补充） |
+| `a3f9c2e8b1d4` | `20260918_1000_a3f9c2e8b1d4_add_academic_terms.py` | 新增 `academic_terms` 表；`teaching_classes` 增加 `term_id`（NOT NULL）、编号唯一改为 `(term_id, code)`（TASK-011） |
 
-> 当前 head 为 `d81e869930fb`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
+> 当前 head 为 `a3f9c2e8b1d4`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
 
 本文档是 `CLAUDE.md §5/§6` 与 `PRD §12` 的字段级落地。表结构变更必须先改本文档，再写 Alembic migration。
 
@@ -116,6 +118,8 @@ CONSTRAINT ck_xxx_status CHECK (status IN ('ACTIVE','INACTIVE'))
 
 统一格式 `YYYY-YYYY-N`，如 `2026-2027-1`（第一学期）。用 `VARCHAR(16)`，全库一致。
 
+> `academic_terms` 表（TASK-011）采用 `academic_year VARCHAR(9)` + `semester SMALLINT` 两列拆分表达，与 `teaching_tasks`/`teaching_classes`/`schedules` 中冗余的 `semester VARCHAR(16)` 字符串并存。
+
 ---
 
 # 2. ER 总览
@@ -134,6 +138,8 @@ courses ── teaching_tasks ── teaching_classes ──┬── schedules 
                  teachers          │            ├── grades ── students
                                    │            ├── evaluations ── students
                                    └── exams ── exam_rooms ── classrooms
+
+academic_terms ── teaching_classes
 
 announcements     operation_logs
 ```
@@ -416,9 +422,33 @@ KEY idx_curriculum_courses_sem (plan_id, suggested_semester)
 
 ---
 
-# 7. 开课与排课
+# 7. 学期与开课排课
 
-## 7.1 teaching_tasks
+## 7.1 academic_terms
+
+学期：系统的时间维度，用于把教学班、选课、成绩等按学年学期组织。
+
+| 字段 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | BIGINT UNSIGNED | PK | |
+| name | VARCHAR(50) | NOT NULL | 学期名称，如「2026-2027学年第一学期」 |
+| academic_year | VARCHAR(9) | NOT NULL | 学年，如 `2026-2027` |
+| semester | SMALLINT | NOT NULL | 学期序号：1 或 2 |
+| start_date | DATE | NOT NULL | 开始日期 |
+| end_date | DATE | NOT NULL | 结束日期 |
+| status | VARCHAR(20) | NOT NULL, DEFAULT 'PLANNED' | PLANNED / ACTIVE / ENDED |
+
+```sql
+UNIQUE KEY uk_terms_year_sem (academic_year, semester)
+CONSTRAINT ck_terms_semester CHECK (semester IN (1, 2))
+CONSTRAINT ck_terms_status CHECK (status IN ('PLANNED','ACTIVE','ENDED'))
+CONSTRAINT ck_terms_dates CHECK (end_date > start_date)
+KEY idx_terms_status (status)
+```
+
+> 业务规则（TASK-011）：同一 `(academic_year, semester)` 唯一；状态单向流转 `PLANNED → ACTIVE → ENDED`；全系统最多一个 `ACTIVE` 学期；`teaching_classes` 通过 `term_id` 绑定，`ENDED` 学期不能新建教学班，学生选课仅限 `ACTIVE` 学期。
+
+## 7.2 teaching_tasks
 
 教学任务：某学期要开某门课。
 
@@ -438,14 +468,15 @@ CONSTRAINT ck_teaching_tasks_status CHECK (status IN
 KEY idx_teaching_tasks_semester (semester)
 ```
 
-## 7.2 teaching_classes
+## 7.3 teaching_classes
 
 教学班：任务下的具体班级，是**选课、排课、成绩、考试的公共锚点**。
 
 | 字段 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | id | BIGINT UNSIGNED | PK | |
-| code | VARCHAR(40) | NOT NULL, UNIQUE | 教学班号 |
+| code | VARCHAR(40) | NOT NULL | 教学班号（同一学期内唯一，跨学期可复用） |
+| term_id | BIGINT UNSIGNED | NOT NULL, FK → academic_terms(id) RESTRICT | 所属学期 |
 | task_id | BIGINT UNSIGNED | NOT NULL, FK → teaching_tasks(id) CASCADE | |
 | course_id | BIGINT UNSIGNED | NOT NULL, FK → courses(id) RESTRICT | 冗余，避免高频三表 JOIN |
 | semester | VARCHAR(16) | NOT NULL | 冗余，同上 |
@@ -460,6 +491,8 @@ CONSTRAINT ck_teaching_classes_sel CHECK (selection_status IN
   ('CLOSED','OPEN','FINISHED'))
 CONSTRAINT ck_teaching_classes_cap CHECK (capacity > 0)
 CONSTRAINT ck_teaching_classes_cnt CHECK (selected_count >= 0)
+UNIQUE KEY uk_tc_term_code (term_id, code)
+KEY idx_tc_term (term_id)
 KEY idx_tc_semester_course (semester, course_id)
 KEY idx_tc_teacher (teacher_id)
 KEY idx_tc_selection (selection_status, semester)
@@ -467,7 +500,7 @@ KEY idx_tc_selection (selection_status, semester)
 
 > `selected_count` 是冗余计数，必须与 `course_selections` 实际行数一致。选课/退课**必须在同一事务内**更新两者（CLAUDE.md §19），并用 `SELECT ... FOR UPDATE` 锁住本行防超卖（§20）。
 
-## 7.3 schedules
+## 7.4 schedules
 
 排课。一个教学班可有多条（如周二 1-2 节 + 周四 3-4 节）。
 

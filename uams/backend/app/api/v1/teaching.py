@@ -47,6 +47,8 @@ def _tc_out(tc) -> TeachingClassOut:
     if tc.course:
         d.course_code, d.course_name = tc.course.code, tc.course.name
         d.credits = float(tc.course.credits)
+    if tc.term:
+        d.term_name, d.term_status = tc.term.name, tc.term.status
     if tc.teacher and tc.teacher.user:
         d.teacher_name = tc.teacher.user.real_name
     d.remaining = max(0, tc.capacity - tc.selected_count)
@@ -119,6 +121,7 @@ classes = APIRouter(prefix="/teaching-classes", tags=["开课排课-教学班"])
 def list_classes(
     params: PageParams = Depends(),
     semester: str | None = Query(None),
+    term_id: int | None = Query(None, description="按学期过滤（TASK-011）"),
     course_id: int | None = Query(None),
     teacher_id: int | None = Query(None),
     selection_status: str | None = Query(None),
@@ -128,6 +131,7 @@ def list_classes(
     items, total = TeachingClassService(db).paginate(
         params,
         semester=semester,
+        term_id=term_id,
         course_id=course_id,
         teacher_id=teacher_id,
         selection_status=selection_status,
@@ -138,6 +142,7 @@ def list_classes(
 @classes.get("/mine", response_model=list[TeachingClassOut], summary="我的授课课程")
 def my_classes(
     semester: str | None = Query(None),
+    term_id: int | None = Query(None, description="按学期过滤（TASK-011）"),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
@@ -149,7 +154,7 @@ def my_classes(
     ).scalar_one_or_none()
     if me is None:
         raise PermissionDenied("教师档案不存在")
-    rows = TeachingClassService(db).my_classes(me.id, semester)
+    rows = TeachingClassService(db).my_classes(me.id, semester, term_id)
     return [_tc_out(tc) for tc in rows]
 
 

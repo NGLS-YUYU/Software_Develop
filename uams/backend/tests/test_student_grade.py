@@ -5,6 +5,7 @@
 班级/专业排名正确且与 RankingService 一致、教师越权、学生反向越权。
 """
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -22,6 +23,7 @@ from app.models.person import Student, Teacher
 from app.models.role import Role, RoleCode, UserRole
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass, TeachingTask
+from app.models.term import AcademicTerm
 from app.models.user import User, UserType
 from app.services.ranking_service import RankingService
 from app.services.score_service import ScoreService
@@ -50,6 +52,7 @@ def _cleanup() -> None:
             CourseSelection.teaching_class_id.in_(test_tcs)
         ))
         db.execute(delete(TeachingClass).where(TeachingClass.code.like(f"{P}%")))
+        db.execute(delete(AcademicTerm).where(AcademicTerm.name.like(f"{P}%")))
         db.execute(delete(TeachingTask).where(
             TeachingTask.course_id.in_(test_courses)
         ))
@@ -145,13 +148,21 @@ def env():
         db.add_all([task48, task32])
         db.flush()
 
+        term = AcademicTerm(
+            name=f"{P}term", academic_year="2097-2098", semester=1,
+            start_date=date(2097, 9, 1), end_date=date(2098, 1, 15),
+            status="PLANNED",
+        )
+        db.add(term)
+        db.flush()
+
         tc48 = TeachingClass(
             code=f"{P}tc48", task_id=task48.id, course_id=c48.id,
-            semester=SEMESTER, teacher_id=teacher.id, capacity=40,
+            semester=SEMESTER, teacher_id=teacher.id, capacity=40, term_id=term.id,
         )
         tc32 = TeachingClass(
             code=f"{P}tc32", task_id=task32.id, course_id=c32.id,
-            semester=SEMESTER, teacher_id=teacher.id, capacity=40,
+            semester=SEMESTER, teacher_id=teacher.id, capacity=40, term_id=term.id,
         )
         db.add_all([tc48, tc32])
         db.flush()

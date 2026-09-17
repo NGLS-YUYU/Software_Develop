@@ -28,6 +28,7 @@ from app.models.organization import Class, Classroom, College, Major  # noqa: E4
 from app.models.person import Student, Teacher  # noqa: E402
 from app.models.selection import CourseSelection, SelectionPeriod, SelectionState  # noqa: E402
 from app.models.teaching import Schedule, TeachingClass, TeachingTask  # noqa: E402
+from app.models.term import AcademicTerm, TermStatus  # noqa: E402
 from app.models.user import User  # noqa: E402
 from app.services.person import StudentService, TeacherService  # noqa: E402
 from app.services.score_service import ScoreService  # noqa: E402
@@ -206,6 +207,29 @@ def main() -> None:
         db.commit()
         print(f"  培养方案 1（含 {len(courses)} 门课程）")
 
+        # --- 学期（TASK-011：教学班必须绑定学期）---
+        term = db.execute(
+            select(AcademicTerm).where(
+                AcademicTerm.academic_year == "2026-2027", AcademicTerm.semester == 1
+            )
+        ).scalar_one_or_none()
+        if term is None:
+            term = AcademicTerm(
+                name="2026-2027学年第一学期", academic_year="2026-2027", semester=1,
+                start_date=date(2026, 9, 1), end_date=date(2027, 1, 15),
+                status=TermStatus.ACTIVE,
+            )
+            db.add(term)
+            db.flush()
+        else:
+            # 兼容迁移回填的默认学期可能是 PLANNED，演示数据需为进行中以便选课
+            term.name = "2026-2027学年第一学期"
+            term.start_date = date(2026, 9, 1)
+            term.end_date = date(2027, 1, 15)
+            term.status = TermStatus.ACTIVE
+        db.commit()
+        print("  学期 1（2026-2027 第一学期，进行中）")
+
         # --- 教学任务 + 教学班 + 排课 ---
         open_codes = ["CS101", "CS102", "PUB101", "CS201", "CS202", "CS302"]
         tcs = []
@@ -223,6 +247,7 @@ def main() -> None:
             tc, created = get_or_create(
                 db, TeachingClass,
                 {"task_id": task.id, "course_id": course.id, "semester": SEMESTER,
+                 "term_id": term.id,
                  "teacher_id": teachers[idx % len(teachers)].id,
                  "capacity": 40, "selection_status": "OPEN"},
                 code=f"{code}-{SEMESTER}-01",

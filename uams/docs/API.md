@@ -1,7 +1,7 @@
 # 后端 API 文档
 
-> 依据当前 FastAPI 路由实际代码整理（TASK-DOC-001，2026-09-17）。
-> **74 个路径 / 113 个操作**，与代码一一对应，未列出的接口均不存在。
+> 依据当前 FastAPI 路由实际代码整理（TASK-DOC-001，2026-09-17；TASK-011 更新，2026-09-18）。
+> **88 个路径 / 131 个操作**，与代码一一对应，未列出的接口均不存在。
 
 ---
 
@@ -178,9 +178,30 @@ POST /api/v1/auth/login
 
 ---
 
-## 6. 开课与排课
+## 6. 学期与开课排课
 
-### 6.1 教学任务 `/api/v1/teaching-tasks`
+### 6.1 学期 `/api/v1/terms`
+
+| 方法 | 路径 | 说明 | 权限 |
+|---|---|---|---|
+| GET | `/terms` | 列表（`academic_year`、`status`、分页） | `term:read` |
+| GET | `/terms/{term_id}` | 详情（含 `teaching_class_count`） | `term:read` |
+| POST | `/terms` | 新增（201，默认 `PLANNED`） | `term:write` |
+| PUT | `/terms/{term_id}` | 修改 | `term:write` |
+| DELETE | `/terms/{term_id}` | 删除（有教学班时 409） | `term:write` |
+| POST | `/terms/{term_id}/activate` | 激活（`PLANNED`→`ACTIVE`） | `term:write` |
+| POST | `/terms/{term_id}/end` | 结束（`ACTIVE`→`ENDED`） | `term:write` |
+
+**业务规则（TASK-011）**
+
+- 唯一约束：同一 `(academic_year, semester)` 只能存在一个学期。
+- 状态单向流转 `PLANNED → ACTIVE → ENDED`；`ENDED` 不可再改状态或重新激活，只有 `ACTIVE` 才能结束。
+- 全系统最多一个 `ACTIVE` 学期；激活或直接创建 `ACTIVE` 学期时若已存在进行中学期则 409。
+- 教学班通过 `term_id` 绑定学期（必填）；`ENDED` 学期不能创建新教学班。
+- 学生选课仅允许在 `ACTIVE` 学期；`ENDED` 学期不可退课。
+- 学生/教师仅 `term:read`（只读），仅 `ACADEMIC_ADMIN` 拥有 `term:write`。
+
+### 6.2 教学任务 `/api/v1/teaching-tasks`
 
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
@@ -189,14 +210,14 @@ POST /api/v1/auth/login
 | PUT | `/teaching-tasks/{task_id}` | 修改 | `teaching:write` |
 | DELETE | `/teaching-tasks/{task_id}` | 删除（有教学班时 409） | `teaching:write` |
 
-### 6.2 教学班 `/api/v1/teaching-classes`
+### 6.3 教学班 `/api/v1/teaching-classes`
 
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
-| GET | `/teaching-classes` | 列表（`semester`、`course_id`、`teacher_id`、`selection_status`） | 登录 |
-| GET | `/teaching-classes/mine` | 我的授课课程（**教师身份取自 token**，不接受 `teacher_id`） | 登录（教师） |
-| GET | `/teaching-classes/{class_id}` | 详情（含排课） | 登录 |
-| POST | `/teaching-classes` | 新增 | `teaching:write` |
+| GET | `/teaching-classes` | 列表（`semester`、`term_id`、`course_id`、`teacher_id`、`selection_status`） | 登录 |
+| GET | `/teaching-classes/mine` | 我的授课课程（**教师身份取自 token**，不接受 `teacher_id`；支持 `semester`、`term_id`） | 登录（教师） |
+| GET | `/teaching-classes/{class_id}` | 详情（含排课；返回 `term_id`、`term_name`、`term_status`） | 登录 |
+| POST | `/teaching-classes` | 新增（`term_id` 必填；`ENDED` 学期拒绝） | `teaching:write` |
 | PUT | `/teaching-classes/{class_id}` | 修改（换教师会重检冲突；容量不得小于已选人数） | `teaching:write` |
 | DELETE | `/teaching-classes/{class_id}` | 删除（已有人选课时 409） | `teaching:write` |
 | POST | `/teaching-classes/{class_id}/selection?open=true\|false` | 开放/关闭选课 | `selection:manage` |
@@ -415,7 +436,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 ---
 
-## 17. 权限码清单（40 项）
+## 17. 权限码清单（42 项）
 
 | 模块 | 权限码 |
 |---|---|
@@ -424,6 +445,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 | 用户 | `user:read/write` |
 | 课程 | `course:read/write`、`curriculum:read/write` |
 | 开课排课 | `teaching:read/write`、`schedule:read/write` |
+| 学期 | `term:read/write` |
 | 选课 | `selection:read/write/manage` |
 | 成绩 | `grade:read/write/submit/approve/export` |
 | 考试 | `exam:read/write` |
@@ -435,9 +457,9 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 | 角色 | 权限数 | 范围 |
 |---|---|---|
-| `STUDENT` | 10 | 课程查看、培养方案、课表、选课、成绩查看、考试、评价、公告 |
-| `TEACHER` | 12 | 课程/班级/学生查看、教学任务、课表、选课查看、成绩录入与提交、考试、评价、公告 |
-| `ACADEMIC_ADMIN` | 40 | 全部权限 |
+| `STUDENT` | 11 | 课程查看、培养方案、课表、选课、成绩查看、考试、评价、公告、学期查看 |
+| `TEACHER` | 13 | 课程/班级/学生查看、教学任务、课表、选课查看、成绩录入与提交、考试、评价、公告、学期查看 |
+| `ACADEMIC_ADMIN` | 42 | 全部权限 |
 
 ---
 
