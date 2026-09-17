@@ -206,6 +206,7 @@ POST /api/v1/auth/login
 | GET | `/teaching-classes/{class_id}/students` | 教学班学生名单（含专业与行政班，教师仅限本人） | `selection:read` |
 | POST | `/teaching-classes/{class_id}/students` | 教务添加学生到教学班（仅建立归属关系，不做选课校验） | `selection:manage` |
 | DELETE | `/teaching-classes/{class_id}/students/{student_id}` | 教务移除教学班学生 | `selection:manage` |
+| POST | `/teaching-classes/{class_id}/assign-required` | 必修课预安排（按行政班/专业/学院范围，优先级 class_id>major_id>college_id） | `selection:manage` |
 | GET | `/teaching-classes/{class_id}/selection-stats` | 选课统计（含计数一致性检查） | `selection:read` |
 
 **排课冲突判定**（`services/teaching.py`）：同学期 + 同星期 + 节次区间重叠 + 周次区间重叠 + 单双周相容，检测教室冲突与教师冲突两类。开放选课要求已分配教师且已排课。
@@ -218,24 +219,40 @@ POST /api/v1/auth/login
 
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
-| GET | `/course-selections/available?semester=...` | 可选教学班（学生） | 登录 |
-| GET | `/course-selections/mine` | 我的选课（`semester`、`include_dropped`） | 登录 |
-| POST | `/course-selections` | 选课（201） | `selection:write` |
+| GET | `/course-selections/available?semester=...` | 可选教学班（学生，仅选修课 ELECTIVE） | 登录 |
+| GET | `/course-selections/mine` | 我的选课（`semester`、`include_dropped`，含 `course_type`） | 登录 |
+| POST | `/course-selections` | 选课（201，身份取自 JWT，不接受 `student_id`） | `selection:write` |
 | DELETE | `/course-selections/{selection_id}` | 退课（204） | `selection:write` |
 
 **选课校验链**（`services/selection.py`，全部在单个事务内完成）：
 
 1. `SELECT ... FOR UPDATE` 锁定教学班行（防超卖）
 2. 教学班状态与选课开放状态
-3. 选课时间窗口（`selection_periods`）
-4. 重复选课 / 同学期同课程其他教学班
-5. 容量（`selected_count < capacity`）
-6. 时间冲突（与已选课程比对排课）
-7. 先修课程（已审核且达最低分）
+3. **课程类型**：仅 `ELECTIVE`/`PUBLIC_ELECTIVE` 可自主选择，必修课（`REQUIRED`/`PUBLIC_REQUIRED`/`PRACTICE`）拒绝
+4. 选课时间窗口（`selection_periods`）
+5. 重复选课 / 同学期同课程其他教学班
+6. 容量（`selected_count < capacity`）
+7. 时间冲突（与已选课程比对排课）
+8. 先修课程（已审核且达最低分）
 
-退课限制：仅本人、需选课开放中、已有成绩记录时不允许退课。
+退课限制：仅本人、需选课开放中、**必修课不可自主退选**、已有成绩记录（非草稿）时不允许退课。
 
-### 7.2 选课时间窗口 `/api/v1/selection-periods`
+### 7.2 必修课预安排（TASK-009）
+
+`POST /api/v1/teaching-classes/{class_id}/assign-required`
+
+请求体（范围优先级 `class_id` > `major_id` > `college_id`，至少指定其一）：
+
+```json
+{ "college_id": null, "major_id": null, "class_id": 3 }
+```
+
+- 仅 `ACADEMIC_ADMIN`（`selection:manage`）可调用；教师/学生返回 403。
+- 只允许为必修课（`REQUIRED`/`PUBLIC_REQUIRED`/`PRACTICE`）教学班预排，选修课返回 409。
+- 按范围筛选学生并批量建立 `CourseSelection`，幂等：已存在记录跳过、曾退课则复用，不产生重复。
+- 响应：`{ teaching_class_id, scope, matched, assigned, skipped }`。
+
+### 7.3 选课时间窗口 `/api/v1/selection-periods`
 
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
@@ -360,7 +377,6 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 | 调停课申请 | 调课/停课/补课申请与审核（PRD §9.8）—— **V0.2+ planned** |
 | 学生端培养方案查询 | PRD §8.7 学生查看培养方案 —— **V0.2 planned** |
 | 成绩模型扩展 | 实践/理论成绩拆分、GPA 细化、专业排名、班级排名 —— **V0.2 待重新设计** |
-| 必修课自动安排 / 选修课自主选课 | —— **V0.2 planned** |
 
 ---
 

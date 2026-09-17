@@ -14,12 +14,25 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import Conflict, NotFound, PermissionDenied
-from app.models.course import CoursePrerequisite
+from app.models.course import Course, CoursePrerequisite, CourseType
 from app.models.grade import Grade, GradeStatus
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionPeriod, SelectionState
 from app.models.teaching import Schedule, TeachingClass
 from app.services.teaching import ConflictChecker
+
+# 必修 / 选修分类（TASK-009）：复用 CourseType 枚举，不修改课程类型体系。
+# 必修课只能由教务处预排；选修课可由学生自主选择。
+_REQUIRED_TYPES = (CourseType.REQUIRED, CourseType.PUBLIC_REQUIRED, CourseType.PRACTICE)
+_ELECTIVE_TYPES = (CourseType.ELECTIVE, CourseType.PUBLIC_ELECTIVE)
+
+
+def _is_required(course_type: str | None) -> bool:
+    return course_type in _REQUIRED_TYPES
+
+
+def _is_elective(course_type: str | None) -> bool:
+    return course_type in _ELECTIVE_TYPES
 
 
 class SelectionService:
@@ -113,6 +126,7 @@ class SelectionService:
         tc = self.db.execute(
             select(TeachingClass)
             .where(TeachingClass.id == teaching_class_id)
+            .options(selectinload(TeachingClass.course))
             .with_for_update()
         ).scalar_one_or_none()
         if tc is None:
@@ -122,6 +136,10 @@ class SelectionService:
             raise Conflict("该教学班已取消")
         if tc.selection_status != "OPEN":
             raise Conflict("该教学班未开放选课")
+
+        # 课程类型校验：必修课只能由教务处预排，学生不能自主选择（TASK-009）
+        if not _is_elective(tc.course.course_type if tc.course else None):
+            raise Conflict("该课程为必修课，不能自主选择")
 
         self._check_period_open(student, tc.semester)
 
@@ -195,6 +213,10 @@ class SelectionService:
         if sel.status != SelectionState.SELECTED:
             raise Conflict("该记录已退课")
 
+        # 必修课不能通过学生自主退选接口删除，调整由教务处负责（TASK-009）
+        if not _is_elective(sel.course.course_type if sel.course else None):
+            raise Conflict("必修课不能由学生自主退选")
+
         tc = self.db.execute(
             select(TeachingClass)
             .where(TeachingClass.id == sel.teaching_class_id)
@@ -219,16 +241,106 @@ class SelectionService:
             tc.selected_count = max(0, tc.selected_count - 1)
         self.db.commit()
 
+    # --- 必修课预排 ---
+
+    def assign_required(
+        self,
+        teaching_class_id: int,
+        college_id: int | None = None,
+        major_id: int | None = None,
+        class_id: int | None = None,
+    ) -> dict:
+        """必修课预安排：教务处按范围（行政班 > 专业 > 学院）把学生安排进教学班。
+
+        范围优先级：class_id > major_id > college_id。
+        幂等：同一学生同一教学班已有记录时不重复创建，曾退课则复用该行。
+        """
+        tc = self.db.execute(
+            select(TeachingClass)
+            .where(TeachingClass.id == teaching_class_id)
+            .options(selectinload(TeachingClass.course))
+        ).scalar_one_or_none()
+        if tc is None:
+            raise NotFound(f"教学班不存在（id={teaching_class_id}）")
+
+        # 只允许必修课通过预排接口安排（TASK-009）
+        if not _is_required(tc.course.course_type if tc.course else None):
+            raise Conflict("该课程为选修课，不能通过必修课预排接口安排")
+
+        if class_id is None and major_id is None and college_id is None:
+            raise Conflict("必须指定预排范围：行政班、专业或学院")
+
+        if class_id is not None:
+            cond = (Student.class_id == class_id,)
+            scope = {"class_id": class_id}
+        elif major_id is not None:
+            cond = (Student.major_id == major_id,)
+            scope = {"major_id": major_id}
+        else:
+            cond = (Student.college_id == college_id,)
+            scope = {"college_id": college_id}
+
+        student_ids = [
+            row[0] for row in self.db.execute(select(Student.id).where(*cond)).all()
+        ]
+
+        assigned = 0
+        skipped = 0
+        for sid in student_ids:
+            sel = self.db.execute(
+                select(CourseSelection).where(
+                    CourseSelection.student_id == sid,
+                    CourseSelection.teaching_class_id == tc.id,
+                )
+            ).scalar_one_or_none()
+            if sel is not None and sel.status == SelectionState.SELECTED:
+                skipped += 1
+                continue
+            if sel is not None:  # 曾退课，复用该行
+                sel.status = SelectionState.SELECTED
+                sel.selected_at = datetime.now()
+                sel.dropped_at = None
+            else:
+                sel = CourseSelection(
+                    student_id=sid,
+                    teaching_class_id=tc.id,
+                    course_id=tc.course_id,
+                    semester=tc.semester,
+                )
+                self.db.add(sel)
+            assigned += 1
+        tc.selected_count += assigned
+        try:
+            self.db.commit()
+        except IntegrityError as e:
+            self.db.rollback()
+            raise Conflict("预排失败：存在重复选课记录") from e
+        return {
+            "teaching_class_id": tc.id,
+            "scope": scope,
+            "matched": len(student_ids),
+            "assigned": assigned,
+            "skipped": skipped,
+        }
+
     # --- 可选课程 ---
 
     def available_classes(
         self, student: Student, semester: str, keyword: str | None = None
     ) -> list[TeachingClass]:
-        """学生可选的教学班列表。"""
-        selected_ids = select(CourseSelection.teaching_class_id).where(
-            CourseSelection.student_id == student.id,
-            CourseSelection.status == SelectionState.SELECTED,
+        """学生可选的教学班列表（仅选修课，且未选过，同课程其他教学班也排除）。"""
+        selected = list(
+            self.db.execute(
+                select(CourseSelection).where(
+                    CourseSelection.student_id == student.id,
+                    CourseSelection.semester == semester,
+                    CourseSelection.status == SelectionState.SELECTED,
+                )
+            ).scalars()
         )
+        selected_tc_ids = {s.teaching_class_id for s in selected}
+        selected_course_ids = {s.course_id for s in selected}
+
         stmt = (
             select(TeachingClass)
             .options(
@@ -240,9 +352,13 @@ class SelectionService:
                 TeachingClass.semester == semester,
                 TeachingClass.selection_status == "OPEN",
                 TeachingClass.status == "ACTIVE",
-                TeachingClass.id.not_in(selected_ids),
+                TeachingClass.course.has(Course.course_type.in_(_ELECTIVE_TYPES)),
             )
         )
+        if selected_tc_ids:
+            stmt = stmt.where(TeachingClass.id.not_in(selected_tc_ids))
+        if selected_course_ids:
+            stmt = stmt.where(TeachingClass.course_id.not_in(selected_course_ids))
         rows = list(self.db.execute(stmt).scalars())
         if keyword:
             k = keyword.lower()

@@ -38,11 +38,18 @@ class SelectionOut(BaseModel):
     course_id: int
     course_code: str | None = None
     course_name: str | None = None
+    course_type: str | None = None
     credits: float | None = None
     teacher_name: str | None = None
     semester: str
     status: str
     selected_at: datetime | None = None
+
+
+class RequiredAssign(BaseModel):
+    college_id: int | None = None
+    major_id: int | None = None
+    class_id: int | None = None
 
 
 class StudentBrief(BaseModel):
@@ -72,6 +79,7 @@ def _sel_out(s) -> SelectionOut:
     if s.course:
         d.course_code, d.course_name = s.course.code, s.course.name
         d.credits = float(s.course.credits)
+        d.course_type = s.course.course_type
     if s.teaching_class:
         d.teaching_class_code = s.teaching_class.code
         t = s.teaching_class.teacher
@@ -228,6 +236,25 @@ def remove_student_from_class(
 ):
     """教务处将学生从教学班移除（TASK-008）。"""
     TeachingClassService(db).remove_student(class_id, student_id)
+
+
+@mgmt.post(
+    "/{class_id}/assign-required",
+    summary="必修课预安排（按学院/专业/行政班）",
+)
+def assign_required(
+    class_id: int,
+    payload: RequiredAssign,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("selection:manage")),
+):
+    """教务处将必修课程按范围（class_id > major_id > college_id）安排给学生（TASK-009）。"""
+    return SelectionService(db).assign_required(
+        class_id,
+        college_id=payload.college_id,
+        major_id=payload.major_id,
+        class_id=payload.class_id,
+    )
 
 
 # =========================== 选课时间窗口 ===========================
