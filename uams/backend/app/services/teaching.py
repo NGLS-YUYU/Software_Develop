@@ -189,6 +189,15 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
             selectinload(TeachingClass.schedules).selectinload(Schedule.classroom),
         )
 
+    def my_classes(
+        self, teacher_id: int, semester: str | None = None
+    ) -> list[TeachingClass]:
+        """教师本人授课的教学班列表（TASK-005，后端强制按 token 身份过滤）。"""
+        stmt = self.base_stmt().where(TeachingClass.teacher_id == teacher_id)
+        if semester:
+            stmt = stmt.where(TeachingClass.semester == semester)
+        return list(self.db.execute(stmt.order_by(TeachingClass.course_id)).scalars())
+
     def create_class(self, data: dict[str, Any]) -> TeachingClass:
         task = self.db.get(TeachingTask, data["task_id"])
         if task is None:

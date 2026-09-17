@@ -100,6 +100,55 @@ class GradeService:
             ).scalars()
         )
 
+    @staticmethod
+    def _entry_status(g: Grade | None) -> str:
+        """成绩录入状态：未录入（无成绩或全部为空）/草稿/待审核/已通过/已驳回。"""
+        if g is None:
+            return "NOT_ENTERED"
+        scores = (
+            g.regular_score, g.mid_score, g.mid_theory_score, g.mid_practice_score,
+            g.final_score, g.final_theory_score, g.final_practice_score,
+        )
+        if all(v is None for v in scores):
+            return "NOT_ENTERED"
+        return g.status
+
+    def roster(self, teaching_class_id: int) -> list[dict]:
+        """教学班学生名单 + 成绩录入状态（TASK-005）。"""
+        if self.db.get(TeachingClass, teaching_class_id) is None:
+            raise NotFound("教学班不存在")
+        selections = list(
+            self.db.execute(
+                select(CourseSelection).where(
+                    CourseSelection.teaching_class_id == teaching_class_id,
+                    CourseSelection.status == SelectionState.SELECTED,
+                )
+            ).scalars()
+        )
+        grades = {
+            g.student_id: g
+            for g in self.db.execute(
+                select(Grade).where(Grade.teaching_class_id == teaching_class_id)
+            ).scalars()
+        }
+        out: list[dict] = []
+        for s in selections:
+            stu = s.student
+            if stu is None:
+                continue
+            g = grades.get(s.student_id)
+            out.append(
+                {
+                    "student_id": stu.id,
+                    "student_no": stu.student_no,
+                    "student_name": stu.user.real_name if stu.user else "",
+                    "grade_id": g.id if g else None,
+                    "entry_status": self._entry_status(g),
+                }
+            )
+        out.sort(key=lambda r: r["student_no"])
+        return out
+
     def save_scores(
         self, teacher: Teacher, teaching_class_id: int, items: list[dict]
     ) -> list[Grade]:

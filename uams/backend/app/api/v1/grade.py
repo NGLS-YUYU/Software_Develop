@@ -71,6 +71,14 @@ class RejectRequest(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500)
 
 
+class RosterStudent(BaseModel):
+    student_id: int
+    student_no: str
+    student_name: str
+    grade_id: int | None = None
+    entry_status: str  # NOT_ENTERED / DRAFT / SUBMITTED / APPROVED / REJECTED
+
+
 def _out(g) -> GradeOut:
     d = GradeOut.model_validate(g)
     if g.student:
@@ -133,6 +141,25 @@ def class_grades(
     elif current.user_type == UserType.STUDENT:
         raise PermissionDenied("无权查看整班成绩")
     return [_out(g) for g in svc.list_by_class(class_id)]
+
+
+@router.get(
+    "/teaching-classes/{class_id}/students",
+    response_model=list[RosterStudent],
+    summary="课程学生名单（含成绩录入状态）",
+)
+def class_roster(
+    class_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(RequirePermissions("grade:read")),
+):
+    """教师查看本人授课教学班的学生名单及成绩状态（TASK-005）。"""
+    svc = GradeService(db)
+    if current.user_type == UserType.TEACHER:
+        svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
+    elif current.user_type == UserType.STUDENT:
+        raise PermissionDenied("无权查看学生名单")
+    return svc.roster(class_id)
 
 
 @router.post(

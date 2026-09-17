@@ -27,10 +27,11 @@ backend/tests/
 ├── test_rbac.py          # 三类角色权限隔离（9 个用例）
 ├── test_models.py        # 模型字段完整性与约束（13 个用例）
 ├── test_score_service.py # 统一成绩计算服务（15 个用例）
-└── test_gpa_ranking.py   # GPA 换算与班级/专业排名（16 个用例）
+├── test_gpa_ranking.py   # GPA 换算与班级/专业排名（16 个用例）
+└── test_teacher_grade.py # 教师成绩录入与状态机（15 个用例）
 ```
 
-**合计 74 个用例，全部通过。**
+**合计 89 个用例，全部通过。**
 
 | 文件 | 覆盖内容 |
 |---|---|
@@ -40,6 +41,7 @@ backend/tests/
 | `test_models.py` | 五模型需求字段完整性、TASK-002 新增列/CHECK 约束落库、非法值被拒、理论/实践字段可空（TASK-002） |
 | `test_score_service.py` | 32/48/64 课时总评、理论+实践合并、100/0 分边界、缺失/非法考核方式/越界异常、草稿容错（TASK-003） |
 | `test_gpa_ranking.py` | 百分制→绩点、单课程贡献、学分加权 GPA、班级/专业排名、无成绩/无学分/零学分/空成绩异常、Grade 表未新增 GPA 字段（TASK-004） |
+| `test_teacher_grade.py` | 教师我的课程、跨教师/跨学生越权防护、学生名单（含成绩状态）、草稿保存、非法成绩拒绝、32/48 课时与理论+实践录入、完整/不完整提交、SUBMITTED/APPROVED/REJECTED 状态流转（TASK-005） |
 
 ### 2.2 测试不足的部分 ⚠️
 
@@ -136,8 +138,8 @@ def student_user():
 | 优先级 | 测试项 | 说明 |
 |---|---|---|
 | P1 | 选课并发测试 | 多线程抢容量，断言不超卖、计数一致 |
-| P1 | 成绩状态机测试 | DRAFT → SUBMITTED → APPROVED/REJECTED 全流转与非法流转 |
 | P1 | 排课冲突测试 | 教室冲突、教师冲突、单双周相容 |
+| ~~P1~~ ✅ | ~~成绩状态机测试~~ | **已在 TASK-005 完成**：`test_teacher_grade.py` 覆盖 DRAFT → SUBMITTED → APPROVED/REJECTED 全流转与非法流转 |
 | ~~P1~~ ✅ | ~~成绩计算测试~~ | **已在 TASK-003 完成**：`test_score_service.py` 覆盖 32/48/64 课时、理论+实践合并、边界与异常 |
 | P1 | 先修课环路测试 | A→B→C→A 被拒绝 |
 | ~~P2~~ ✅ | ~~GPA 计算测试~~ | **已在 TASK-004 完成**：`test_gpa_ranking.py` 覆盖换算、加权、排名、异常 |

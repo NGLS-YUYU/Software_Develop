@@ -1,10 +1,14 @@
 """开课与排课路由。"""
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import RequirePermissions, get_current_user
+from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
+from app.models.person import Teacher
+from app.models.user import User, UserType
 from app.schemas.common import PageParams, PageResult
 from app.schemas.teaching import (
     ScheduleCreate,
@@ -129,6 +133,24 @@ def list_classes(
         selection_status=selection_status,
     )
     return PageResult.build([_tc_out(i) for i in items], total, params)
+
+
+@classes.get("/mine", response_model=list[TeachingClassOut], summary="我的授课课程")
+def my_classes(
+    semester: str | None = Query(None),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """教师本人授课课程（TASK-005）。教师身份取自 token，不接受 teacher_id 参数。"""
+    if current.user_type != UserType.TEACHER:
+        raise PermissionDenied("仅教师可查看本人授课课程")
+    me = db.execute(
+        select(Teacher).where(Teacher.user_id == current.id)
+    ).scalar_one_or_none()
+    if me is None:
+        raise PermissionDenied("教师档案不存在")
+    rows = TeachingClassService(db).my_classes(me.id, semester)
+    return [_tc_out(tc) for tc in rows]
 
 
 @classes.get("/{class_id}", response_model=TeachingClassOut, summary="教学班详情")
