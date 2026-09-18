@@ -11,6 +11,7 @@
 | [DEVELOPMENT.md](DEVELOPMENT.md) | 开发环境、规范、Claude Code 工作方式 |
 | [ROADMAP.md](ROADMAP.md) | 版本规划（V0.1 → V1.0） |
 | [TESTING.md](TESTING.md) | 测试规范与现状 |
+| [STARTUP.md](STARTUP.md) | 项目启动说明（首次初始化 + 日常启动） |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | 本地开发与后续部署规划 |
 | [V0.2_AUDIT.md](V0.2_AUDIT.md) | V0.2 升级前项目审计结果 |
 | [DOCUMENTATION_UPDATE_REPORT.md](DOCUMENTATION_UPDATE_REPORT.md) | 本次文档整理报告（TASK-DOC-001） |

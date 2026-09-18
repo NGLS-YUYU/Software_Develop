@@ -117,6 +117,7 @@ cd uams/frontend && npm run build
 - [docs/DEVELOPMENT.md](uams/docs/DEVELOPMENT.md) — 开发规范
 - [docs/ROADMAP.md](uams/docs/ROADMAP.md) — 版本规划
 - [docs/TESTING.md](uams/docs/TESTING.md) — 测试规范
+- [docs/STARTUP.md](uams/docs/STARTUP.md) — 项目启动说明（一键快速开始）
 - [docs/DEPLOYMENT.md](uams/docs/DEPLOYMENT.md) — 部署说明
 - [docs/V0.2_AUDIT.md](uams/docs/V0.2_AUDIT.md) — V0.2 升级前审计
 - [docs/DOCUMENTATION_UPDATE_REPORT.md](uams/docs/DOCUMENTATION_UPDATE_REPORT.md) — 文档整理报告

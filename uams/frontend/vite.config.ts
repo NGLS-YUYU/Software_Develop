@@ -19,6 +19,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0',
     port: 5173,
     proxy: {
       // 开发期走代理，避免跨域；生产由 Nginx 等反向代理承担
