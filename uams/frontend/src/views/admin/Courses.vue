@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { collegeApi, courseApi } from '@/api'
@@ -22,6 +22,36 @@ const t = useCrudTable<Course>(courseApi, {
 const TYPE: Record<string, string> = {
   REQUIRED: '专业必修', ELECTIVE: '专业选修', PUBLIC_REQUIRED: '公共必修',
   PUBLIC_ELECTIVE: '公共选修', PRACTICE: '实践',
+}
+
+/** 成绩考核结构由总学时唯一推导（FIX-009 §三）：教务/教师不可自行选择权重。 */
+const assessmentHint = computed(() => {
+  const h = Number(t.form.value.total_hours ?? 0)
+  if (h <= 32) return '两段式：平时 20% + 期末 80%（无期中）'
+  return '三段式：平时 20% + 期中 30% + 期末 50%'
+})
+
+/** FIX-009 §四/§五：理论 + 实践 = 总学时，前端先校验，非法数据不提交后端。 */
+function hoursError(): string | null {
+  const total = Number(t.form.value.total_hours ?? 0)
+  const theory = Number(t.form.value.theory_hours ?? 0)
+  const practice = Number(t.form.value.practice_hours ?? 0)
+  if (theory + practice !== total) {
+    return (
+      `理论课时 + 实践课时必须等于总学时（${total}）。` +
+      `当前：理论 ${theory} + 实践 ${practice} = ${theory + practice}。`
+    )
+  }
+  return null
+}
+
+async function save() {
+  const err = hoursError()
+  if (err) {
+    ElMessage.error(err)
+    return
+  }
+  await t.save()
 }
 
 // 先修课程管理
@@ -169,13 +199,22 @@ onMounted(async () => {
             <el-radio value="CHECK">考查</el-radio>
           </el-radio-group>
         </el-form-item>
+        <el-form-item label="成绩考核结构">
+          <el-alert
+            :title="`${assessmentHint}（由总学时自动决定，不可手动选择）`"
+            type="info"
+            :closable="false"
+            show-icon
+            style="width: 100%"
+          />
+        </el-form-item>
         <el-form-item label="课程简介">
           <el-input v-model="t.form.value.description" type="textarea" :rows="3" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="t.dialogVisible.value = false">取消</el-button>
-        <el-button type="primary" :loading="t.saving.value" @click="t.save()">确定</el-button>
+        <el-button type="primary" :loading="t.saving.value" @click="save">确定</el-button>
       </template>
     </el-dialog>
 

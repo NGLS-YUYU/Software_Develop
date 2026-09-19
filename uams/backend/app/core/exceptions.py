@@ -69,6 +69,14 @@ class Conflict(BizError):
     message = "资源冲突"
 
 
+class CourseHoursMismatch(BizError):
+    """课程理论 + 实践学时 ≠ 总学时（FIX-009 §五）。"""
+
+    code = "COURSE_HOURS_MISMATCH"
+    http_status = status.HTTP_400_BAD_REQUEST
+    message = "理论课时 + 实践课时必须等于总学时"
+
+
 # --- 教学班专项（TASK-012） ---
 # 复用现有 Conflict（409）体系，仅扩展出更精确的错误码，供前端区分处理。
 class TeachingClassFull(Conflict):

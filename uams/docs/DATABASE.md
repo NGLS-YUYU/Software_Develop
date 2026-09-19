@@ -360,11 +360,20 @@ CONSTRAINT ck_courses_type CHECK (course_type IN
 CONSTRAINT ck_courses_assessment CHECK (assessment_type IS NULL
   OR assessment_type IN ('32','48','64'))
 CONSTRAINT ck_courses_credits CHECK (credits > 0)
+CONSTRAINT ck_courses_hours CHECK (theory_hours + practice_hours = total_hours)
 KEY idx_courses_college_type (college_id, course_type)
 ```
 
 > **成绩权重不属于课程表**（FIX-008）：V0.1 曾在 `courses` 上放 `regular_weight`/`final_weight`（0.40/0.60），但 TASK-002/003 之后总评改由 `assessment_type` 驱动，该两列成为无人引用的死字段且与现行权重不符，已删除。权重唯一来源为 `services/score_service.py::WEIGHT_RULES`，总评由后端统一计算（CLAUDE.md §21：不得硬编码到前端）。
 > `assessment_type` 仅作考核方案标识，权重换算在 Service 层完成，不写入模型（TASK-002）。
+
+> **学时与考核结构闭环**（FIX-009）：`theory_hours + practice_hours = total_hours` 由
+> `ck_courses_hours` 在数据库层强制，Schema 与 Service 层同时校验，非法数据到不了 DB。
+> 考核结构不再由教师/教务自行选择，而是由系统按总学时唯一推导（见
+> `services/assessment.py::profile_for`）：`total_hours <= 32` → 两段式（平时 20% + 期末 80%，无期中）；
+> `<= 48` → 三段式（20%/30%/50%，有期中）；其余同三段式。`assessment_type` 仅是派生缓存，
+> 计算时一律按 `total_hours` 现算，忽略手工存的漂移值。`practice_hours > 0` 才有实践考试/实践成绩，
+> `practice_hours = 0` 禁止出现任何实践成绩字段。
 
 ## 6.2 course_prerequisites
 
@@ -693,7 +702,9 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（对学生可�
 
 ## 9.3 总评与绩点
 
-总评由统一成绩计算服务 `services/score_service.py` 计算（TASK-003），按课程的 `assessment_type` 读取权重规则 `WEIGHT_RULES`，不硬编码比例；前端一律只读展示系统计算结果，禁止自行计算：
+总评由统一成绩计算服务 `services/score_service.py` 计算（TASK-003 / FIX-009），考核结构由课程
+`total_hours` / `practice_hours` 经 `services/assessment.py::profile_for` 唯一推导，不信任手工存的
+`assessment_type`，不硬编码比例；前端一律只读展示系统计算结果，禁止自行计算：
 
 ```
 WEIGHT_RULES:
@@ -702,12 +713,17 @@ WEIGHT_RULES:
   "64"  → { regular: 0.2, mid: 0.3,  final: 0.5 }
 ```
 
+考核结构推导（FIX-009 §二/§三）：`total_hours <= 32` → "32"；`<= 48` → "48"；其余 → "64"。
+有期中 = "48"/"64"；有实践 = `practice_hours > 0`。
+
 ### 理论/实践拆分
 
-期中/期末成绩若提供「理论 + 实践」拆分（`mid_theory_score`/`mid_practice_score`、`final_theory_score`/`final_practice_score`），二者必须同时提供，只填一个则报错；拆分值参与计算后，平均值回写 `mid_score`/`final_score`。
+是否拆分由**课程属性**决定，不由成绩数据反推（FIX-009 §八）：`practice_hours > 0` 的实践课必须
+分别录入理论/实践成绩（`mid_theory_score`/`mid_practice_score`、`final_theory_score`/`final_practice_score`），
+只填一侧则报错，只填合并字段（`mid_score`/`final_score`）也报错；拆分值参与计算后，平均值回写 `mid_score`/`final_score`。
+`practice_hours = 0` 的课程禁止录入任何实践成绩字段（`mid_practice_score`/`final_practice_score`/`practice_makeup_score`）。
 
-存在实践拆分时（`mid_practice_score` / `final_practice_score` / `practice_makeup_score` 任一非空），
-分别计算侧分总评并写入 `theory_total_score` / `practice_total_score`：
+实践课（`practice_hours > 0`）分别计算侧分总评并写入 `theory_total_score` / `practice_total_score`：
 
 ```
 理论总评 = regular × w.regular + 期中理论 × w.mid + 期末理论 × w.final
@@ -715,7 +731,7 @@ WEIGHT_RULES:
 成绩总评 = (理论总评 + 实践总评) / 2
 ```
 
-无实践拆分时：`理论总评 = 成绩总评`（同一加权式，期中/期末取合并口径），`practice_total_score` 为空。
+非实践课：`理论总评 = 成绩总评`（同一加权式，期中/期末取合并口径），`practice_total_score` 为空。
 该口径与「期中/期末先取理论+实践平均再加权」数学等价。
 
 ### 补考规则

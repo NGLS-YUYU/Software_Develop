@@ -21,6 +21,7 @@ from app.schemas.teaching import (
     TeachingTaskOut,
     TeachingTaskUpdate,
 )
+from app.services.assessment import profile_for
 from app.services.teaching import (
     ScheduleService,
     TeachingClassService,
@@ -64,6 +65,14 @@ def _tc_out(tc, selected_count: int = 0) -> TeachingClassOut:
     if tc.course:
         d.course_code, d.course_name = tc.course.code, tc.course.name
         d.credits = float(tc.course.credits)
+        d.total_hours = tc.course.total_hours
+        d.theory_hours = tc.course.theory_hours
+        d.practice_hours = tc.course.practice_hours
+        # 考核结构由课程属性统一推导（FIX-009 §十五：教学班继承课程，不另存学时/权重）
+        profile = profile_for(tc.course)
+        d.assessment_type = profile.assessment_type
+        d.has_midterm = profile.has_midterm
+        d.has_practice = profile.has_practice
     if tc.term:
         d.term_name, d.term_status = tc.term.name, tc.term.status
     if tc.teacher and tc.teacher.user:

@@ -2,10 +2,18 @@
 
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 COURSE_TYPE = "^(REQUIRED|ELECTIVE|PUBLIC_REQUIRED|PUBLIC_ELECTIVE|PRACTICE)$"
 ASSESSMENT_TYPE = "^(32|48|64)$"
+
+
+def hours_mismatch_message(total: int, theory: int, practice: int) -> str:
+    """FIX-009 §五：理论 + 实践 = 总学时的统一错误文案。"""
+    return (
+        f"理论课时 + 实践课时必须等于总学时（{total}）。"
+        f"当前：理论 {theory} + 实践 {practice} = {theory + practice}。"
+    )
 
 
 class CourseBase(BaseModel):
@@ -26,7 +34,15 @@ class CourseBase(BaseModel):
 
 
 class CourseCreate(CourseBase):
-    pass
+    @model_validator(mode="after")
+    def check_hours_sum(self):
+        if self.theory_hours + self.practice_hours != self.total_hours:
+            raise ValueError(
+                hours_mismatch_message(
+                    self.total_hours, self.theory_hours, self.practice_hours
+                )
+            )
+        return self
 
 
 class CourseUpdate(BaseModel):

@@ -40,7 +40,7 @@ S1 = "2098-2098-1"  # 独立学期，避免与演示数据及其他测试冲突
 STUDENT_HDRS = ["student_no", "name", "username", "college", "major", "class_name"]
 COURSE_HDRS = [
     "course_code", "course_name", "college", "credits", "total_hours",
-    "course_type", "assessment_type",
+    "theory_hours", "practice_hours", "course_type",
 ]
 GRADE_HDRS = [
     "student_no", "teaching_class_code",
@@ -138,20 +138,25 @@ def env():
 
         c32 = Course(
             code=f"{P}c32", name="T10两段课", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32,
+            course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32, theory_hours=32,
             assessment_type="32",
         )
         c48 = Course(
             code=f"{P}c48", name="T10三段课", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48,
+            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48, theory_hours=48,
             assessment_type="48",
         )
         c64 = Course(
             code=f"{P}c64", name="T10三段课二", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("4.0"), total_hours=64,
+            course_type="REQUIRED", credits=Decimal("4.0"), total_hours=64, theory_hours=64,
             assessment_type="64",
         )
-        db.add_all([c32, c48, c64])
+        c48p = Course(
+            code=f"{P}c48p", name="T10实践课", college_id=college.id,
+            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48,
+            theory_hours=40, practice_hours=8, assessment_type="48",
+        )
+        db.add_all([c32, c48, c64, c48p])
         db.flush()
 
         role_teacher = db.execute(
@@ -217,8 +222,9 @@ def env():
         tc32 = make_tc(f"{P}TC32", c32)
         tc48 = make_tc(f"{P}TC48", c48)
         tc64 = make_tc(f"{P}TC64", c64)
+        tc48p = make_tc(f"{P}TC48P", c48p)
 
-        for tc in (tc32, tc48, tc64):
+        for tc in (tc32, tc48, tc64, tc48p):
             db.add(CourseSelection(
                 student_id=s1.id, teaching_class_id=tc.id,
                 course_id=tc.course_id, semester=S1, status=SelectionState.SELECTED,
@@ -232,7 +238,7 @@ def env():
             "c1_id": c1.id, "c1_name": c1.name,
             "c2_id": c2.id, "c2_name": c2.name,
             "c32_id": c32.id, "c48_id": c48.id, "c64_id": c64.id,
-            "tc32": tc32.id, "tc48": tc48.id, "tc64": tc64.id,
+            "tc32": tc32.id, "tc48": tc48.id, "tc64": tc64.id, "tc48p": tc48p.id,
             "tc32_code": tc32.code, "tc48_code": tc48.code, "tc64_code": tc64.code,
             "ta_uname": f"{P}t",
             "s1_uname": f"{P}s1", "s2_uname": f"{P}s2",
@@ -365,17 +371,18 @@ def test_class_major_mismatch(env):
 
 def test_admin_can_import_courses(env):
     r = _post_file(client, f"{PREFIX}/imports/courses", COURSE_HDRS, [
-        [f"{P}newc", "T10新课", "T10学院", 3.0, 48, "REQUIRED", "48"],
+        [f"{P}newc", "T10新课", "T10学院", 3.0, 48, 40, 8, "REQUIRED"],
     ], admin_auth())
     assert r.status_code == 200, r.text
     assert r.json()["success"] == 1 and r.json()["failed"] == 0
     with SessionLocal() as db:
         c = db.execute(select(Course).where(Course.code == f"{P}newc")).scalar_one()
-        assert c.assessment_type == "48"
+        assert c.assessment_type == "48"  # 由 total_hours=48 推导
+        assert c.theory_hours == 40 and c.practice_hours == 8
 
 
 def test_course_code_duplicate(env):
-    row = [f"{P}dup", "T10重复课", "T10学院", 3.0, 48, "REQUIRED", "48"]
+    row = [f"{P}dup", "T10重复课", "T10学院", 3.0, 48, 48, 0, "REQUIRED"]
     _post_file(client, f"{PREFIX}/imports/courses", COURSE_HDRS, [row], admin_auth())
     r = _post_file(client, f"{PREFIX}/imports/courses", COURSE_HDRS, [row], admin_auth())
     assert r.json()["failed"] == 1
@@ -384,23 +391,24 @@ def test_course_code_duplicate(env):
 
 def test_course_type_invalid(env):
     r = _post_file(client, f"{PREFIX}/imports/courses", COURSE_HDRS, [
-        [f"{P}badtype", "T10类型课", "T10学院", 3.0, 48, "INVALID", "48"],
+        [f"{P}badtype", "T10类型课", "T10学院", 3.0, 48, 48, 0, "INVALID"],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "课程类型非法" in r.json()["errors"][0]["message"]
 
 
-def test_assessment_type_invalid(env):
+def test_course_hours_sum_mismatch(env):
+    """FIX-009 §五：理论 + 实践 ≠ 总学时 → 该行报错。"""
     r = _post_file(client, f"{PREFIX}/imports/courses", COURSE_HDRS, [
-        [f"{P}badassess", "T10考核课", "T10学院", 3.0, 48, "REQUIRED", "99"],
+        [f"{P}badhours", "T10学时课", "T10学院", 3.0, 32, 20, 8, "REQUIRED"],
     ], admin_auth())
     assert r.json()["failed"] == 1
-    assert "考核方式非法" in r.json()["errors"][0]["message"]
+    assert "必须等于总学时" in r.json()["errors"][0]["message"]
 
 
 def test_credits_invalid(env):
     r = _post_file(client, f"{PREFIX}/imports/courses", COURSE_HDRS, [
-        [f"{P}badcredit", "T10学分课", "T10学院", 0, 48, "REQUIRED", "48"],
+        [f"{P}badcredit", "T10学分课", "T10学院", 0, 48, 48, 0, "REQUIRED"],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "学分" in r.json()["errors"][0]["message"]
@@ -541,10 +549,11 @@ def test_grade_64_hours(env):
 
 
 def test_grade_theory_practice_merge(env):
+    # 实践课（tc48p：practice_hours=8）导入理论/实践拆分成绩
     _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, "", "", 70, 80, 90, 80, "", ""],
+        [f"{P}s1", f"{P}TC48P", 80, "", "", 70, 80, 90, 80, "", ""],
     ], admin_auth())
-    g = _grade_of(env["s1_id"], env["tc48"])
+    g = _grade_of(env["s1_id"], env["tc48p"])
     # mid = (70+80)/2 = 75；final = (90+80)/2 = 85
     # 80*0.2 + 75*0.3 + 85*0.5 = 81.00
     assert float(g.total_score) == 81.0
@@ -594,7 +603,7 @@ def test_import_does_not_write_ranking(env):
 
 def test_teacher_cannot_batch_import(env):
     r = _post_file(client, f"{PREFIX}/imports/courses", COURSE_HDRS, [
-        [f"{P}tcforbidden", "T10禁课", "T10学院", 3.0, 48, "REQUIRED", "48"],
+        [f"{P}tcforbidden", "T10禁课", "T10学院", 3.0, 48, 48, 0, "REQUIRED"],
     ], auth(env["ta_uname"]))
     assert r.status_code == 403
 

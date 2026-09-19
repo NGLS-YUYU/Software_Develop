@@ -88,15 +88,20 @@ def env():
 
         c32 = Course(
             code=f"{P}c32", name="T5两段课", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32,
+            course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32, theory_hours=32,
             assessment_type="32",
         )
         c48 = Course(
             code=f"{P}c48", name="T5三段课", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48,
+            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48, theory_hours=48,
             assessment_type="48",
         )
-        db.add_all([c32, c48])
+        c48p = Course(
+            code=f"{P}c48p", name="T5实践课", college_id=college.id,
+            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48,
+            theory_hours=40, practice_hours=8, assessment_type="48",
+        )
+        db.add_all([c32, c48, c48p])
         db.flush()
 
         role_teacher = db.execute(
@@ -144,7 +149,11 @@ def env():
             semester=SEMESTER, course_id=c48.id, college_id=college.id,
             status="CONFIRMED",
         )
-        db.add_all([task32, task48])
+        task48p = TeachingTask(
+            semester=SEMESTER, course_id=c48p.id, college_id=college.id,
+            status="CONFIRMED",
+        )
+        db.add_all([task32, task48, task48p])
         db.flush()
 
         term = AcademicTerm(
@@ -163,10 +172,14 @@ def env():
             code=f"{P}tcb", task_id=task48.id, course_id=c48.id,
             semester=SEMESTER, teacher_id=tb.id, capacity=40, term_id=term.id,
         )
-        db.add_all([tca, tcb])
+        tcc = TeachingClass(
+            code=f"{P}tcc", task_id=task48p.id, course_id=c48p.id,
+            semester=SEMESTER, teacher_id=tb.id, capacity=40, term_id=term.id,
+        )
+        db.add_all([tca, tcb, tcc])
         db.flush()
 
-        # S1、S2 选教师甲的两段课；S3 选教师乙的三段课
+        # S1、S2 选教师甲的两段课；S3 选教师乙的三段课与实践课
         for s in students[:2]:
             db.add(CourseSelection(
                 student_id=s.id, teaching_class_id=tca.id, course_id=c32.id,
@@ -176,10 +189,14 @@ def env():
             student_id=students[2].id, teaching_class_id=tcb.id, course_id=c48.id,
             semester=SEMESTER, status=SelectionState.SELECTED,
         ))
+        db.add(CourseSelection(
+            student_id=students[2].id, teaching_class_id=tcc.id, course_id=c48p.id,
+            semester=SEMESTER, status=SelectionState.SELECTED,
+        ))
         db.commit()
 
         yield {
-            "tca": tca.id, "tcb": tcb.id,
+            "tca": tca.id, "tcb": tcb.id, "tcc": tcc.id,
             "ta_uname": f"{P}t01", "tb_uname": f"{P}t02",
             "stu_uname": f"{P}s01",
             "s1_no": f"{P}s01", "s2_no": f"{P}s02", "s3_no": f"{P}s03",
@@ -321,10 +338,10 @@ def test_48h_entry(env):
 
 
 def test_theory_practice_entry(env):
-    sheet = _init_sheet(env["tcb"], env["tb_uname"])
+    sheet = _init_sheet(env["tcc"], env["tb_uname"])
     g = _grade_of(sheet, env["s3_no"])
     r = _save(
-        env["tcb"], env["tb_uname"],
+        env["tcc"], env["tb_uname"],
         [{
             "grade_id": g["id"], "regular_score": 90,
             "mid_theory_score": 80, "mid_practice_score": 90,      # mid=85
@@ -340,6 +357,9 @@ def test_theory_practice_entry(env):
     # 侧分总评：理论 90*.2+80*.3+70*.5 = 77.0；实践 90*.2+90*.3+90*.5 = 90.0
     assert _num(row["theory_total_score"]) == pytest.approx(77.0)
     assert _num(row["practice_total_score"]) == pytest.approx(90.0)
+    # 实践课：课程属性由后端下发（has_practice / practice_hours），非前端反推
+    assert row["has_practice"] is True
+    assert row["course_practice_hours"] == 8
 
 
 # --- 8a 补考录入（教师 API 链路） ---

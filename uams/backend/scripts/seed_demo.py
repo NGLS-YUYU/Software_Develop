@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.course import (  # noqa: E402
-    AssessmentType,
     Course,
     CoursePrerequisite,
     CurriculumCourse,
@@ -36,6 +35,7 @@ from app.models.selection import CourseSelection, SelectionPeriod, SelectionStat
 from app.models.teaching import Schedule, TeachingClass, TeachingTask  # noqa: E402
 from app.models.term import AcademicTerm, TermStatus  # noqa: E402
 from app.models.user import User  # noqa: E402
+from app.services.assessment import derive_assessment_type, profile_for  # noqa: E402
 from app.services.person import StudentService, TeacherService  # noqa: E402
 from app.services.score_service import ScoreService  # noqa: E402
 
@@ -64,13 +64,6 @@ COURSES = [
 PREREQS = [("CS201", "CS101"), ("CS301", "CS201"), ("CS302", "CS201"), ("CS203", "CS202")]
 
 
-def assessment_type_for(total_hours: int) -> str:
-    """按总学时推导考核方式（TASK-003）：32h 两段式，其余三段式。"""
-    if total_hours <= 32:
-        return "32"
-    return "48" if total_hours <= 48 else "64"
-
-
 def get_or_create(db: Session, model, defaults: dict | None = None, **kw):
     obj = db.execute(select(model).filter_by(**kw)).scalar_one_or_none()
     if obj:
@@ -82,24 +75,43 @@ def get_or_create(db: Session, model, defaults: dict | None = None, **kw):
 
 
 def repair_grade(course: Course, g: Grade, fallback_mid: Decimal) -> bool:
-    """按现行 WEIGHT_RULES 校正历史演示成绩（FIX-008）。
+    """按现行考核规则校正历史演示成绩（FIX-008 / FIX-009）。
 
-    早期演示数据按已被废弃的课程级权重（0.4 / 0.6）生成总评，与
-    ``ScoreService.WEIGHT_RULES`` 不一致；且 48/64 学时的成绩缺少现行规则
-    要求的期中成绩，无法直接重算。此处**保留原行**，只做两件事：
+    FIX-008：早期演示数据按已废弃的课程级权重（0.4 / 0.6）生成总评；
+    且 48/64 学时缺期中，无法直接重算——补齐期中（合并值）后重算。
 
-    1. 补齐缺失的必要成绩（期中，取同一确定性演示值）；
-    2. 交由 ``ScoreService.compute`` 重算总评 / 绩点 / 及格标记。
+    FIX-009 §八：实践课（practice_hours>0）必须拆分录入理论/实践成绩。
+    历史演示数据按合并字段（mid_score / final_score）录入，此处拆分为
+    理论 == 实践 == 合并值，保证成绩总评不变；合并字段交由 compute 回写。
 
     返回是否发生了纠正；已一致的记录返回 False，保证可重复执行。
     """
     changed = False
-    if g.mid_score is None and course.assessment_type in (
-        AssessmentType.HOURS_48,
-        AssessmentType.HOURS_64,
-    ):
-        g.mid_score = fallback_mid
-        changed = True
+    profile = profile_for(course)
+
+    if profile.has_practice:
+        # 拆理论/实践（取合并值；幂等：拆过后再跑不会重复拆）
+        if (
+            g.mid_theory_score is None
+            and g.mid_practice_score is None
+            and g.mid_score is not None
+        ):
+            g.mid_theory_score, g.mid_practice_score = g.mid_score, g.mid_score
+            g.mid_score = None
+            changed = True
+        if (
+            g.final_theory_score is None
+            and g.final_practice_score is None
+            and g.final_score is not None
+        ):
+            g.final_theory_score, g.final_practice_score = g.final_score, g.final_score
+            g.final_score = None
+            changed = True
+    else:
+        # 非实践课：48/64 学时补齐期中合并值（32 学时无期中，跳过）
+        if g.mid_score is None and profile.has_midterm:
+            g.mid_score = fallback_mid
+            changed = True
 
     before = (g.total_score, g.grade_point, g.is_passed)
     ScoreService.compute(course, g)
@@ -200,11 +212,11 @@ def main() -> None:
                 {"name": name, "college_id": college.id, "course_type": ctype,
                  "credits": Decimal(str(cr)), "total_hours": th,
                  "theory_hours": theory, "practice_hours": prac,
-                 "assessment_type": assessment_type_for(th)},
+                 "assessment_type": derive_assessment_type(th)},
                 code=code,
             )
             if c.assessment_type is None:
-                c.assessment_type = assessment_type_for(th)  # 回填历史课程
+                c.assessment_type = derive_assessment_type(th)  # 回填历史课程
             courses[code] = c
         db.commit()
 
@@ -380,15 +392,26 @@ def main() -> None:
                         n_repaired += 1
                     continue
 
-                g = Grade(
-                    student_id=sel.student_id, teaching_class_id=tc.id,
-                    course_id=tc.course_id, semester=SEMESTER,
-                    credits=course.credits, regular_score=reg,
-                    mid_score=mid, final_score=fin,
-                    status=GradeStatus.APPROVED,
-                    submitted_by=tc.teacher_id, submitted_at=now,
-                    approved_by=admin.id, approved_at=now,
-                )
+                profile = profile_for(course)
+                fields = {
+                    "student_id": sel.student_id, "teaching_class_id": tc.id,
+                    "course_id": tc.course_id, "semester": SEMESTER,
+                    "credits": course.credits, "regular_score": reg,
+                    "status": GradeStatus.APPROVED,
+                    "submitted_by": tc.teacher_id, "submitted_at": now,
+                    "approved_by": admin.id, "approved_at": now,
+                }
+                if profile.has_practice:
+                    # FIX-009 §八：实践课拆分录入理论/实践成绩
+                    fields.update(
+                        mid_theory_score=mid, mid_practice_score=mid,
+                        final_theory_score=fin, final_practice_score=fin,
+                    )
+                else:
+                    fields["final_score"] = fin
+                    if profile.has_midterm:
+                        fields["mid_score"] = mid
+                g = Grade(**fields)
                 ScoreService.compute(course, g)
                 db.add(g)
                 n_grade += 1

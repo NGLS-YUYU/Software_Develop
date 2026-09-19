@@ -52,20 +52,18 @@ const rejectReason = computed(
 /** 考核方式来自成绩单返回的课程 assessment_type（32=两段式；48/64=三段式）。 */
 const assessmentType = computed(() => rows.value[0]?.assessment_type ?? null)
 
-/** 32 学时课程没有期中考试，隐藏期中列。 */
-const is32h = computed(() => assessmentType.value === '32')
+/** 是否有期中：以后端返回的 has_midterm 为准；无值时按考核方式兜底。 */
+const hasMidterm = computed(() => {
+  const h = rows.value[0]?.has_midterm
+  if (h != null) return h
+  return rows.value[0]?.assessment_type !== '32'
+})
 
-/** 课程含实践（实践学时 > 0）或已录入任何实践成绩时显示实践列。 */
-const hasPractice = computed(
-  () =>
-    Number(rows.value[0]?.course_practice_hours ?? 0) > 0 ||
-    rows.value.some(
-      (r) =>
-        r.mid_practice_score != null ||
-        r.final_practice_score != null ||
-        r.practice_makeup_score != null,
-    ),
-)
+/** 32 学时课程没有期中考试，隐藏期中列。 */
+const is32h = computed(() => !hasMidterm.value)
+
+/** 课程含实践：仅由课程实践学时（后端 has_practice）决定，禁止由已录成绩反推课程属性（FIX-009 §八）。 */
+const hasPractice = computed(() => rows.value[0]?.has_practice ?? false)
 
 /** 权重提示：与后端 ScoreService.WEIGHT_RULES 一致，仅作展示，不参与计算。 */
 const weightHint = computed(() => {

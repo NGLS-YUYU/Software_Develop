@@ -161,7 +161,7 @@ def ranking_env():
 
         course = Course(
             code=f"{TEST_PREFIX}course", name="GPA测试课程", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48,
+            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48, theory_hours=48,
             assessment_type="48",
         )
         db.add(course)

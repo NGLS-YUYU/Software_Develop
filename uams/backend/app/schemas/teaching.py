@@ -91,6 +91,12 @@ class TeachingClassOut(BaseModel):
     course_code: str | None = None
     course_name: str | None = None
     credits: float | None = None
+    total_hours: int | None = None
+    theory_hours: int | None = None
+    practice_hours: int | None = None
+    assessment_type: str | None = None
+    has_midterm: bool | None = None
+    has_practice: bool | None = None
     semester: str
     teacher_id: int | None = None
     teacher_name: str | None = None

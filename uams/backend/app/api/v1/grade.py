@@ -13,6 +13,7 @@ from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Student, Teacher
 from app.models.user import User, UserType
+from app.services.assessment import profile_for
 from app.services.grade import GradeService
 
 router = APIRouter(prefix="/grades", tags=["成绩"])
@@ -49,6 +50,10 @@ class GradeOut(BaseModel):
     course_code: str | None = None
     course_name: str | None = None
     assessment_type: str | None = None
+    has_midterm: bool | None = None
+    has_practice: bool | None = None
+    course_total_hours: int | None = None
+    course_theory_hours: int | None = None
     semester: str
     regular_score: Decimal | None = None
     mid_score: Decimal | None = None
@@ -105,7 +110,13 @@ def _out(g) -> GradeOut:
         d.student_name = g.student.user.real_name if g.student.user else None
     if g.course:
         d.course_code, d.course_name = g.course.code, g.course.name
-        d.assessment_type = g.course.assessment_type
+        # 考核结构由课程总学时/实践学时统一推导，不信任存量 assessment_type（FIX-009）
+        profile = profile_for(g.course)
+        d.assessment_type = profile.assessment_type
+        d.has_midterm = profile.has_midterm
+        d.has_practice = profile.has_practice
+        d.course_total_hours = g.course.total_hours
+        d.course_theory_hours = g.course.theory_hours
         d.course_practice_hours = g.course.practice_hours
     if g.teaching_class:
         d.teaching_class_code = g.teaching_class.code

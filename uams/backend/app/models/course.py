@@ -66,6 +66,10 @@ class Course(Base, IdMixin, TimestampMixin):
             "assessment_type IS NULL OR assessment_type IN ('32','48','64')",
             name="ck_courses_assessment",
         ),
+        CheckConstraint(
+            "theory_hours + practice_hours = total_hours",
+            name="ck_courses_hours",
+        ),
         Index("idx_courses_college_type", "college_id", "course_type"),
         {**_KW, "comment": "课程"},
     )

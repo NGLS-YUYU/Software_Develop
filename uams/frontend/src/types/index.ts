@@ -132,6 +132,7 @@ export interface Course {
   total_hours: number
   theory_hours: number
   practice_hours: number
+  assessment_type?: string | null
   exam_type: string
   description?: string | null
   status: string
@@ -207,6 +208,12 @@ export interface TeachingClass {
   course_code?: string | null
   course_name?: string | null
   credits?: number | null
+  total_hours?: number | null
+  theory_hours?: number | null
+  practice_hours?: number | null
+  assessment_type?: string | null
+  has_midterm?: boolean | null
+  has_practice?: boolean | null
   semester: string
   teacher_id?: number | null
   teacher_name?: string | null
@@ -275,6 +282,10 @@ export interface Grade {
   course_code?: string | null
   course_name?: string | null
   assessment_type?: string | null
+  has_midterm?: boolean | null
+  has_practice?: boolean | null
+  course_total_hours?: number | null
+  course_theory_hours?: number | null
   course_practice_hours?: number | null
   semester: string
   regular_score?: number | null

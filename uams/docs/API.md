@@ -172,7 +172,8 @@ POST /api/v1/auth/login
 | POST | `/courses/{course_id}/prerequisites` | 添加先修（**含环路检测**） | `course:write` |
 | DELETE | `/courses/{course_id}/prerequisites/{row_id}` | 移除先修 | `course:write` |
 
-> 成绩权重不通过课程维护：总评权重由课程的 `assessment_type` 决定，统一在 `ScoreService.WEIGHT_RULES` 中配置（FIX-008 已删除 `regular_weight`/`final_weight` 字段）。
+> 成绩权重不通过课程维护：总评权重统一在 `ScoreService.WEIGHT_RULES` 中配置（FIX-008 已删除 `regular_weight`/`final_weight` 字段）。
+> **FIX-009**：考核结构由 `total_hours`/`practice_hours` 经 `services/assessment.py` 唯一推导，`assessment_type` 仅作派生缓存，POST/PUT 时由后端重算、忽略客户端传入值；`theory_hours + practice_hours = total_hours` 由 Schema/Service/DB 三层强制，不满足直接 400；已存在提交/审核成绩的课程，PUT 修改学时将返回 409。
 
 ### 5.2 培养方案 `/api/v1/curriculum-plans`
 
@@ -362,14 +363,15 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
                     └──驳回──> REJECTED ──教师修改──> SUBMITTED
 ```
 
-- 总评由后端统一计算：`ScoreService.compute` 按课程 `assessment_type` 取 `WEIGHT_RULES` 权重（`32`→平时0.2/期末0.8；`48`/`64`→平时0.2/期中0.3/期末0.5），期中/期末的理论+实践拆分先取平均
+- 总评由后端统一计算：`ScoreService.compute` 按课程 `total_hours` 经 `profile_for` 推导考核方式后取 `WEIGHT_RULES` 权重（`32`→平时0.2/期末0.8 无期中；`48`/`64`→平时0.2/期中0.3/期末0.5），期中/期末的理论+实践拆分先取平均；考核结构由后端下发，前端不得反推
 - 成绩模型闭环（DATABASE.md §9.3）：教师录入原始成绩（平时/期中/期末的理论与实践中可选拆分 + 理论补考/实践补考），系统计算并回写 `theory_total_score`（理论总评）、`practice_total_score`（实践总评）、`total_score`（成绩总评）、`grade_point`、`is_passed`；前端只读展示计算结果
+- **FIX-009 §七/§八**：实践拆分由课程 `practice_hours` 决定——`practice_hours > 0` 必须分别录入理论/实践（只填一侧或只填合并字段均 400），`practice_hours = 0` 禁止任何实践成绩字段；课程属性由后端下发（`has_practice`/`has_midterm`）
 - 补考规则：只允许对应期末分项 < 60 时录入（否则 400 `SCORE_CALC_ERROR`）；补考成绩替换对应期末分项重算；补考通过（≥60）的一侧总评按 60 封顶；结果仍由成绩总评 ≥ 60 判定
 - 前端传入的 `total_score` 等计算字段被忽略
 - `APPROVED` 后教师不可直接修改
 - 审核通过后自动重算学生 `total_credits` 与 `gpa`
 - 待审核列表（`GET /grades/pending`）同时返回 `teaching_class_code`（教学班）与 `teacher_name`（教师），供教务审核时核对（TASK-006）
-- `GET /grades/my` 返回 `{ items, gpa, class_rank, major_rank }`：`items` 为 `GradeOut`（含 `assessment_type`、`course_practice_hours`、全部原始成绩与计算字段），`gpa` 与排名由 GpaService / RankingService 实时计算，**不落库**；无有效成绩时三者返回 `null`（TASK-007）
+- `GET /grades/my` 返回 `{ items, gpa, class_rank, major_rank }`：`items` 为 `GradeOut`（含 `assessment_type`、`has_midterm`、`has_practice`、`course_total_hours`、`course_theory_hours`、`course_practice_hours`、全部原始成绩与计算字段），`gpa` 与排名由 GpaService / RankingService 实时计算，**不落库**；无有效成绩时三者返回 `null`（TASK-007）
 - 绩点单一来源：`Grade.grade_point`、GpaService（`/grades/my` 与 `/grades/mine/summary`）、RankingService 全部经 `models/grade.GRADE_POINT_TABLE` 的 `score_to_point()` 换算，口径一致
 
 ---

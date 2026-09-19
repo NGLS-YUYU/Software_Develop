@@ -16,7 +16,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import Conflict
-from app.models.course import AssessmentType, Course, CourseType
+from app.models.course import Course, CourseType
 from app.models.grade import PASS_SCORE, Grade, GradeStatus
 from app.models.organization import Class, College, Major
 from app.models.person import Student
@@ -33,7 +33,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 _STUDENT_HEADERS = ["student_no", "name", "username", "college", "major", "class_name"]
 _COURSE_HEADERS = [
     "course_code", "course_name", "college", "credits", "total_hours",
-    "course_type", "assessment_type",
+    "theory_hours", "practice_hours", "course_type",
 ]
 _GRADE_HEADERS = [
     "student_no", "teaching_class_code",
@@ -177,7 +177,7 @@ class ImportService:
     def course_template(self) -> bytes:
         return _template_bytes(
             _COURSE_HEADERS,
-            ["CS101", "程序设计基础", "信息工程学院", 4.0, 64, "REQUIRED", "64"],
+            ["CS101", "程序设计基础", "信息工程学院", 4.0, 64, 40, 24, "REQUIRED"],
         )
 
     def grade_template(self) -> bytes:
@@ -319,17 +319,19 @@ class ImportService:
             college_v = _cell_str(ws.cell(r, hmap["college"]).value)
             credits_raw = ws.cell(r, hmap["credits"]).value
             hours_raw = ws.cell(r, hmap["total_hours"]).value
+            theory_raw = ws.cell(r, hmap["theory_hours"]).value
+            practice_raw = ws.cell(r, hmap["practice_hours"]).value
             ctype = _cell_str(ws.cell(r, hmap["course_type"]).value)
-            atype = _cell_str(ws.cell(r, hmap["assessment_type"]).value)
             if not any([course_code, course_name, college_v,
-                        _cell_str(credits_raw), _cell_str(hours_raw), ctype, atype]):
+                        _cell_str(credits_raw), _cell_str(hours_raw),
+                        _cell_str(theory_raw), _cell_str(practice_raw), ctype]):
                 continue
             rows.append(
                 {
                     "row": r, "course_code": course_code, "course_name": course_name,
                     "college": college_v, "credits_raw": credits_raw,
-                    "hours_raw": hours_raw, "course_type": ctype,
-                    "assessment_type": atype,
+                    "hours_raw": hours_raw, "theory_raw": theory_raw,
+                    "practice_raw": practice_raw, "course_type": ctype,
                 }
             )
             college_vals.add(college_v)
@@ -382,10 +384,28 @@ class ImportService:
             if hours != int(hours):
                 errors.append(fail("total_hours", "学时必须是整数")); continue
 
+            try:
+                theory = _cell_decimal(row["theory_raw"])
+            except ValueError as e:
+                errors.append(fail("theory_hours", str(e))); continue
+            try:
+                practice = _cell_decimal(row["practice_raw"])
+            except ValueError as e:
+                errors.append(fail("practice_hours", str(e))); continue
+            theory = int(theory) if theory is not None else 0
+            practice = int(practice) if practice is not None else 0
+            if not (Decimal("0") <= Decimal(theory) <= Decimal("500")
+                    and Decimal("0") <= Decimal(practice) <= Decimal("500")):
+                errors.append(fail("theory_hours", "学时必须在 0-500 之间")); continue
+            if theory + practice != int(hours):
+                errors.append(fail(
+                    "theory_hours",
+                    f"理论课时 + 实践课时必须等于总学时（{int(hours)}）。"
+                    f"当前：理论 {theory} + 实践 {practice} = {theory + practice}。"
+                )); continue
+
             if row["course_type"] not in CourseType.ALL:
                 errors.append(fail("course_type", f"课程类型非法：{row['course_type']}")); continue
-            if row["assessment_type"] and row["assessment_type"] not in AssessmentType.ALL:
-                errors.append(fail("assessment_type", f"考核方式非法：{row['assessment_type']}")); continue
 
             if row["course_code"] in existing_codes:
                 errors.append(fail("course_code", f"课程编号已存在：{row['course_code']}")); continue
@@ -401,7 +421,8 @@ class ImportService:
                     "course_type": row["course_type"],
                     "credits": credits,
                     "total_hours": int(hours),
-                    "assessment_type": row["assessment_type"] or None,
+                    "theory_hours": theory,
+                    "practice_hours": practice,
                 }
             )
             success += 1
@@ -455,6 +476,14 @@ class ImportService:
             t.code: t
             for t in self.db.execute(
                 select(TeachingClass).where(TeachingClass.code.in_(tc_codes))
+            ).scalars()
+        }
+        courses_by_id = {
+            c.id: c
+            for c in self.db.execute(
+                select(Course).where(
+                    Course.id.in_([t.course_id for t in tcs_by_code.values()])
+                )
             ).scalars()
         }
         involved_student_ids = {s.id for s in students_by_no.values()}
@@ -528,6 +557,18 @@ class ImportService:
                 errors.append(fail("mid_theory_score", "期中理论成绩与实践成绩必须同时填写")); continue
             if ("final_theory_score" in scores) != ("final_practice_score" in scores):
                 errors.append(fail("final_theory_score", "期末理论成绩与实践成绩必须同时填写")); continue
+
+            # 实践学时 ↔ 实践成绩强关系（FIX-009 §七）：行级友好错误，权威校验仍由 ScoreService 负责
+            course = courses_by_id.get(tc.course_id)
+            has_practice = bool(course and course.practice_hours and course.practice_hours > 0)
+            any_practice = any(
+                k in scores
+                for k in ("mid_practice_score", "final_practice_score", "practice_makeup_score")
+            )
+            if not has_practice and any_practice:
+                errors.append(fail("mid_practice_score", "课程无实践学时，不能导入实践成绩")); continue
+            if has_practice and ("mid_score" in scores or "final_score" in scores):
+                errors.append(fail("mid_score", "课程含实践学时，必须分别导入理论/实践成绩")); continue
 
             # 补考资格预检（行级友好错误；权威校验与重算仍由 ScoreService 负责）
             if "theory_makeup_score" in scores:

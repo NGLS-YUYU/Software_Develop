@@ -96,17 +96,17 @@ def env():
 
         req = Course(
             code=f"{P}req", name="T9必修课", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48,
+            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48, theory_hours=48,
             assessment_type="48",
         )
         elec = Course(
             code=f"{P}elec", name="T9选修课", college_id=college.id,
-            course_type="ELECTIVE", credits=Decimal("2.0"), total_hours=32,
+            course_type="ELECTIVE", credits=Decimal("2.0"), total_hours=32, theory_hours=32,
             assessment_type="32",
         )
         elec2 = Course(
             code=f"{P}elec2", name="T9选修课二", college_id=college.id,
-            course_type="ELECTIVE", credits=Decimal("1.0"), total_hours=32,
+            course_type="ELECTIVE", credits=Decimal("1.0"), total_hours=32, theory_hours=32,
             assessment_type="32",
         )
         db.add_all([req, elec, elec2])

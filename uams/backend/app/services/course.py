@@ -5,14 +5,17 @@ from typing import Any
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import Conflict, NotFound
+from app.core.exceptions import Conflict, CourseHoursMismatch, NotFound
 from app.models.course import (
     Course,
     CoursePrerequisite,
     CurriculumCourse,
     CurriculumPlan,
 )
+from app.models.grade import Grade, GradeStatus
 from app.models.organization import College, Major
+from app.schemas.course import hours_mismatch_message
+from app.services.assessment import derive_assessment_type
 from app.services.base import BaseCrudService
 
 
@@ -26,13 +29,57 @@ class CourseService(BaseCrudService[Course]):
     def base_stmt(self) -> Select:
         return select(Course).options(selectinload(Course.college))
 
+    @staticmethod
+    def _check_hours(total: int, theory: int, practice: int) -> None:
+        if theory + practice != total:
+            raise CourseHoursMismatch(
+                hours_mismatch_message(total, theory, practice)
+            )
+
+    def _locked_grade_count(self, course_id: int) -> int:
+        """该课程已提交/已审核（锁定成绩结构）的成绩条数（FIX-009 §十六）。"""
+        return self.db.execute(
+            select(func.count())
+            .select_from(Grade)
+            .where(
+                Grade.course_id == course_id,
+                Grade.status.in_([GradeStatus.SUBMITTED, GradeStatus.APPROVED]),
+            )
+        ).scalar() or 0
+
     def validate_create(self, data: dict[str, Any]) -> None:
         if not self.db.get(College, data["college_id"]):
             raise NotFound(f"学院不存在（id={data['college_id']}）")
+        self._check_hours(
+            data["total_hours"], data["theory_hours"], data["practice_hours"]
+        )
+        # 考核方式由总学时唯一推导，教师/教务不得自行指定（FIX-009 §三）
+        data["assessment_type"] = derive_assessment_type(data["total_hours"])
 
     def validate_update(self, obj: Course, data: dict[str, Any]) -> None:
         if "college_id" in data and not self.db.get(College, data["college_id"]):
             raise NotFound(f"学院不存在（id={data['college_id']}）")
+
+        total = data.get("total_hours", obj.total_hours)
+        theory = data.get("theory_hours", obj.theory_hours)
+        practice = data.get("practice_hours", obj.practice_hours)
+        self._check_hours(total, theory, practice)
+
+        # 已存在提交/审核成绩的课程，禁止改动会重定义考核结构的学时字段（FIX-009 §十六）
+        hours_changed = (
+            ("total_hours" in data and data["total_hours"] != obj.total_hours)
+            or ("theory_hours" in data and data["theory_hours"] != obj.theory_hours)
+            or ("practice_hours" in data and data["practice_hours"] != obj.practice_hours)
+        )
+        if hours_changed:
+            n = self._locked_grade_count(obj.id)
+            if n:
+                raise Conflict(
+                    f"该课程已有 {n} 条已提交或已审核成绩，不能修改学时/考核结构"
+                )
+
+        # 考核方式始终按总学时重算，忽略客户端传入的 assessment_type（FIX-009 §三）
+        data["assessment_type"] = derive_assessment_type(total)
 
     def validate_delete(self, obj: Course) -> None:
         from app.models.teaching import TeachingTask

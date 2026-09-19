@@ -92,10 +92,10 @@ def env():
         db.flush()
 
         c1 = Course(code=f"{P}c1", name="T13课程一", college_id=college.id,
-                    course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48,
+                    course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48, theory_hours=48,
                     assessment_type="48")
         c2 = Course(code=f"{P}c2", name="T13课程二", college_id=college.id,
-                    course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32,
+                    course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32, theory_hours=32,
                     assessment_type="32")
         db.add_all([c1, c2])
         db.flush()

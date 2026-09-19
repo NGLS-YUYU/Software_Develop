@@ -83,7 +83,7 @@ def env():
 
         course = Course(
             code=f"{P}c32", name="T6审核课", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32,
+            course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32, theory_hours=32,
             assessment_type="32",
         )
         db.add(course)

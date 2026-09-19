@@ -91,12 +91,12 @@ def env():
 
         c48 = Course(
             code=f"{P}c48", name="T7三段课", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48,
+            course_type="REQUIRED", credits=Decimal("3.0"), total_hours=48, theory_hours=48,
             assessment_type="48",
         )
         c32 = Course(
             code=f"{P}c32", name="T7两段课", college_id=college.id,
-            course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32,
+            course_type="REQUIRED", credits=Decimal("2.0"), total_hours=32, theory_hours=32,
             assessment_type="32",
         )
         db.add_all([c48, c32])
