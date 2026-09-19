@@ -1,6 +1,8 @@
 """TASK-003：统一成绩计算服务测试。
 
-覆盖：32/48/64 课时计算、理论+实践合并、100/0 分边界、缺失/非法异常、规则配置。
+覆盖：32/48/64 课时计算（含 20/30/50 权重回归）、理论+实践合并、
+理论/实践侧总评、补考（资格校验/替换/60 封顶）、100/0 分边界、
+缺失/非法异常、草稿容错、规则配置。
 """
 
 from decimal import Decimal
@@ -31,6 +33,7 @@ def _grade(
     regular=None, mid=None, final=None,
     mid_theory=None, mid_practice=None,
     final_theory=None, final_practice=None,
+    theory_makeup=None, practice_makeup=None,
 ) -> Grade:
     return Grade(
         student_id=1, teaching_class_id=1, course_id=1, semester="2026-2027-1",
@@ -38,6 +41,7 @@ def _grade(
         regular_score=regular, mid_score=mid, final_score=final,
         mid_theory_score=mid_theory, mid_practice_score=mid_practice,
         final_theory_score=final_theory, final_practice_score=final_practice,
+        theory_makeup_score=theory_makeup, practice_makeup_score=practice_makeup,
     )
 
 
@@ -78,6 +82,17 @@ def test_64h_course_calculation():
     assert g.total_score == Decimal("76.50")
 
 
+def test_64h_legacy_weight_regression():
+    """64 学时「平时 80 / 期中 70 / 期末 90」→ 82.00（20/30/50）。
+
+    旧「40%平时 + 60%期末」口径会算出 86.00；本用例锁定三要素权重口径。
+    """
+    g = _grade(regular=80, mid=70, final=90)
+    ScoreService.compute(_course(AssessmentType.HOURS_64), g)
+    assert g.total_score == Decimal("82.00")
+    assert g.total_score != Decimal("86.00")
+
+
 # --- 4~5 理论+实践合并 ---
 
 
@@ -95,6 +110,113 @@ def test_final_theory_practice_merge():
     # final=(70+90)/2=80；total=80*0.2+85*0.3+80*0.5=81.50
     assert g.total_score == Decimal("81.50")
     assert g.final_score == Decimal("80.00")  # 合并值回写
+
+
+# --- 4a 理论/实践侧总评 ---
+
+
+def test_side_totals_theory_practice_split():
+    """理论总评/实践总评分开计算，成绩总评取两侧平均。
+
+    平时 80 / 期中理论 80 / 期中实践 90 / 期末理论 70 / 期末实践 90：
+      理论总评 = 80*0.2 + 80*0.3 + 70*0.5 = 75.00
+      实践总评 = 80*0.2 + 90*0.3 + 90*0.5 = 88.00
+      成绩总评 = (75.00 + 88.00) / 2 = 81.50
+    """
+    g = _grade(regular=80, mid_theory=80, mid_practice=90,
+               final_theory=70, final_practice=90)
+    ScoreService.compute(_course(AssessmentType.HOURS_48), g)
+    assert g.theory_total_score == Decimal("75.00")
+    assert g.practice_total_score == Decimal("88.00")
+    assert g.total_score == Decimal("81.50")
+    assert g.mid_score == Decimal("85.00")
+    assert g.final_score == Decimal("80.00")
+
+
+def test_side_total_without_practice_split():
+    """无实践拆分的课程：理论总评 = 成绩总评，实践总评为空。"""
+    g = _grade(regular=80, mid=85, final=90)
+    ScoreService.compute(_course(AssessmentType.HOURS_48), g)
+    assert g.theory_total_score == Decimal("86.50")
+    assert g.practice_total_score is None
+    assert g.total_score == Decimal("86.50")
+
+
+def test_32h_side_total_no_mid():
+    g = _grade(regular=80, final=90)
+    ScoreService.compute(_course(AssessmentType.HOURS_32), g)
+    assert g.theory_total_score == Decimal("88.00")
+    assert g.practice_total_score is None
+
+
+# --- 4b 补考 ---
+
+
+def test_makeup_replaces_failed_final_and_caps_total():
+    """32 学时：平时 60 / 期末 55（不及格）/ 理论补考 80。
+
+    补考替换期末重算：60*0.2 + 80*0.8 = 76.00 → 补考通过，理论总评按 60 封顶
+    → 成绩总评 60.00，绩点 1.0，通过。
+    """
+    g = _grade(regular=60, final=55, theory_makeup=80)
+    ScoreService.compute(_course(AssessmentType.HOURS_32), g)
+    assert g.theory_total_score == Decimal("60.00")
+    assert g.total_score == Decimal("60.00")
+    assert g.grade_point == Decimal("1.0")
+    assert g.is_passed is True
+
+
+def test_makeup_below_60_still_fails():
+    """补考 40 分：60*0.2 + 40*0.8 = 44.00，不封顶、不及格。"""
+    g = _grade(regular=60, final=55, theory_makeup=40)
+    ScoreService.compute(_course(AssessmentType.HOURS_32), g)
+    assert g.theory_total_score == Decimal("44.00")
+    assert g.total_score == Decimal("44.00")
+    assert g.grade_point == Decimal("0.0")
+    assert g.is_passed is False
+
+
+def test_makeup_rejected_when_final_passed():
+    """期末 60（已及格）仍录补考 → 拒绝。"""
+    g = _grade(regular=60, final=60, theory_makeup=80)
+    with pytest.raises(ScoreError, match="不及格"):
+        ScoreService.compute(_course(AssessmentType.HOURS_32), g)
+
+
+def test_makeup_rejected_without_final():
+    """期末未录入时录补考 → 拒绝。"""
+    g = _grade(regular=60, theory_makeup=80)
+    with pytest.raises(ScoreError, match="已录入"):
+        ScoreService.compute(_course(AssessmentType.HOURS_32), g)
+
+
+def test_split_side_makeup_caps_only_remediated_side():
+    """48 学时理论+实践：期末理论 55（不及格）/ 期末实践 70，理论补考 90。
+
+      理论总评 = 80*0.2 + 85*0.3 + 90*0.5 = 86.50 → 补考通过封顶 60.00
+      实践总评 = 80*0.2 + 85*0.3 + 70*0.5 = 76.50（不受封顶影响）
+      成绩总评 = (60.00 + 76.50) / 2 = 68.25
+    """
+    g = _grade(regular=80, mid=85, final_theory=55, final_practice=70,
+               theory_makeup=90)
+    ScoreService.compute(_course(AssessmentType.HOURS_48), g)
+    assert g.theory_total_score == Decimal("60.00")
+    assert g.practice_total_score == Decimal("76.50")
+    assert g.total_score == Decimal("68.25")
+    assert g.is_passed is True
+
+
+def test_practice_makeup_requires_practice_final():
+    """实践补考要求期末实践成绩已录入。"""
+    g = _grade(regular=60, final=55, practice_makeup=80)
+    with pytest.raises(ScoreError, match="期末实践"):
+        ScoreService.compute(_course(AssessmentType.HOURS_32), g)
+
+
+def test_makeup_out_of_range_raises():
+    g = _grade(regular=60, final=55, theory_makeup=101)
+    with pytest.raises(ScoreError, match="超出范围"):
+        ScoreService.compute(_course(AssessmentType.HOURS_32), g)
 
 
 # --- 6~7 边界 ---
@@ -174,3 +296,18 @@ def test_draft_tolerates_incomplete():
     assert result is None
     assert g.total_score is None
     assert g.is_passed is None
+
+
+def test_draft_incomplete_nulls_side_totals():
+    """草稿不完整时理论/实践总评也必须置空，避免残留旧计算结果。"""
+    g = _grade(regular=80, mid=85, final=90)
+    ScoreService.compute(_course(AssessmentType.HOURS_48), g)
+    assert g.theory_total_score == Decimal("86.50")  # 先完整算一次
+
+    g.final_score = None  # 清空期末 → 缺少必要成绩
+    result = ScoreService.compute_for_draft(_course(AssessmentType.HOURS_48), g)
+    assert result is None
+    assert g.theory_total_score is None
+    assert g.practice_total_score is None
+    assert g.total_score is None
+    assert g.grade_point is None

@@ -112,6 +112,7 @@ class GradeService:
         scores = (
             g.regular_score, g.mid_score, g.mid_theory_score, g.mid_practice_score,
             g.final_score, g.final_theory_score, g.final_practice_score,
+            g.theory_makeup_score, g.practice_makeup_score,
         )
         if all(v is None for v in scores):
             return "NOT_ENTERED"
@@ -190,6 +191,10 @@ class GradeService:
                 g.final_theory_score = item["final_theory_score"]
             if "final_practice_score" in item:
                 g.final_practice_score = item["final_practice_score"]
+            if "theory_makeup_score" in item:
+                g.theory_makeup_score = item["theory_makeup_score"]
+            if "practice_makeup_score" in item:
+                g.practice_makeup_score = item["practice_makeup_score"]
             # 总评由统一成绩计算服务计算（TASK-003）；忽略前端可能传来的 total_score。
             # 草稿保存允许成绩不完整：此时总评置空，提交时再拦截。
             ScoreService.compute_for_draft(course, g)
@@ -303,7 +308,7 @@ class GradeService:
         return len(rows)
 
     def _refresh_student_credits(self, student_ids: set[int]) -> None:
-        """重算已修学分与 GPA（仅统计已审核且及格的成绩）。"""
+        """重算已修学分与 GPA（学分只计及格课程；GPA 由 GpaService 统一口径）。"""
         for sid in student_ids:
             rows = list(
                 self.db.execute(
@@ -315,21 +320,15 @@ class GradeService:
             )
             passed = [r for r in rows if r.is_passed]
             total_credits = sum((Decimal(str(r.credits)) for r in passed), Decimal("0"))
-            weighted = sum(
-                (
-                    Decimal(str(r.credits)) * Decimal(str(r.grade_point or 0))
-                    for r in passed
-                ),
-                Decimal("0"),
-            )
+            # GPA 单一来源（DATABASE.md §9.3）：与 /grades/my、排名同口径，不及格计入 0.0
+            try:
+                gpa = GpaService(self.db).gpa_of(sid)
+            except NoGradesError:
+                gpa = None
             stu = self.db.get(Student, sid)
             if stu:
                 stu.total_credits = total_credits
-                stu.gpa = (
-                    (weighted / total_credits).quantize(Decimal("0.01"))
-                    if total_credits
-                    else None
-                )
+                stu.gpa = gpa
         self.db.commit()
 
     # --- 学生侧 ---
@@ -392,16 +391,17 @@ class GradeService:
         rows = self.list_by_student(student_id)
         passed = [r for r in rows if r.is_passed]
         total = sum((Decimal(str(r.credits)) for r in passed), Decimal("0"))
-        weighted = sum(
-            (Decimal(str(r.credits)) * Decimal(str(r.grade_point or 0)) for r in passed),
-            Decimal("0"),
-        )
+        # GPA 单一来源（DATABASE.md §9.3）：与 /grades/my、排名同口径（不及格计入 0.0）
+        try:
+            gpa = GpaService(self.db).gpa_of(student_id)
+        except NoGradesError:
+            gpa = None
         return {
             "total_courses": len(rows),
             "passed_courses": len(passed),
             "failed_courses": len(rows) - len(passed),
             "total_credits": float(total),
-            "gpa": float((weighted / total).quantize(Decimal("0.01"))) if total else None,
+            "gpa": float(gpa) if gpa is not None else None,
         }
 
     def class_statistics(self, teaching_class_id: int) -> dict:

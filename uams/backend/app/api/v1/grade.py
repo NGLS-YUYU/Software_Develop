@@ -27,6 +27,8 @@ class GradeItem(BaseModel):
     final_score: Decimal | None = Field(None, ge=0, le=100)
     final_theory_score: Decimal | None = Field(None, ge=0, le=100)
     final_practice_score: Decimal | None = Field(None, ge=0, le=100)
+    theory_makeup_score: Decimal | None = Field(None, ge=0, le=100)
+    practice_makeup_score: Decimal | None = Field(None, ge=0, le=100)
 
 
 class GradeBatchSave(BaseModel):
@@ -55,6 +57,10 @@ class GradeOut(BaseModel):
     final_score: Decimal | None = None
     final_theory_score: Decimal | None = None
     final_practice_score: Decimal | None = None
+    theory_makeup_score: Decimal | None = None
+    practice_makeup_score: Decimal | None = None
+    theory_total_score: Decimal | None = None
+    practice_total_score: Decimal | None = None
     total_score: Decimal | None = None
     grade_point: Decimal | None = None
     credits: Decimal
@@ -63,6 +69,7 @@ class GradeOut(BaseModel):
     reject_reason: str | None = None
     submitted_at: datetime | None = None
     approved_at: datetime | None = None
+    course_practice_hours: int | None = None
 
 
 class ApproveRequest(BaseModel):
@@ -99,6 +106,7 @@ def _out(g) -> GradeOut:
     if g.course:
         d.course_code, d.course_name = g.course.code, g.course.name
         d.assessment_type = g.course.assessment_type
+        d.course_practice_hours = g.course.practice_hours
     if g.teaching_class:
         d.teaching_class_code = g.teaching_class.code
         t = g.teaching_class.teacher

@@ -55,8 +55,9 @@
 | `c4d8e2f6a9b1` | `20260918_1100_c4d8e2f6a9b1_add_teaching_class_name.py` | `teaching_classes` 增加 `name`（展示名，区别于编号 code）、增加 `idx_tc_course` 索引（TASK-012） |
 | `d7e5a3f1c2b4` | `20260918_1300_d7e5a3f1c2b4_drop_teaching_class_selected_count.py` | 删除 `teaching_classes.selected_count` 冗余计数列（TASK-013，已选人数改为 `COUNT(course_selections)` 动态统计） |
 | `e1b7c4a9f3d2` | `20260919_0900_e1b7c4a9f3d2_drop_course_weight_columns.py` | 删除 `courses.regular_weight`/`final_weight` 死字段与 `ck_courses_weight`（FIX-008，权重唯一来源改为 `ScoreService.WEIGHT_RULES`） |
+| `e2a1b5c6d7e8` | `20260919_1400_e2a1b5c6d7e8_extend_grade_score_model.py` | `grades` 增加 `theory_makeup_score`/`practice_makeup_score`（补考）与 `theory_total_score`/`practice_total_score`（侧分总评）4 列 + CHECK 约束，并回填历史 `theory_total_score = total_score`（成绩模型闭环） |
 
-> 当前 head 为 `e1b7c4a9f3d2`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
+> 当前 head 为 `e2a1b5c6d7e8`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
 
 本文档是 `CLAUDE.md §5/§6` 与 `PRD §12` 的字段级落地。表结构变更必须先改本文档，再写 Alembic migration。
 
@@ -619,18 +620,9 @@ KEY idx_selection_period (semester, status)
 
 # 9. 成绩
 
-> ⚠️ **V0.2 待重新设计**
->
-> 当前 `grades` 表与本节描述对应的是 **V0.1 基础版本**（平时成绩 + 期末成绩 → 加权总评 → 绩点）。
-> 以下内容属于 **V0.2 业务开发范围，尚未实现**，本文档仅作记录，不在本任务中设计最终模型：
->
-> - 实践成绩 / 理论成绩拆分
-> - GPA 计算规则细化
-> - 专业排名 / 班级排名
-> - 成绩构成与考核项细化
-> - Excel 成绩导入
->
-> 上述需求确定后需**先更新本节**，再编写 Alembic migration。
+成绩业务模型（教师录入原始成绩 → 系统统一计算 → 学生查看）自本版本起为最终模型：
+理论/实践拆分、侧分总评、补考、GPA、班级/专业排名均已实现（§9.3）。
+任何成绩构成变更需**先更新本节**，再编写 Alembic migration。
 
 ## 9.1 grades
 
@@ -648,6 +640,10 @@ KEY idx_selection_period (semester, status)
 | final_score | DECIMAL(5,2) | NULL | 期末成绩 |
 | final_theory_score | DECIMAL(5,2) | NULL | 期末理论成绩（TASK-002 补充） |
 | final_practice_score | DECIMAL(5,2) | NULL | 期末实践成绩（TASK-002 补充） |
+| theory_makeup_score | DECIMAL(5,2) | NULL | 理论补考成绩（补考规则见 §9.3） |
+| practice_makeup_score | DECIMAL(5,2) | NULL | 实践补考成绩（补考规则见 §9.3） |
+| theory_total_score | DECIMAL(5,2) | NULL | 理论总评，后端计算 |
+| practice_total_score | DECIMAL(5,2) | NULL | 实践总评，后端计算；无实践拆分时为空 |
 | total_score | DECIMAL(5,2) | NULL | 总评，后端按课程权重计算 |
 | grade_point | DECIMAL(3,2) | NULL | 绩点 |
 | credits | DECIMAL(4,1) | NOT NULL | 学分快照 |
@@ -670,6 +666,10 @@ CONSTRAINT ck_grades_mid_practice   CHECK (mid_practice_score   IS NULL OR mid_p
 CONSTRAINT ck_grades_final   CHECK (final_score   IS NULL OR final_score   BETWEEN 0 AND 100)
 CONSTRAINT ck_grades_final_theory   CHECK (final_theory_score   IS NULL OR final_theory_score   BETWEEN 0 AND 100)
 CONSTRAINT ck_grades_final_practice CHECK (final_practice_score IS NULL OR final_practice_score BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_theory_makeup   CHECK (theory_makeup_score   IS NULL OR theory_makeup_score   BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_practice_makeup CHECK (practice_makeup_score IS NULL OR practice_makeup_score BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_theory_total    CHECK (theory_total_score    IS NULL OR theory_total_score    BETWEEN 0 AND 100)
+CONSTRAINT ck_grades_practice_total  CHECK (practice_total_score  IS NULL OR practice_total_score  BETWEEN 0 AND 100)
 CONSTRAINT ck_grades_total   CHECK (total_score   IS NULL OR total_score   BETWEEN 0 AND 100)
 KEY idx_grades_student_sem (student_id, semester)
 KEY idx_grades_tc_status (teaching_class_id, status)
@@ -693,26 +693,43 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（对学生可�
 
 ## 9.3 总评与绩点
 
-> ⚠️ 以下为 V0.1 实现的基础规则。GPA 细化、排名等属 V0.2 待设计内容（见本节开头说明）。
-
-总评由统一成绩计算服务 `services/score_service.py` 计算（TASK-003），按课程的 `assessment_type` 读取权重规则 `WEIGHT_RULES`，不硬编码比例：
+总评由统一成绩计算服务 `services/score_service.py` 计算（TASK-003），按课程的 `assessment_type` 读取权重规则 `WEIGHT_RULES`，不硬编码比例；前端一律只读展示系统计算结果，禁止自行计算：
 
 ```
 WEIGHT_RULES:
-  "32"  → { regular: 0.2, mid: None, final: 0.8 }
+  "32"  → { regular: 0.2, mid: None, final: 0.8 }   （无期中）
   "48"  → { regular: 0.2, mid: 0.3,  final: 0.5 }
   "64"  → { regular: 0.2, mid: 0.3,  final: 0.5 }
-
-total_score = regular_score × w.regular
-            + mid_score    × w.mid      （仅 48/64 课时）
-            + final_score  × w.final
 ```
 
-期中/期末成绩若提供「理论 + 实践」拆分（`mid_theory_score`/`mid_practice_score`、`final_theory_score`/`final_practice_score`），先取平均再参与计算；二者必须同时存在，只填一个则报错。
+### 理论/实践拆分
 
-调用链：`API → GradeService → ScoreService`（原 `Grade.compute()` 已移除，模型不参与计算）。
+期中/期末成绩若提供「理论 + 实践」拆分（`mid_theory_score`/`mid_practice_score`、`final_theory_score`/`final_practice_score`），二者必须同时提供，只填一个则报错；拆分值参与计算后，平均值回写 `mid_score`/`final_score`。
 
-绩点换算（4.0 制，可配置）：
+存在实践拆分时（`mid_practice_score` / `final_practice_score` / `practice_makeup_score` 任一非空），
+分别计算侧分总评并写入 `theory_total_score` / `practice_total_score`：
+
+```
+理论总评 = regular × w.regular + 期中理论 × w.mid + 期末理论 × w.final
+实践总评 = regular × w.regular + 期中实践 × w.mid + 期末实践 × w.final
+成绩总评 = (理论总评 + 实践总评) / 2
+```
+
+无实践拆分时：`理论总评 = 成绩总评`（同一加权式，期中/期末取合并口径），`practice_total_score` 为空。
+该口径与「期中/期末先取理论+实践平均再加权」数学等价。
+
+### 补考规则
+
+- 补考只允许**对应期末分项 < 60** 时录入（理论补考对应期末理论；无拆分时对应 `final_score`；实践补考对应期末实践），否则报错；
+- 补考成绩**替换**对应期末分项参与重算；
+- 补考通过（≥ 60）的一侧，该侧总评按 **60 封顶**（补考最高记 60）；
+- 结果（及格与否）仍由成绩总评 ≥ 60 判定，绩点按封顶后的成绩总评换算。
+
+### 绩点换算（单一来源）
+
+绩点换算表 `models/grade.GRADE_POINT_TABLE` 是**唯一权威来源**：
+`Grade.grade_point`（成绩落库时）、`GpaService`（/grades/my 与 /grades/mine/summary 的 GPA）、
+`RankingService`（班级/专业排名）三者全部经 `score_to_point()` 引用同一张表，不再存在双口径。
 
 | 百分制 | 绩点 |
 |---|---|
@@ -724,6 +741,9 @@ total_score = regular_score × w.regular
 | 65–69 | 2.3 |
 | 60–64 | 1.0 |
 | < 60 | 0.0 |
+
+调用链：`API → GradeService → ScoreService`（原 `Grade.compute()` 已移除，模型不参与计算）。
+GPA 与排名由 `GpaService` / `RankingService` 基于 APPROVED 成绩实时计算，不落库。
 
 ---
 

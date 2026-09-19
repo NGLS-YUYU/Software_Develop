@@ -47,6 +47,7 @@ GRADE_HDRS = [
     "regular_score", "mid_score", "final_score",
     "mid_theory_score", "mid_practice_score",
     "final_theory_score", "final_practice_score",
+    "theory_makeup_score", "practice_makeup_score",
 ]
 
 
@@ -410,7 +411,7 @@ def test_credits_invalid(env):
 
 def test_admin_can_import_grades(env):
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.status_code == 200, r.text
     assert r.json()["success"] == 1 and r.json()["failed"] == 0
@@ -420,7 +421,7 @@ def test_admin_can_import_grades(env):
 
 def test_grade_student_not_exist(env):
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}nosuch", f"{P}TC48", 80, "", "", "", "", "", "", ""],
+        [f"{P}nosuch", f"{P}TC48", 80, "", "", "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "学生不存在" in r.json()["errors"][0]["message"]
@@ -428,7 +429,7 @@ def test_grade_student_not_exist(env):
 
 def test_grade_teaching_class_not_exist(env):
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}NOSUCH", 80, "", "", "", "", "", "", ""],
+        [f"{P}s1", f"{P}NOSUCH", 80, "", "", "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "教学班不存在" in r.json()["errors"][0]["message"]
@@ -437,7 +438,7 @@ def test_grade_teaching_class_not_exist(env):
 def test_grade_student_not_in_class(env):
     # s2 未选任何教学班
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s2", f"{P}TC48", 80, "", "", "", "", "", "", ""],
+        [f"{P}s2", f"{P}TC48", 80, "", "", "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "学生不属于该教学班" in r.json()["errors"][0]["message"]
@@ -445,7 +446,7 @@ def test_grade_student_not_in_class(env):
 
 def test_grade_score_below_zero(env):
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", -1, "", "", "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", -1, "", "", "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "超出范围" in r.json()["errors"][0]["message"]
@@ -453,7 +454,7 @@ def test_grade_score_below_zero(env):
 
 def test_grade_score_above_hundred(env):
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 101, "", "", "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 101, "", "", "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "超出范围" in r.json()["errors"][0]["message"]
@@ -462,7 +463,7 @@ def test_grade_score_above_hundred(env):
 def test_grade_draft_can_be_overwritten(env):
     _put_grade(env, env["s1_id"], env["tc48"], GradeStatus.DRAFT)
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["success"] == 1
     g = _grade_of(env["s1_id"], env["tc48"])
@@ -472,7 +473,7 @@ def test_grade_draft_can_be_overwritten(env):
 def test_grade_rejected_can_be_overwritten(env):
     _put_grade(env, env["s1_id"], env["tc48"], GradeStatus.REJECTED)
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["success"] == 1
 
@@ -480,7 +481,7 @@ def test_grade_rejected_can_be_overwritten(env):
 def test_grade_submitted_cannot_be_overwritten(env):
     _put_grade(env, env["s1_id"], env["tc48"], GradeStatus.SUBMITTED)
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "已提交" in r.json()["errors"][0]["message"]
@@ -489,7 +490,7 @@ def test_grade_submitted_cannot_be_overwritten(env):
 def test_grade_approved_cannot_be_overwritten(env):
     _put_grade(env, env["s1_id"], env["tc48"], GradeStatus.APPROVED)
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["failed"] == 1
     assert "已审核" in r.json()["errors"][0]["message"]
@@ -497,7 +498,7 @@ def test_grade_approved_cannot_be_overwritten(env):
 
 def test_incomplete_grade_saved_as_draft(env):
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, "", "", "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, "", "", "", "", "", "", "", "", ""],
     ], admin_auth())
     assert r.json()["success"] == 1
     g = _grade_of(env["s1_id"], env["tc48"])
@@ -507,7 +508,7 @@ def test_incomplete_grade_saved_as_draft(env):
 
 def test_grade_uses_score_service(env):
     _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     g = _grade_of(env["s1_id"], env["tc48"])
     # 80*0.2 + 70*0.3 + 90*0.5 = 82.00
@@ -516,7 +517,7 @@ def test_grade_uses_score_service(env):
 
 def test_grade_32_hours(env):
     _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC32", 80, "", 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC32", 80, "", 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     g = _grade_of(env["s1_id"], env["tc32"])
     # 80*0.2 + 90*0.8 = 88.00
@@ -525,7 +526,7 @@ def test_grade_32_hours(env):
 
 def test_grade_48_hours(env):
     _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     g = _grade_of(env["s1_id"], env["tc48"])
     assert float(g.total_score) == 82.0
@@ -533,7 +534,7 @@ def test_grade_48_hours(env):
 
 def test_grade_64_hours(env):
     _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC64", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC64", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     g = _grade_of(env["s1_id"], env["tc64"])
     assert float(g.total_score) == 82.0
@@ -541,7 +542,7 @@ def test_grade_64_hours(env):
 
 def test_grade_theory_practice_merge(env):
     _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, "", "", 70, 80, 90, 80],
+        [f"{P}s1", f"{P}TC48", 80, "", "", 70, 80, 90, 80, "", ""],
     ], admin_auth())
     g = _grade_of(env["s1_id"], env["tc48"])
     # mid = (70+80)/2 = 75；final = (90+80)/2 = 85
@@ -551,9 +552,31 @@ def test_grade_theory_practice_merge(env):
     assert float(g.final_score) == 85.0
 
 
+def test_grade_makeup_import(env):
+    """成绩导入支持补考列：期末 55（不及格）+ 理论补考 80 → 重算并按 60 封顶。"""
+    _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
+        [f"{P}s1", f"{P}TC32", 60, "", 55, "", "", "", "", 80, ""],
+    ], admin_auth())
+    g = _grade_of(env["s1_id"], env["tc32"])
+    # 60*0.2 + 80*0.8 = 76.00 → 补考通过按 60 封顶
+    assert float(g.total_score) == 60.0
+    assert float(g.theory_total_score) == 60.0
+    assert g.theory_makeup_score == Decimal("80.00")
+    assert g.is_passed is True
+
+
+def test_grade_makeup_import_rejected_when_final_passed(env):
+    """期末 60（已及格）导入补考 → 该行报错。"""
+    r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
+        [f"{P}s1", f"{P}TC32", 60, "", 60, "", "", "", "", 80, ""],
+    ], admin_auth())
+    assert r.json()["failed"] == 1
+    assert "不及格" in r.json()["errors"][0]["message"]
+
+
 def test_import_does_not_write_gpa(env):
     _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, 70, 90, "", "", "", "", "", "", ""],
     ], admin_auth())
     with SessionLocal() as db:
         s = db.get(Student, env["s1_id"])
@@ -578,7 +601,7 @@ def test_teacher_cannot_batch_import(env):
 
 def test_student_cannot_batch_import(env):
     r = _post_file(client, f"{PREFIX}/imports/grades", GRADE_HDRS, [
-        [f"{P}s1", f"{P}TC48", 80, "", "", "", "", "", "", ""],
+        [f"{P}s1", f"{P}TC48", 80, "", "", "", "", "", "", "", "", ""],
     ], auth(env["s1_uname"]))
     assert r.status_code == 403
 

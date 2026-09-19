@@ -274,9 +274,20 @@ export interface Grade {
   course_id: number
   course_code?: string | null
   course_name?: string | null
+  assessment_type?: string | null
+  course_practice_hours?: number | null
   semester: string
   regular_score?: number | null
+  mid_score?: number | null
+  mid_theory_score?: number | null
+  mid_practice_score?: number | null
   final_score?: number | null
+  final_theory_score?: number | null
+  final_practice_score?: number | null
+  theory_makeup_score?: number | null
+  practice_makeup_score?: number | null
+  theory_total_score?: number | null
+  practice_total_score?: number | null
   total_score?: number | null
   grade_point?: number | null
   credits: number

@@ -102,6 +102,22 @@ class Grade(Base, IdMixin, TimestampMixin):
             "total_score IS NULL OR total_score BETWEEN 0 AND 100",
             name="ck_grades_total",
         ),
+        CheckConstraint(
+            "theory_total_score IS NULL OR theory_total_score BETWEEN 0 AND 100",
+            name="ck_grades_theory_total",
+        ),
+        CheckConstraint(
+            "practice_total_score IS NULL OR practice_total_score BETWEEN 0 AND 100",
+            name="ck_grades_practice_total",
+        ),
+        CheckConstraint(
+            "theory_makeup_score IS NULL OR theory_makeup_score BETWEEN 0 AND 100",
+            name="ck_grades_theory_makeup",
+        ),
+        CheckConstraint(
+            "practice_makeup_score IS NULL OR practice_makeup_score BETWEEN 0 AND 100",
+            name="ck_grades_practice_makeup",
+        ),
         Index("idx_grades_student_sem", "student_id", "semester"),
         Index("idx_grades_tc_status", "teaching_class_id", "status"),
         {**_KW, "comment": "成绩"},
@@ -144,6 +160,18 @@ class Grade(Base, IdMixin, TimestampMixin):
     )
     final_practice_score: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 2), nullable=True, comment="期末实践成绩"
+    )
+    theory_total_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2), nullable=True, comment="理论总评，由后端统一计算"
+    )
+    practice_total_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2), nullable=True, comment="实践总评，由后端统一计算"
+    )
+    theory_makeup_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2), nullable=True, comment="理论补考成绩"
+    )
+    practice_makeup_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2), nullable=True, comment="实践补考成绩"
     )
     total_score: Mapped[Decimal | None] = mapped_column(
         Numeric(5, 2), nullable=True, comment="总评，由后端按课程权重计算"

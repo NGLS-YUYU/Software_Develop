@@ -42,15 +42,18 @@ def test_90_score_gpa():
 
 
 def test_85_score_gpa():
-    assert to_grade_point(85) == Decimal("3.5")
+    # DATABASE.md §9.3 统一表：85-89 → 3.7（GPA 与 Grade.grade_point 同源）
+    assert to_grade_point(85) == Decimal("3.7")
 
 
 def test_80_score_gpa():
-    assert to_grade_point(80) == Decimal("3.0")
+    # DATABASE.md §9.3 统一表：80-84 → 3.3
+    assert to_grade_point(80) == Decimal("3.3")
 
 
 def test_60_score_gpa():
-    assert to_grade_point(60) == Decimal("2.0")
+    # DATABASE.md §9.3 统一表：60-64 → 1.0
+    assert to_grade_point(60) == Decimal("1.0")
 
 
 def test_fail_score_gpa():
@@ -67,14 +70,14 @@ def test_single_course_contribution():
 
 def test_weighted_gpa_multiple_courses():
     gpa = student_gpa([(2, 90), (2, 85), (2, 80)])
-    # (4.0*2 + 3.5*2 + 3.0*2) / 6 = 21/6 = 3.50
-    assert gpa == Decimal("3.50")
+    # (4.0*2 + 3.7*2 + 3.3*2) / 6 = 22/6 = 3.67
+    assert gpa == Decimal("3.67")
 
 
 def test_different_credit_influence():
     gpa = student_gpa([(4, 90), (1, 60)])
-    # (4.0*4 + 2.0*1) / 5 = 18/5 = 3.60；高分课程学分更大 → 拉高 GPA
-    assert gpa == Decimal("3.60")
+    # (4.0*4 + 1.0*1) / 5 = 17/5 = 3.40；若简单平均应为 2.50，故 3.40 证明按学分加权
+    assert gpa == Decimal("3.40")
 
 
 # --- 10~11 异常 ---
@@ -201,7 +204,7 @@ def ranking_env():
             db.flush()
             students.append(stu)
 
-        # 单课程成绩：S1=90→4.0，S2=85→3.5，S3=80→3.0
+        # 单课程成绩：S1=90→4.0，S2=85→3.7，S3=80→3.3（§9.3 统一表）
         for stu, score in zip(students, [90, 85, 80]):
             db.add(
                 Grade(
@@ -225,7 +228,7 @@ def test_class_ranking(ranking_env):
         rows = RankingService(db).class_ranking(ranking_env["class_a"])
     assert [r.student_id for r in rows] == [ranking_env["s1"], ranking_env["s2"]]
     assert rows[0].gpa == Decimal("4.00") and rows[0].ranking == 1
-    assert rows[1].gpa == Decimal("3.50") and rows[1].ranking == 2
+    assert rows[1].gpa == Decimal("3.70") and rows[1].ranking == 2
     assert rows[0].student_name == "GPA学生1"
 
 
@@ -237,7 +240,7 @@ def test_major_ranking(ranking_env):
     ]
     assert [r.ranking for r in rows] == [1, 2, 3]
     assert [r.gpa for r in rows] == [
-        Decimal("4.00"), Decimal("3.50"), Decimal("3.00"),
+        Decimal("4.00"), Decimal("3.70"), Decimal("3.30"),
     ]
 
 

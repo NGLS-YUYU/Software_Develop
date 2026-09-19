@@ -12,17 +12,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BizError
-from app.models.grade import Grade, GradeStatus
+from app.models.grade import GRADE_POINT_TABLE, Grade, GradeStatus, score_to_point
 
-# 百分制 → 绩点（统一配置；低于 60 一律 0）。
-# 修改换算规则只改这里，禁止在代码中散落 `if score >= xx`。
-GRADE_POINT_RULES: list[tuple[Decimal, Decimal]] = [
-    (Decimal("90"), Decimal("4.0")),
-    (Decimal("85"), Decimal("3.5")),
-    (Decimal("80"), Decimal("3.0")),
-    (Decimal("70"), Decimal("2.5")),
-    (Decimal("60"), Decimal("2.0")),
-]
+# 百分制 → 绩点换算表（DATABASE.md §9.3，唯一权威来源）：
+# 与 Grade.grade_point（ScoreService 落库）同一张表，禁止在此另设一套口径。
+# 低于 60 一律 0。
+GRADE_POINT_RULES: list[tuple[Decimal, Decimal]] = GRADE_POINT_TABLE
 
 TWO_DEC = Decimal("0.01")
 
@@ -53,12 +48,9 @@ class EmptyScoreError(GpaError):
 
 
 def to_grade_point(score: Decimal | float) -> Decimal:
-    """百分制成绩 → 绩点（90-100:4.0，85-89:3.5，80-84:3.0，70-79:2.5，60-69:2.0，<60:0）。"""
-    s = Decimal(str(score))
-    for threshold, point in GRADE_POINT_RULES:
-        if s >= threshold:
-            return point
-    return Decimal("0.0")
+    """百分制成绩 → 绩点（DATABASE.md §9.3：90→4.0，85→3.7，80→3.3，75→3.0，
+    70→2.7，65→2.3，60→1.0，<60→0）。与 Grade.grade_point 落库口径同源。"""
+    return score_to_point(score)
 
 
 def course_grade_points(credit: Decimal | float, total_score: Decimal | float) -> Decimal:

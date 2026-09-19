@@ -363,11 +363,14 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 ```
 
 - 总评由后端统一计算：`ScoreService.compute` 按课程 `assessment_type` 取 `WEIGHT_RULES` 权重（`32`→平时0.2/期末0.8；`48`/`64`→平时0.2/期中0.3/期末0.5），期中/期末的理论+实践拆分先取平均
-- 前端传入的 `total_score` 被忽略
+- 成绩模型闭环（DATABASE.md §9.3）：教师录入原始成绩（平时/期中/期末的理论与实践中可选拆分 + 理论补考/实践补考），系统计算并回写 `theory_total_score`（理论总评）、`practice_total_score`（实践总评）、`total_score`（成绩总评）、`grade_point`、`is_passed`；前端只读展示计算结果
+- 补考规则：只允许对应期末分项 < 60 时录入（否则 400 `SCORE_CALC_ERROR`）；补考成绩替换对应期末分项重算；补考通过（≥60）的一侧总评按 60 封顶；结果仍由成绩总评 ≥ 60 判定
+- 前端传入的 `total_score` 等计算字段被忽略
 - `APPROVED` 后教师不可直接修改
 - 审核通过后自动重算学生 `total_credits` 与 `gpa`
 - 待审核列表（`GET /grades/pending`）同时返回 `teaching_class_code`（教学班）与 `teacher_name`（教师），供教务审核时核对（TASK-006）
-- `GET /grades/my` 返回 `{ items, gpa, class_rank, major_rank }`：`items` 为 `GradeOut`（含 `assessment_type`），`gpa` 与排名由 GpaService / RankingService 实时计算，**不落库**；无有效成绩时三者返回 `null`（TASK-007）
+- `GET /grades/my` 返回 `{ items, gpa, class_rank, major_rank }`：`items` 为 `GradeOut`（含 `assessment_type`、`course_practice_hours`、全部原始成绩与计算字段），`gpa` 与排名由 GpaService / RankingService 实时计算，**不落库**；无有效成绩时三者返回 `null`（TASK-007）
+- 绩点单一来源：`Grade.grade_point`、GpaService（`/grades/my` 与 `/grades/mine/summary`）、RankingService 全部经 `models/grade.GRADE_POINT_TABLE` 的 `score_to_point()` 换算，口径一致
 
 ---
 
@@ -451,7 +454,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 |---|---|
 | 学生 | `student_no`、`name`、`username`、`college`、`major`、`class_name` |
 | 课程 | `course_code`、`course_name`、`college`、`credits`、`total_hours`、`course_type`、`assessment_type` |
-| 成绩 | `student_no`、`teaching_class_code`、`regular_score`、`mid_score`、`final_score`、`mid_theory_score`、`mid_practice_score`、`final_theory_score`、`final_practice_score` |
+| 成绩 | `student_no`、`teaching_class_code`、`regular_score`、`mid_score`、`final_score`、`mid_theory_score`、`mid_practice_score`、`final_theory_score`、`final_practice_score`、`theory_makeup_score`、`practice_makeup_score` |
 
 **导入结果**（无论成功与否均返回 200）
 
@@ -460,7 +463,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
  "errors": [{"row": 3, "field": "student_no", "message": "学号已存在"}]}
 ```
 
-- 校验规则（每行取首个错误）：字段非空 → 学院/专业/行政班存在且层级匹配 → 学号/登录名/课程编号不重复（含文件内重复）→ 课程类型/考核方式合法 → 学分与学时范围合法 → 成绩 0-100 且理论/实践成对填写。
+- 校验规则（每行取首个错误）：字段非空 → 学院/专业/行政班存在且层级匹配 → 学号/登录名/课程编号不重复（含文件内重复）→ 课程类型/考核方式合法 → 学分与学时范围合法 → 成绩 0-100 且理论/实践成对填写 → 补考只允许对应期末分项 < 60 时填写。
 - 学生导入复用 `StudentService.create_student`（`username` 缺省取学号；`enrollment_year` 取行政班 `grade_year`），并在一个事务内创建 User + Student + 角色绑定。
 - 课程导入复用 `CourseService.create`，**不会**自动创建学院。
 - 成绩导入复用 `GradeService.import_scores` → `ScoreService.compute_for_draft` 统一计算，**一律保存为 DRAFT**；`SUBMITTED` / `APPROVED` 不可覆盖，`DRAFT` / `REJECTED` 可更新，未录入（NOT_ENTERED）可新建。**不写 GPA / 排名**，不自动创建教学班/选课记录。
@@ -475,7 +478,6 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 | 教学资料 | 教师上传课件与资料（PRD §9.7）—— **V0.2+ planned** |
 | 调停课申请 | 调课/停课/补课申请与审核（PRD §9.8）—— **V0.2+ planned** |
 | 学生端培养方案查询 | PRD §8.7 学生查看培养方案 —— **V0.2 planned** |
-| 成绩模型扩展 | 实践/理论成绩拆分、GPA 细化、专业排名、班级排名 —— **V0.2 待重新设计** |
 
 ---
 

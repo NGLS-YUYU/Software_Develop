@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import Conflict
 from app.models.course import AssessmentType, Course, CourseType
-from app.models.grade import Grade, GradeStatus
+from app.models.grade import PASS_SCORE, Grade, GradeStatus
 from app.models.organization import Class, College, Major
 from app.models.person import Student
 from app.models.selection import CourseSelection, SelectionState
@@ -40,11 +40,13 @@ _GRADE_HEADERS = [
     "regular_score", "mid_score", "final_score",
     "mid_theory_score", "mid_practice_score",
     "final_theory_score", "final_practice_score",
+    "theory_makeup_score", "practice_makeup_score",
 ]
 _GRADE_SCORE_FIELDS = [
     "regular_score", "mid_score", "final_score",
     "mid_theory_score", "mid_practice_score",
     "final_theory_score", "final_practice_score",
+    "theory_makeup_score", "practice_makeup_score",
 ]
 _SCORE_LABELS = {
     "regular_score": "平时成绩",
@@ -54,6 +56,8 @@ _SCORE_LABELS = {
     "mid_practice_score": "期中实践成绩",
     "final_theory_score": "期末理论成绩",
     "final_practice_score": "期末实践成绩",
+    "theory_makeup_score": "理论补考成绩",
+    "practice_makeup_score": "实践补考成绩",
 }
 
 
@@ -179,7 +183,7 @@ class ImportService:
     def grade_template(self) -> bytes:
         return _template_bytes(
             _GRADE_HEADERS,
-            ["20240001", "CS101-01", 85, 80, 90, "", "", "", "", ""],
+            ["20240001", "CS101-01", 85, 80, 90, "", "", "", "", "", ""],
         )
 
     # =========================== 学生导入 ===========================
@@ -524,6 +528,36 @@ class ImportService:
                 errors.append(fail("mid_theory_score", "期中理论成绩与实践成绩必须同时填写")); continue
             if ("final_theory_score" in scores) != ("final_practice_score" in scores):
                 errors.append(fail("final_theory_score", "期末理论成绩与实践成绩必须同时填写")); continue
+
+            # 补考资格预检（行级友好错误；权威校验与重算仍由 ScoreService 负责）
+            if "theory_makeup_score" in scores:
+                ft = scores.get("final_theory_score", scores.get("final_score"))
+                if ft is None and grade is not None:
+                    ft = (
+                        grade.final_theory_score
+                        if grade.final_theory_score is not None
+                        else grade.final_score
+                    )
+                if ft is None:
+                    errors.append(fail(
+                        "theory_makeup_score", "理论补考成绩要求期末理论成绩已录入"
+                    )); continue
+                if ft >= PASS_SCORE:
+                    errors.append(fail(
+                        "theory_makeup_score", "理论补考只允许在期末理论成绩不及格时录入"
+                    )); continue
+            if "practice_makeup_score" in scores:
+                fp = scores.get("final_practice_score")
+                if fp is None and grade is not None:
+                    fp = grade.final_practice_score
+                if fp is None:
+                    errors.append(fail(
+                        "practice_makeup_score", "实践补考成绩要求期末实践成绩已录入"
+                    )); continue
+                if fp >= PASS_SCORE:
+                    errors.append(fail(
+                        "practice_makeup_score", "实践补考只允许在期末实践成绩不及格时录入"
+                    )); continue
 
             valid_rows.append(
                 {"student_id": student.id, "teaching_class_id": tc.id, "scores": scores}

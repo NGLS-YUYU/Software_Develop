@@ -1,8 +1,8 @@
 """TASK-005：教师成绩录入与提交测试。
 
 覆盖：教师我的课程、越权防护、学生名单、草稿保存、非法成绩拒绝、
-32/48 课时与理论+实践录入、完整/不完整提交、SUBMITTED/APPROVED/REJECTED
-状态流转、学生越权、跨教师越权。
+32/48 课时与理论+实践录入（含理论/实践总评回显）、补考录入与资格校验、
+完整/不完整提交、SUBMITTED/APPROVED/REJECTED 状态流转、学生越权、跨教师越权。
 """
 
 from datetime import date
@@ -337,6 +337,83 @@ def test_theory_practice_entry(env):
     assert _num(row["total_score"]) == pytest.approx(83.5)
     assert _num(row["mid_score"]) == pytest.approx(85.0)
     assert _num(row["final_score"]) == pytest.approx(80.0)
+    # 侧分总评：理论 90*.2+80*.3+70*.5 = 77.0；实践 90*.2+90*.3+90*.5 = 90.0
+    assert _num(row["theory_total_score"]) == pytest.approx(77.0)
+    assert _num(row["practice_total_score"]) == pytest.approx(90.0)
+
+
+# --- 8a 补考录入（教师 API 链路） ---
+
+
+def test_makeup_entry_recomputes_and_caps(env):
+    """32 学时：期末不及格 → 录补考 → 替换重算并按 60 封顶。"""
+    sheet = _init_sheet(env["tca"], env["ta_uname"])
+    g = _grade_of(sheet, env["s1_no"])
+    r = _save(
+        env["tca"], env["ta_uname"],
+        [{"grade_id": g["id"], "regular_score": 60, "final_score": 55}],
+    )
+    assert r.status_code == 200
+    row = _grade_of(r.json(), env["s1_no"])
+    assert _num(row["total_score"]) == pytest.approx(56.0)  # 60*.2+55*.8
+    assert row["is_passed"] is False
+
+    r2 = _save(
+        env["tca"], env["ta_uname"],
+        [{"grade_id": g["id"], "theory_makeup_score": 80}],
+    )
+    assert r2.status_code == 200
+    row2 = _grade_of(r2.json(), env["s1_no"])
+    # 补考替换期末：60*.2+80*.8 = 76 → 补考通过按 60 封顶
+    assert _num(row2["theory_total_score"]) == pytest.approx(60.0)
+    assert _num(row2["total_score"]) == pytest.approx(60.0)
+    assert _num(row2["grade_point"]) == pytest.approx(1.0)
+    assert row2["is_passed"] is True
+    assert row2["practice_total_score"] is None  # 无实践拆分
+
+
+def test_makeup_below_60_fails(env):
+    sheet = _init_sheet(env["tca"], env["ta_uname"])
+    g = _grade_of(sheet, env["s1_no"])
+    _save(
+        env["tca"], env["ta_uname"],
+        [{"grade_id": g["id"], "regular_score": 60, "final_score": 55}],
+    )
+    r = _save(
+        env["tca"], env["ta_uname"],
+        [{"grade_id": g["id"], "theory_makeup_score": 40}],
+    )
+    assert r.status_code == 200
+    row = _grade_of(r.json(), env["s1_no"])
+    assert _num(row["total_score"]) == pytest.approx(44.0)  # 60*.2+40*.8
+    assert row["is_passed"] is False
+
+
+def test_makeup_rejected_when_final_passed(env):
+    """期末已及格仍录补考 → 400。"""
+    sheet = _init_sheet(env["tca"], env["ta_uname"])
+    g = _grade_of(sheet, env["s1_no"])
+    _save(
+        env["tca"], env["ta_uname"],
+        [{"grade_id": g["id"], "regular_score": 60, "final_score": 60}],
+    )
+    r = _save(
+        env["tca"], env["ta_uname"],
+        [{"grade_id": g["id"], "theory_makeup_score": 80}],
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "SCORE_CALC_ERROR"
+
+
+def test_makeup_rejected_without_final(env):
+    sheet = _init_sheet(env["tca"], env["ta_uname"])
+    g = _grade_of(sheet, env["s1_no"])
+    r = _save(
+        env["tca"], env["ta_uname"],
+        [{"grade_id": g["id"], "regular_score": 60, "theory_makeup_score": 80}],
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "SCORE_CALC_ERROR"
 
 
 # --- 9 完整成绩提交 ---

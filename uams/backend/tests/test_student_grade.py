@@ -71,9 +71,9 @@ def env():
     """1 学院 / 1 专业 / 2 班级 / 2 课程(48/32) / 1 教师 / 4 学生 / 2 教学班 + 成绩。
 
     APPROVED 成绩（总评由 ScoreService 计算）：
-      S1（A 班）：48 课 90(3 学分) + 32 课 80(2 学分) → GPA 3.60
-      S2（A 班）：48 课 85(3 学分) + 32 课 90(2 学分) → GPA 3.70
-      S3（B 班）：48 课 55(3 学分，不及格) + 32 课 80(2 学分) → GPA 1.20
+      S1（A 班）：48 课 90(3 学分) + 32 课 80(2 学分) → GPA 3.72（§9.3 统一表）
+      S2（A 班）：48 课 85(3 学分) + 32 课 90(2 学分) → GPA 3.82
+      S3（B 班）：48 课 55(3 学分，不及格) + 32 课 80(2 学分) → GPA 1.32
       S4（A 班）：无成绩（NOT_ENTERED）
     """
     _cleanup()
@@ -244,6 +244,30 @@ def test_student_queries_own_approved_grades(env):
     assert all(x["assessment_type"] for x in items)
 
 
+# --- 1b 学生 API 返回完整成绩模型字段 ---
+
+
+def test_student_api_exposes_full_score_model(env):
+    """成绩模型闭环：API 必须返回原始成绩 + 系统计算字段，无「后端有字段前端拿不到」。"""
+    items = _my(env["s1_uname"])["items"]
+    c48 = next(x for x in items if x["course_code"] == env["c48_code"])
+    required_keys = {
+        "regular_score", "mid_score", "mid_theory_score", "mid_practice_score",
+        "final_score", "final_theory_score", "final_practice_score",
+        "theory_makeup_score", "practice_makeup_score",
+        "theory_total_score", "practice_total_score",
+        "total_score", "credits", "grade_point", "is_passed",
+        "assessment_type", "course_practice_hours",
+    }
+    for x in items:
+        assert required_keys <= x.keys(), f"缺少成绩模型字段：{required_keys - x.keys()}"
+    # 无实践拆分的课程：理论总评 = 成绩总评，实践总评为空
+    assert c48["theory_total_score"] == c48["total_score"]
+    assert c48["practice_total_score"] is None
+    assert c48["theory_makeup_score"] is None
+    assert c48["practice_makeup_score"] is None
+
+
 # --- 2~4 非 APPROVED 成绩不可见 ---
 
 
@@ -312,7 +336,7 @@ def test_student_id_param_ignored(env):
 
 
 def test_gpa_correct(env):
-    assert _my(env["s1_uname"])["gpa"] == pytest.approx(3.60)
+    assert _my(env["s1_uname"])["gpa"] == pytest.approx(3.72)
 
 
 # --- 10 GPA 保留两位小数 ---
@@ -360,20 +384,32 @@ def test_major_rank_correct(env):
 
 
 def test_gpa_weighted_by_credits(env):
-    # S1：3 学分 90(4.0) + 2 学分 80(3.0) = (12+6)/5 = 3.60
-    assert _my(env["s1_uname"])["gpa"] == pytest.approx(3.60)
-    # S2：3 学分 85(3.5) + 2 学分 90(4.0) = (10.5+8)/5 = 3.70
-    # 若不按学分加权（简单平均）应为 3.75，故 3.70 证明按学分加权
-    assert _my(env["s2_uname"])["gpa"] == pytest.approx(3.70)
+    # S1：3 学分 90(4.0) + 2 学分 80(3.3) = (12+6.6)/5 = 3.72
+    assert _my(env["s1_uname"])["gpa"] == pytest.approx(3.72)
+    # S2：3 学分 85(3.7) + 2 学分 90(4.0) = (11.1+8)/5 = 3.82
+    # 若不按学分加权（简单平均）应为 3.85，故 3.82 证明按学分加权
+    assert _my(env["s2_uname"])["gpa"] == pytest.approx(3.82)
 
 
 # --- 15 不及格成绩计入 GPA ---
 
 
 def test_failed_grade_included_in_gpa(env):
-    # S3：3 学分 55(不及格→0.0) + 2 学分 80(3.0) = (0+6)/5 = 1.20
-    # 若排除不及格成绩，GPA 应为 3.0；1.20 证明不及格成绩计入 GPA
-    assert _my(env["s3_uname"])["gpa"] == pytest.approx(1.20)
+    # S3：3 学分 55(不及格→0.0) + 2 学分 80(3.3) = (0+6.6)/5 = 1.32
+    # 若排除不及格成绩，GPA 应为 3.3；1.32 证明不及格成绩计入 GPA
+    assert _my(env["s3_uname"])["gpa"] == pytest.approx(1.32)
+
+
+def test_summary_gpa_same_source_as_my(env):
+    """/grades/mine/summary 与 /grades/my 必须同口径（含不及格 0.0），禁止双标准。"""
+    my_gpa = _my(env["s3_uname"])["gpa"]
+    r = client.get(
+        f"{PREFIX}/grades/mine/summary", headers=auth(env["s3_uname"])
+    )
+    assert r.status_code == 200
+    summary_gpa = r.json()["gpa"]
+    assert summary_gpa is not None
+    assert Decimal(str(summary_gpa)) == Decimal(str(my_gpa)) == Decimal("1.32")
 
 
 # --- 16 排名与 RankingService 实时计算一致 ---

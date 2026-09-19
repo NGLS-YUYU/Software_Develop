@@ -71,7 +71,7 @@ def env():
     """1 学院 / 1 专业 / 1 班级 / 2 课程(32h 与 64h) / 1 教师 / 3 学生。
 
     tc32 上三名学生的成绩（全部经 ScoreService 统一计算）：
-      s1：平时 90 / 期末 75 → 78.00（旧口径为 81.00，绩点 3.0 → 修正后 2.5）
+      s1：平时 90 / 期末 75 → 78.00（旧口径为 81.00，绩点 3.0，旧口径下为 3.3）
       s2：平时 87 / 期末 56 → 62.20（旧口径为 68.40）
       s3：平时 50 / 期末 50 → 50.00（不及格）
     """
@@ -241,11 +241,11 @@ def test_case1_failing_student_not_passed(env):
 
 
 def test_case5_gpa_uses_corrected_total_score(env):
-    """s1 总评 78.00 → 绩点 2.5 → GPA 2.50（若仍按旧 81.00 则为 3.00）。"""
+    """s1 总评 78.00 → 绩点 3.0（§9.3）→ GPA 3.00（若仍按旧 81.00 则为 3.30）。"""
     with SessionLocal() as db:
         gpa = GpaService(db).gpa_of(env["students"]["s1"].id)
-    assert gpa == Decimal("2.50")
-    assert gpa != Decimal("3.00")
+    assert gpa == Decimal("3.00")
+    assert gpa != Decimal("3.30")
 
 
 def test_case5_gpa_matches_stored_total_scores(env):
@@ -269,14 +269,14 @@ def test_case5_gpa_matches_stored_total_scores(env):
 
 
 def test_case6_class_ranking_follows_corrected_gpa(env):
-    """排名顺序必须与修正后 GPA 一致：s1(2.50) > s2(2.00) > s3(0.00)。"""
+    """排名顺序必须与修正后 GPA 一致：s1(3.00) > s2(1.00) > s3(0.00)。"""
     with SessionLocal() as db:
         items = RankingService(db).class_ranking(env["class"].id)
     got = [(i.student_id, i.gpa, i.ranking) for i in items]
     s = env["students"]
     assert got == [
-        (s["s1"].id, Decimal("2.50"), 1),
-        (s["s2"].id, Decimal("2.00"), 2),
+        (s["s1"].id, Decimal("3.00"), 1),
+        (s["s2"].id, Decimal("1.00"), 2),
         (s["s3"].id, Decimal("0.00"), 3),
     ]
 
@@ -386,7 +386,8 @@ def test_weight_rules_is_the_single_source():
 def test_all_stored_grades_match_weight_rules():
     """真实库中每条有总评的成绩都必须等于按 WEIGHT_RULES 重算的结果。
 
-    用 ScoreService 在「游离副本」上重算，既校验数据又避免重复实现计算逻辑。
+    用 ScoreService 在「游离副本」上重算，既校验数据又避免重复实现计算逻辑；
+    同时校验理论总评（含补考替换/封顶）与库中一致。
     """
     checked = 0
     with SessionLocal() as db:
@@ -406,11 +407,17 @@ def test_all_stored_grades_match_weight_rules():
                 mid_practice_score=g.mid_practice_score,
                 final_theory_score=g.final_theory_score,
                 final_practice_score=g.final_practice_score,
+                theory_makeup_score=g.theory_makeup_score,
+                practice_makeup_score=g.practice_makeup_score,
             )
             expected = ScoreService.compute(course, probe)
             assert g.total_score == expected, (
                 f"grade id={g.id}（课程 {course.code}，考核方式 "
                 f"{course.assessment_type}）：库中 {g.total_score} ≠ 重算 {expected}"
+            )
+            assert g.theory_total_score == probe.theory_total_score, (
+                f"grade id={g.id}（课程 {course.code}）：库中理论总评 "
+                f"{g.theory_total_score} ≠ 重算 {probe.theory_total_score}"
             )
             checked += 1
     assert checked > 0

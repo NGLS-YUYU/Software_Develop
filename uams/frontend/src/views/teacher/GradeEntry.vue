@@ -49,17 +49,32 @@ const rejectReason = computed(
   () => rows.value.find((r) => r.status === 'REJECTED')?.reject_reason,
 )
 
-const filled = computed(
-  () => rows.value.filter((r) => r.regular_score != null && r.final_score != null).length,
+/** 考核方式来自成绩单返回的课程 assessment_type（32=两段式；48/64=三段式）。 */
+const assessmentType = computed(() => rows.value[0]?.assessment_type ?? null)
+
+/** 32 学时课程没有期中考试，隐藏期中列。 */
+const is32h = computed(() => assessmentType.value === '32')
+
+/** 课程含实践（实践学时 > 0）或已录入任何实践成绩时显示实践列。 */
+const hasPractice = computed(
+  () =>
+    Number(rows.value[0]?.course_practice_hours ?? 0) > 0 ||
+    rows.value.some(
+      (r) =>
+        r.mid_practice_score != null ||
+        r.final_practice_score != null ||
+        r.practice_makeup_score != null,
+    ),
 )
 
-/** 前端只做即时预览，最终总评以后端计算为准（CLAUDE.md §21）。 */
-function preview(row: Grade) {
-  const c = currentClass.value
-  if (row.regular_score == null || row.final_score == null || !c) return null
-  // 课程权重未随教学班返回，这里用常见的 4:6 仅作预览提示
-  return (Number(row.regular_score) * 0.4 + Number(row.final_score) * 0.6).toFixed(2)
-}
+/** 权重提示：与后端 ScoreService.WEIGHT_RULES 一致，仅作展示，不参与计算。 */
+const weightHint = computed(() => {
+  const base = is32h.value ? '平时 20% + 期末 80%' : '平时 20% + 期中 30% + 期末 50%'
+  return hasPractice.value ? `${base}；理论/实践取两侧平均` : base
+})
+
+/** 已录入完整 = 后端已算出总评（成绩总评由系统统一计算，前端不自行计算）。 */
+const filled = computed(() => rows.value.filter((r) => r.total_score != null).length)
 
 async function loadClasses() {
   const me = await teacherApi.me()
@@ -95,17 +110,32 @@ async function save() {
   if (!classId.value) return
   saving.value = true
   try {
-    const items = rows.value
-      .filter((r) => r.regular_score != null || r.final_score != null)
-      .map((r) => ({
-        grade_id: r.id,
-        regular_score: r.regular_score,
-        final_score: r.final_score,
-      }))
-    if (!items.length) {
-      ElMessage.warning('没有可保存的成绩')
-      return
-    }
+    // 只提交教师可编辑的原始成绩字段（显式带上 null 以便清空），
+    // 理论/实践总评、成绩总评、绩点、结果一律由后端 ScoreService 计算。
+    // 无实践拆分时沿用合并口径字段（mid_score / final_score），
+    // 有实践拆分时按理论/实践成对提交。
+    const items = rows.value.map((r) => ({
+      grade_id: r.id,
+      regular_score: r.regular_score ?? null,
+      ...(is32h.value
+        ? {}
+        : hasPractice.value
+          ? {
+              mid_theory_score: r.mid_theory_score ?? null,
+              mid_practice_score: r.mid_practice_score ?? null,
+            }
+          : { mid_score: r.mid_score ?? null }),
+      ...(hasPractice.value
+        ? {
+            final_theory_score: r.final_theory_score ?? null,
+            final_practice_score: r.final_practice_score ?? null,
+          }
+        : { final_score: r.final_score ?? null }),
+      theory_makeup_score: r.theory_makeup_score ?? null,
+      ...(hasPractice.value
+        ? { practice_makeup_score: r.practice_makeup_score ?? null }
+        : {}),
+    }))
     rows.value = await gradeApi.save(classId.value, items)
     ElMessage.success('已保存草稿')
     stats.value = await gradeApi.statistics(classId.value)
@@ -185,6 +215,14 @@ onMounted(async () => {
       </div>
 
       <el-alert
+        v-if="rows.length && assessmentType"
+        :title="`成绩规则：${weightHint}。理论/实践总评、成绩总评、绩点、结果均由系统按课程考核方式统一计算，保存后回显。`"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      />
+      <el-alert
         v-if="sheetStatus === 'REJECTED'"
         :title="`成绩被教务驳回：${rejectReason ?? '未填写原因'}。修改后可重新提交。`"
         type="error"
@@ -210,11 +248,13 @@ onMounted(async () => {
       />
 
       <el-empty v-if="!rows.length" description="尚未生成成绩单，请先点击「生成成绩单」" />
-      <el-table v-else :data="rows" stripe border>
-        <el-table-column type="index" label="#" width="55" align="center" />
-        <el-table-column prop="student_no" label="学号" width="130" />
-        <el-table-column prop="student_name" label="姓名" width="110" />
-        <el-table-column label="平时成绩" width="150" align="center">
+      <el-table v-else :data="rows" stripe border size="small">
+        <el-table-column type="index" label="#" width="45" align="center" fixed="left" />
+        <el-table-column prop="student_no" label="学号" width="120" fixed="left" />
+        <el-table-column prop="student_name" label="姓名" width="90" fixed="left" />
+
+        <!-- 教师可编辑：原始成绩 -->
+        <el-table-column label="平时成绩" width="110" align="center">
           <template #default="{ row }">
             <el-input-number
               v-model="row.regular_score"
@@ -223,12 +263,50 @@ onMounted(async () => {
               :precision="1"
               :controls="false"
               :disabled="!editable"
-              size="small"
-              style="width: 100px"
+              style="width: 90px"
             />
           </template>
         </el-table-column>
-        <el-table-column label="期末成绩" width="150" align="center">
+        <el-table-column v-if="!is32h && !hasPractice" label="期中成绩" width="110" align="center">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.mid_score"
+              :min="0"
+              :max="100"
+              :precision="1"
+              :controls="false"
+              :disabled="!editable"
+              style="width: 90px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column v-if="!is32h && hasPractice" label="期中理论" width="110" align="center">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.mid_theory_score"
+              :min="0"
+              :max="100"
+              :precision="1"
+              :controls="false"
+              :disabled="!editable"
+              style="width: 90px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column v-if="!is32h && hasPractice" label="期中实践" width="110" align="center">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.mid_practice_score"
+              :min="0"
+              :max="100"
+              :precision="1"
+              :controls="false"
+              :disabled="!editable"
+              style="width: 90px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column v-if="!hasPractice" label="期末成绩" width="110" align="center">
           <template #default="{ row }">
             <el-input-number
               v-model="row.final_score"
@@ -237,22 +315,102 @@ onMounted(async () => {
               :precision="1"
               :controls="false"
               :disabled="!editable"
-              size="small"
-              style="width: 100px"
+              style="width: 90px"
             />
           </template>
         </el-table-column>
-        <el-table-column label="总评" width="110" align="center">
+        <el-table-column v-if="hasPractice" label="期末理论" width="110" align="center">
           <template #default="{ row }">
-            <span v-if="row.total_score != null" class="total">{{ row.total_score }}</span>
-            <span v-else-if="preview(row)" class="preview">{{ preview(row) }} ?</span>
+            <el-input-number
+              v-model="row.final_theory_score"
+              :min="0"
+              :max="100"
+              :precision="1"
+              :controls="false"
+              :disabled="!editable"
+              style="width: 90px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column v-if="hasPractice" label="期末实践" width="110" align="center">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.final_practice_score"
+              :min="0"
+              :max="100"
+              :precision="1"
+              :controls="false"
+              :disabled="!editable"
+              style="width: 90px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column :label="hasPractice ? '理论补考' : '补考成绩'" width="110" align="center">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.theory_makeup_score"
+              :min="0"
+              :max="100"
+              :precision="1"
+              :controls="false"
+              :disabled="!editable"
+              style="width: 90px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column v-if="hasPractice" label="实践补考" width="110" align="center">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.practice_makeup_score"
+              :min="0"
+              :max="100"
+              :precision="1"
+              :controls="false"
+              :disabled="!editable"
+              style="width: 90px"
+            />
+          </template>
+        </el-table-column>
+
+        <!-- 系统计算：只读 -->
+        <el-table-column label="理论总评" width="95" align="center">
+          <template #default="{ row }">
+            <span v-if="row.theory_total_score != null" class="total">
+              {{ row.theory_total_score }}
+            </span>
             <span v-else class="empty">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="grade_point" label="绩点" width="80" align="center">
+        <el-table-column v-if="hasPractice" label="实践总评" width="95" align="center">
+          <template #default="{ row }">
+            <span v-if="row.practice_total_score != null" class="total">
+              {{ row.practice_total_score }}
+            </span>
+            <span v-else class="empty">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="成绩总评" width="95" align="center">
+          <template #default="{ row }">
+            <span v-if="row.total_score != null" class="total">{{ row.total_score }}</span>
+            <span v-else class="empty">未计算</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="grade_point" label="绩点" width="70" align="center">
           <template #default="{ row }">{{ row.grade_point ?? '-' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column label="结果" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.is_passed != null"
+              :type="row.is_passed ? 'success' : 'danger'"
+              size="small"
+            >
+              {{ row.is_passed ? '通过' : '不及格' }}
+            </el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90" align="center" fixed="right">
           <template #default="{ row }">
             <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
               {{ STATUS_LABEL[row.status] }}
@@ -287,7 +445,6 @@ onMounted(async () => {
 
 <style scoped>
 .total { font-weight: 600; }
-.preview { color: #909399; font-size: 12px; }
 .empty { color: #c0c4cc; }
 .dist { margin-top: 18px; }
 .bar-row {

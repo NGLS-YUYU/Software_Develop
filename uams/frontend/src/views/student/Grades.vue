@@ -82,20 +82,47 @@ onMounted(load)
         </div>
         <el-table :data="rows" stripe size="small">
           <el-table-column prop="course_code" label="课程代码" width="110" />
-          <el-table-column prop="course_name" label="课程名称" min-width="160" />
-          <el-table-column prop="credits" label="学分" width="70" align="center" />
-          <el-table-column label="平时" width="80" align="center">
+          <el-table-column prop="course_name" label="课程名称" min-width="150" />
+          <el-table-column prop="credits" label="学分" width="60" align="center" />
+          <el-table-column label="平时" width="70" align="center">
             <template #default="{ row }">{{ row.regular_score ?? '-' }}</template>
           </el-table-column>
-          <el-table-column label="期末" width="80" align="center">
-            <template #default="{ row }">{{ row.final_score ?? '-' }}</template>
+          <el-table-column label="期中理论" width="80" align="center">
+            <template #default="{ row }">{{ row.mid_theory_score ?? row.mid_score ?? '-' }}</template>
           </el-table-column>
-          <el-table-column label="总评" width="90" align="center">
+          <el-table-column label="期中实践" width="80" align="center">
+            <template #default="{ row }">{{ row.mid_practice_score ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="期末理论" width="80" align="center">
+            <template #default="{ row }">{{ row.final_theory_score ?? row.final_score ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="期末实践" width="80" align="center">
+            <template #default="{ row }">{{ row.final_practice_score ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="理论总评" width="80" align="center">
+            <template #default="{ row }">
+              <span v-if="row.theory_total_score != null">{{ row.theory_total_score }}</span>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="实践总评" width="80" align="center">
+            <template #default="{ row }">
+              <span v-if="row.practice_total_score != null">{{ row.practice_total_score }}</span>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="理论补考" width="80" align="center">
+            <template #default="{ row }">{{ row.theory_makeup_score ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="实践补考" width="80" align="center">
+            <template #default="{ row }">{{ row.practice_makeup_score ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="总评" width="80" align="center">
             <template #default="{ row }">
               <el-tag :type="scoreType(row)" size="small">{{ row.total_score }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="grade_point" label="绩点" width="80" align="center" />
+          <el-table-column prop="grade_point" label="绩点" width="60" align="center" />
           <el-table-column label="结果" width="80" align="center">
             <template #default="{ row }">
               <el-tag :type="row.is_passed ? 'success' : 'danger'" size="small">
