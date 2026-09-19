@@ -172,7 +172,7 @@ POST /api/v1/auth/login
 | POST | `/courses/{course_id}/prerequisites` | 添加先修（**含环路检测**） | `course:write` |
 | DELETE | `/courses/{course_id}/prerequisites/{row_id}` | 移除先修 | `course:write` |
 
-> `regular_weight + final_weight` 必须等于 1，否则 422。
+> 成绩权重不通过课程维护：总评权重由课程的 `assessment_type` 决定，统一在 `ScoreService.WEIGHT_RULES` 中配置（FIX-008 已删除 `regular_weight`/`final_weight` 字段）。
 
 ### 5.2 培养方案 `/api/v1/curriculum-plans`
 
@@ -362,7 +362,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
                     └──驳回──> REJECTED ──教师修改──> SUBMITTED
 ```
 
-- 总评由后端按课程权重计算：`total = regular × regular_weight + final × final_weight`
+- 总评由后端统一计算：`ScoreService.compute` 按课程 `assessment_type` 取 `WEIGHT_RULES` 权重（`32`→平时0.2/期末0.8；`48`/`64`→平时0.2/期中0.3/期末0.5），期中/期末的理论+实践拆分先取平均
 - 前端传入的 `total_score` 被忽略
 - `APPROVED` 后教师不可直接修改
 - 审核通过后自动重算学生 `total_credits` 与 `gpa`

@@ -51,6 +51,19 @@ def test_32h_course_calculation():
     assert g.total_score == Decimal("88.00")
 
 
+def test_32h_legacy_weight_regression():
+    """FIX-008 回归：32 学时「平时 87 / 期末 56」→ 62.20。
+
+    已删除的课程级权重（regular_weight=0.4 / final_weight=0.6）会算出 68.40；
+    本用例锁定 WEIGHT_RULES 为唯一口径。
+    """
+    g = _grade(regular=87, final=56)
+    ScoreService.compute(_course(AssessmentType.HOURS_32), g)
+    assert g.total_score == Decimal("62.20")
+    assert g.total_score != Decimal("68.40")
+    assert g.grade_point == Decimal("1.00")  # 60~64 → 1.0
+
+
 def test_48h_course_calculation():
     g = _grade(regular=80, mid=85, final=90)
     ScoreService.compute(_course(AssessmentType.HOURS_48), g)

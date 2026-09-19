@@ -133,8 +133,6 @@ export interface Course {
   theory_hours: number
   practice_hours: number
   exam_type: string
-  regular_weight: number
-  final_weight: number
   description?: string | null
   status: string
 }

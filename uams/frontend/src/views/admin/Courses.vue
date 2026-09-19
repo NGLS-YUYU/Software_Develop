@@ -14,7 +14,7 @@ const t = useCrudTable<Course>(courseApi, {
   emptyForm: () => ({
     code: '', name: '', college_id: undefined, course_type: 'REQUIRED',
     credits: 3, total_hours: 48, theory_hours: 48, practice_hours: 0,
-    exam_type: 'EXAM', regular_weight: 0.4, final_weight: 0.6,
+    exam_type: 'EXAM',
     description: '', status: 'ACTIVE',
   }),
 })
@@ -54,11 +54,6 @@ async function delPrereq(row: Prerequisite) {
   if (!preCourse.value) return
   await courseApi.removePrerequisite(preCourse.value.id, row.id)
   preList.value = await courseApi.prerequisites(preCourse.value.id)
-}
-
-/** 权重联动：两者之和必须为 1（后端有 CHECK 约束）。 */
-function onRegularChange(v: number) {
-  t.form.value.final_weight = Number((1 - v).toFixed(2))
 }
 
 async function loadCourses() {
@@ -103,11 +98,6 @@ onMounted(async () => {
       <el-table-column prop="total_hours" label="学时" width="70" align="center" />
       <el-table-column label="考核" width="80" align="center">
         <template #default="{ row }">{{ row.exam_type === 'EXAM' ? '考试' : '考查' }}</template>
-      </el-table-column>
-      <el-table-column label="成绩权重" width="110" align="center">
-        <template #default="{ row }">
-          平时 {{ Math.round(row.regular_weight * 100) }}%
-        </template>
       </el-table-column>
       <el-table-column label="操作" width="180" align="center" fixed="right">
         <template #default="{ row }">
@@ -179,15 +169,6 @@ onMounted(async () => {
             <el-radio value="CHECK">考查</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="平时成绩权重">
-          <el-slider v-model="t.form.value.regular_weight" :min="0" :max="1" :step="0.05"
-            :format-tooltip="(v: number) => `${Math.round(v * 100)}%`"
-            @input="onRegularChange" />
-          <div class="weight-hint">
-            平时 {{ Math.round(Number(t.form.value.regular_weight) * 100) }}% +
-            期末 {{ Math.round(Number(t.form.value.final_weight) * 100) }}% = 100%
-          </div>
-        </el-form-item>
         <el-form-item label="课程简介">
           <el-input v-model="t.form.value.description" type="textarea" :rows="3" />
         </el-form-item>
@@ -225,7 +206,3 @@ onMounted(async () => {
     </el-dialog>
   </el-card>
 </template>
-
-<style scoped>
-.weight-hint { font-size: 12px; color: #909399; margin-top: 4px; }
-</style>

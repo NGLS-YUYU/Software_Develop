@@ -66,10 +66,6 @@ class Course(Base, IdMixin, TimestampMixin):
             "assessment_type IS NULL OR assessment_type IN ('32','48','64')",
             name="ck_courses_assessment",
         ),
-        # 权重之和恒为 1，避免总评计算出现无意义结果（CLAUDE.md §21）
-        CheckConstraint(
-            "regular_weight + final_weight = 1.00", name="ck_courses_weight"
-        ),
         Index("idx_courses_college_type", "college_id", "course_type"),
         {**_KW, "comment": "课程"},
     )
@@ -97,14 +93,6 @@ class Course(Base, IdMixin, TimestampMixin):
     exam_type: Mapped[str] = mapped_column(
         String(20), nullable=False, default="EXAM", server_default="EXAM",
         comment="EXAM 考试 / CHECK 考查",
-    )
-    regular_weight: Mapped[float] = mapped_column(
-        Numeric(3, 2), nullable=False, default=0.40, server_default="0.40",
-        comment="平时成绩权重",
-    )
-    final_weight: Mapped[float] = mapped_column(
-        Numeric(3, 2), nullable=False, default=0.60, server_default="0.60",
-        comment="期末成绩权重",
     )
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(

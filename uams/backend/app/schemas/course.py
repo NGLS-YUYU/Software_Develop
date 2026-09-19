@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 COURSE_TYPE = "^(REQUIRED|ELECTIVE|PUBLIC_REQUIRED|PUBLIC_ELECTIVE|PRACTICE)$"
 ASSESSMENT_TYPE = "^(32|48|64)$"
@@ -21,16 +21,8 @@ class CourseBase(BaseModel):
     theory_hours: int = Field(0, ge=0, le=500)
     practice_hours: int = Field(0, ge=0, le=500)
     exam_type: str = Field("EXAM", pattern="^(EXAM|CHECK)$")
-    regular_weight: Decimal = Field(Decimal("0.40"), ge=0, le=1)
-    final_weight: Decimal = Field(Decimal("0.60"), ge=0, le=1)
     description: str | None = None
     status: str = Field("ACTIVE", pattern="^(ACTIVE|INACTIVE)$")
-
-    @model_validator(mode="after")
-    def check_weights(self):
-        if self.regular_weight + self.final_weight != Decimal("1"):
-            raise ValueError("平时成绩权重与期末成绩权重之和必须等于 1")
-        return self
 
 
 class CourseCreate(CourseBase):
@@ -48,19 +40,8 @@ class CourseUpdate(BaseModel):
     theory_hours: int | None = Field(None, ge=0, le=500)
     practice_hours: int | None = Field(None, ge=0, le=500)
     exam_type: str | None = Field(None, pattern="^(EXAM|CHECK)$")
-    regular_weight: Decimal | None = Field(None, ge=0, le=1)
-    final_weight: Decimal | None = Field(None, ge=0, le=1)
     description: str | None = None
     status: str | None = Field(None, pattern="^(ACTIVE|INACTIVE)$")
-
-    @model_validator(mode="after")
-    def check_weights(self):
-        if self.regular_weight is not None and self.final_weight is not None:
-            if self.regular_weight + self.final_weight != Decimal("1"):
-                raise ValueError("平时成绩权重与期末成绩权重之和必须等于 1")
-        elif (self.regular_weight is None) != (self.final_weight is None):
-            raise ValueError("两项权重必须同时修改")
-        return self
 
 
 class CourseOut(CourseBase):

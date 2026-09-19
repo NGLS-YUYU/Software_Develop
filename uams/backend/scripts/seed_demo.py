@@ -20,7 +20,13 @@ from sqlalchemy import func, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db.session import SessionLocal  # noqa: E402
-from app.models.course import Course, CoursePrerequisite, CurriculumCourse, CurriculumPlan  # noqa: E402
+from app.models.course import (  # noqa: E402
+    AssessmentType,
+    Course,
+    CoursePrerequisite,
+    CurriculumCourse,
+    CurriculumPlan,
+)
 from app.models.exam import Exam, ExamRoom, ExamStudent  # noqa: E402
 from app.models.grade import Grade, GradeStatus, score_to_point  # noqa: E402
 from app.models.misc import Announcement, EvaluationTask  # noqa: E402
@@ -73,6 +79,33 @@ def get_or_create(db: Session, model, defaults: dict | None = None, **kw):
     db.add(obj)
     db.flush()
     return obj, True
+
+
+def repair_grade(course: Course, g: Grade, fallback_mid: Decimal) -> bool:
+    """按现行 WEIGHT_RULES 校正历史演示成绩（FIX-008）。
+
+    早期演示数据按已被废弃的课程级权重（0.4 / 0.6）生成总评，与
+    ``ScoreService.WEIGHT_RULES`` 不一致；且 48/64 学时的成绩缺少现行规则
+    要求的期中成绩，无法直接重算。此处**保留原行**，只做两件事：
+
+    1. 补齐缺失的必要成绩（期中，取同一确定性演示值）；
+    2. 交由 ``ScoreService.compute`` 重算总评 / 绩点 / 及格标记。
+
+    返回是否发生了纠正；已一致的记录返回 False，保证可重复执行。
+    """
+    changed = False
+    if g.mid_score is None and course.assessment_type in (
+        AssessmentType.HOURS_48,
+        AssessmentType.HOURS_64,
+    ):
+        g.mid_score = fallback_mid
+        changed = True
+
+    before = (g.total_score, g.grade_point, g.is_passed)
+    ScoreService.compute(course, g)
+    if (g.total_score, g.grade_point, g.is_passed) != before:
+        changed = True
+    return changed
 
 
 def main() -> None:
@@ -318,6 +351,7 @@ def main() -> None:
         # --- 成绩（前 3 个教学班出成绩并审核通过）---
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         n_grade = 0
+        n_repaired = 0
         for tc in tcs[:3]:
             course = db.get(Course, tc.course_id)
             sels = db.execute(
@@ -327,19 +361,25 @@ def main() -> None:
                 )
             ).scalars()
             for sel in sels:
+                # 分数确定性生成，保证重复执行结果一致
+                seed_n = (sel.student_id * 7 + tc.id * 13) % 100
+                reg = Decimal(str(70 + seed_n % 29))
+                mid = Decimal(str(60 + seed_n % 40))
+                fin = Decimal(str(55 + seed_n % 45))
+
                 g = db.execute(
                     select(Grade).where(
                         Grade.student_id == sel.student_id,
                         Grade.teaching_class_id == tc.id,
                     )
                 ).scalar_one_or_none()
-                if g:
+                if g is not None:
+                    # FIX-008：已存在的记录不再直接跳过——历史演示成绩可能
+                    # 仍是旧权重（0.4/0.6）口径，需按 WEIGHT_RULES 校正。
+                    if repair_grade(course, g, mid):
+                        n_repaired += 1
                     continue
-                # 分数同样确定性生成，保证重复执行结果一致
-                seed_n = (sel.student_id * 7 + tc.id * 13) % 100
-                reg = Decimal(str(70 + seed_n % 29))
-                mid = Decimal(str(60 + seed_n % 40))
-                fin = Decimal(str(55 + seed_n % 45))
+
                 g = Grade(
                     student_id=sel.student_id, teaching_class_id=tc.id,
                     course_id=tc.course_id, semester=SEMESTER,
@@ -353,7 +393,7 @@ def main() -> None:
                 db.add(g)
                 n_grade += 1
         db.commit()
-        print(f"  成绩记录 {n_grade}（已审核）")
+        print(f"  成绩记录 新增 {n_grade} / 校正 {n_repaired}（已审核）")
 
         # 重算学分绩点
         from app.services.grade import GradeService

@@ -54,8 +54,9 @@
 | `a3f9c2e8b1d4` | `20260918_1000_a3f9c2e8b1d4_add_academic_terms.py` | 新增 `academic_terms` 表；`teaching_classes` 增加 `term_id`（NOT NULL）、编号唯一改为 `(term_id, code)`（TASK-011） |
 | `c4d8e2f6a9b1` | `20260918_1100_c4d8e2f6a9b1_add_teaching_class_name.py` | `teaching_classes` 增加 `name`（展示名，区别于编号 code）、增加 `idx_tc_course` 索引（TASK-012） |
 | `d7e5a3f1c2b4` | `20260918_1300_d7e5a3f1c2b4_drop_teaching_class_selected_count.py` | 删除 `teaching_classes.selected_count` 冗余计数列（TASK-013，已选人数改为 `COUNT(course_selections)` 动态统计） |
+| `e1b7c4a9f3d2` | `20260919_0900_e1b7c4a9f3d2_drop_course_weight_columns.py` | 删除 `courses.regular_weight`/`final_weight` 死字段与 `ck_courses_weight`（FIX-008，权重唯一来源改为 `ScoreService.WEIGHT_RULES`） |
 
-> 当前 head 为 `d7e5a3f1c2b4`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
+> 当前 head 为 `e1b7c4a9f3d2`。验证方式：`alembic current`；模型与库是否漂移：`alembic revision --autogenerate` 生成空迁移即为同步。
 
 本文档是 `CLAUDE.md §5/§6` 与 `PRD §12` 的字段级落地。表结构变更必须先改本文档，再写 Alembic migration。
 
@@ -349,8 +350,6 @@ KEY idx_teachers_college (college_id)
 | theory_hours | SMALLINT UNSIGNED | NOT NULL, DEFAULT 0 | 理论学时 |
 | practice_hours | SMALLINT UNSIGNED | NOT NULL, DEFAULT 0 | 实践学时 |
 | exam_type | VARCHAR(20) | NOT NULL, DEFAULT 'EXAM' | EXAM 考试 / CHECK 考查 |
-| regular_weight | DECIMAL(3,2) | NOT NULL, DEFAULT 0.40 | 平时成绩权重 |
-| final_weight | DECIMAL(3,2) | NOT NULL, DEFAULT 0.60 | 期末成绩权重 |
 | description | TEXT | NULL | |
 | status | VARCHAR(20) | NOT NULL, DEFAULT 'ACTIVE' | |
 
@@ -359,12 +358,11 @@ CONSTRAINT ck_courses_type CHECK (course_type IN
   ('REQUIRED','ELECTIVE','PUBLIC_REQUIRED','PUBLIC_ELECTIVE','PRACTICE'))
 CONSTRAINT ck_courses_assessment CHECK (assessment_type IS NULL
   OR assessment_type IN ('32','48','64'))
-CONSTRAINT ck_courses_weight CHECK (regular_weight + final_weight = 1.00)
 CONSTRAINT ck_courses_credits CHECK (credits > 0)
 KEY idx_courses_college_type (college_id, course_type)
 ```
 
-> 成绩权重放在课程上，由后端统一计算总评（CLAUDE.md §21：不得硬编码到前端）。`CHECK` 保证两项权重和恒为 1。
+> **成绩权重不属于课程表**（FIX-008）：V0.1 曾在 `courses` 上放 `regular_weight`/`final_weight`（0.40/0.60），但 TASK-002/003 之后总评改由 `assessment_type` 驱动，该两列成为无人引用的死字段且与现行权重不符，已删除。权重唯一来源为 `services/score_service.py::WEIGHT_RULES`，总评由后端统一计算（CLAUDE.md §21：不得硬编码到前端）。
 > `assessment_type` 仅作考核方案标识，权重换算在 Service 层完成，不写入模型（TASK-002）。
 
 ## 6.2 course_prerequisites
