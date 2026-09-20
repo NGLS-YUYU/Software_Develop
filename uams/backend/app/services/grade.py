@@ -202,6 +202,27 @@ class GradeService:
         self.db.commit()
         return self.list_by_class(teaching_class_id)
 
+    def delete_draft(self, teacher: Teacher | None, grade_id: int) -> None:
+        """删除成绩草稿（FIX-005 §十二/§十三/§十五）。
+
+        状态约束：**只有 DRAFT 允许删除**。SUBMITTED / APPROVED / REJECTED 一律拒绝
+        （409），因为这几类记录已经进入提交/审核链路，删除会破坏成绩留痕；
+        前端隐藏按钮不算数，这里必须做后端校验。
+
+        草稿与正式成绩共用 ``grades`` 表，因此删除严格依赖 ``status == DRAFT``，
+        绝不按 id 直接删。
+        """
+        g = self.get_or_404(grade_id)
+        if teacher is not None and g.teaching_class is not None:
+            if g.teaching_class.teacher_id != teacher.id:
+                raise PermissionDenied("只能删除本人授课教学班的成绩草稿")
+        if g.status != GradeStatus.DRAFT:
+            raise Conflict(
+                f"只有草稿可以删除，当前状态为 {g.status}，请先由教务驳回后再处理"
+            )
+        self.db.delete(g)
+        self.db.commit()
+
     def import_scores(self, rows: list[dict]) -> int:
         """教务 Excel 批量导入成绩（TASK-010）。
 

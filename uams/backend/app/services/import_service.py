@@ -1,36 +1,46 @@
-"""Excel 批量导入业务逻辑（TASK-010）。
+"""Excel 批量导入业务逻辑（TASK-010 / FIX-005）。
 
 架构约束（CLAUDE.md §22 / V2.0 指南）：
   - 学生导入：ImportService → StudentService（复用用户/学生创建 + RBAC）
+  - 教师导入：ImportService → TeacherService（复用用户/教师创建 + RBAC）
   - 课程导入：ImportService → CourseService
   - 成绩导入：ImportService → GradeService → ScoreService（禁止自行计算成绩）
   - 禁止跨层直接操作数据库；不自动创建学院/专业/班级/教学班/教师/选课
   - 成绩导入一律保存为 DRAFT，不写 GPA / 排名
+
+FIX-005 补充：
+  - 模板表头用中文（同时兼容旧的英文字段名），模板附「填写说明」工作表；
+  - 成绩模板按教学班 + AssessmentProfile 动态生成（学号/姓名/班级 系统生成，教师只填成绩）；
+  - 教师导入教师本人只能操作自己的教学班（路由层传入 current 用户做归属校验）。
 """
 
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import Conflict
+from app.core.exceptions import Conflict, NotFound, PermissionDenied
 from app.models.course import Course, CourseType
 from app.models.grade import PASS_SCORE, Grade, GradeStatus
 from app.models.organization import Class, College, Major
-from app.models.person import Student
+from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
-from app.models.user import User
+from app.models.user import User, UserType
+from app.services.assessment import profile_for
 from app.services.course import CourseService
 from app.services.grade import GradeService
-from app.services.person import StudentService
+from app.services.person import StudentService, TeacherService
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # --- 模板字段定义（与 V2.0 指南一致） ---
 _STUDENT_HEADERS = ["student_no", "name", "username", "college", "major", "class_name"]
+_TEACHER_HEADERS = ["teacher_no", "name", "college", "title", "gender", "phone"]
 _COURSE_HEADERS = [
     "course_code", "course_name", "college", "credits", "total_hours",
     "theory_hours", "practice_hours", "course_type",
@@ -48,6 +58,53 @@ _GRADE_SCORE_FIELDS = [
     "final_theory_score", "final_practice_score",
     "theory_makeup_score", "practice_makeup_score",
 ]
+
+# --- 中文表头 ←→ 后端字段名（FIX-005 §五：模板第一行用中文字段名）---
+# 旧的英文字段名仍然接受，保证既有模板与调用方不被打断。
+_HEADER_ALIASES: dict[str, str] = {
+    # 学生
+    "学号": "student_no", "姓名": "name", "登录名": "username",
+    "学院": "college", "专业": "major", "行政班": "class_name", "班级": "class_name",
+    # 教师
+    "工号": "teacher_no", "职称": "title", "性别": "gender",
+    "联系电话": "phone", "联系方式": "phone", "入职日期": "hire_date",
+    # 课程
+    "课程代码": "course_code", "课程编号": "course_code", "课程名称": "course_name",
+    "学分": "credits", "总学时": "total_hours",
+    "理论学时": "theory_hours", "实践学时": "practice_hours", "课程性质": "course_type",
+    # 成绩
+    "课程代码(固定)": "course_code", "课程名称(固定)": "course_name",
+    "教学班": "teaching_class_code", "教学班编号": "teaching_class_code",
+    "平时成绩": "regular_score",
+    "期中成绩": "mid_score", "期中理论": "mid_theory_score", "期中实践": "mid_practice_score",
+    "期末成绩": "final_score", "期末理论": "final_theory_score",
+    "期末实践": "final_practice_score",
+    "补考成绩": "theory_makeup_score", "理论补考": "theory_makeup_score",
+    "实践补考": "practice_makeup_score",
+}
+
+_GRADE_SCORE_LABELS = {
+    "regular_score": "平时成绩",
+    "mid_score": "期中成绩",
+    "mid_theory_score": "期中理论",
+    "mid_practice_score": "期中实践",
+    "final_score": "期末成绩",
+    "final_theory_score": "期末理论",
+    "final_practice_score": "期末实践",
+    "theory_makeup_score": "补考成绩",
+    "practice_makeup_score": "实践补考",
+}
+
+# 中文取值 ←→ 枚举值（模板给中文，导入时翻译）
+_TITLE_VALUES = {
+    "教授": "PROFESSOR", "副教授": "ASSOCIATE_PROFESSOR",
+    "讲师": "LECTURER", "助教": "ASSISTANT",
+}
+_GENDER_VALUES = {"男": "MALE", "女": "FEMALE", "未知": "UNKNOWN"}
+_COURSE_TYPE_VALUES = {
+    "专业必修": "REQUIRED", "专业选修": "ELECTIVE",
+    "公共必修": "PUBLIC_REQUIRED", "公共选修": "PUBLIC_ELECTIVE", "实践": "PRACTICE",
+}
 _SCORE_LABELS = {
     "regular_score": "平时成绩",
     "mid_score": "期中成绩",
@@ -111,12 +168,19 @@ def _load_sheet(file_bytes: bytes):
     return wb[wb.sheetnames[0]]
 
 
-def _header_map(ws) -> dict[str, int]:
+def _header_map(ws, aliases: dict[str, str] | None = None) -> dict[str, int]:
+    """读取首行表头 → {后端字段名: 列号}。
+
+    支持中文表头（FIX-005 §五）与旧的英文字段名：先按别名表翻译，
+    翻译不到则原样保留（因此英文表头行为与改动前完全一致）。
+    """
+    aliases = aliases if aliases is not None else _HEADER_ALIASES
     hmap: dict[str, int] = {}
     for idx in range(1, ws.max_column + 1):
         key = _cell_str(ws.cell(row=1, column=idx).value)
-        if key:
-            hmap[key] = idx
+        if not key:
+            continue
+        hmap[aliases.get(key, key)] = idx
     return hmap
 
 
@@ -149,15 +213,83 @@ def _lookup(refs: tuple[dict, dict], value: str):
     return code_map.get(value) or name_map.get(value)
 
 
-def _template_bytes(headers: list[str], example: list) -> bytes:
+_HEADER_FILL = PatternFill("solid", fgColor="D9E7F5")
+_LOCKED_FILL = PatternFill("solid", fgColor="F2F2F2")
+_HEADER_FONT = Font(bold=True)
+
+
+def _write_sheet(ws, headers: list[str], rows: list[list], locked_cols: int = 0) -> None:
+    """写入表头 + 数据行，并做基础排版（表头底色、灰底固定列、列宽）。
+
+    第 1 行必须是后端能识别的字段名（中文或英文），解析器只读这一行。
+    固定列（系统生成、教师不可改）用浅灰底提示，其余列为填写区。
+    """
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    for row in rows:
+        ws.append(row)
+    for idx in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(idx)].width = 16
+        if locked_cols and idx <= locked_cols:
+            for r in range(2, ws.max_row + 1):
+                ws.cell(r, idx).fill = _LOCKED_FILL
+
+
+def _add_notes_sheet(wb, title: str, notes: list[str]) -> None:
+    """追加「填写说明」工作表（说明不放在数据行，避免被当成数据解析）。"""
+    ws = wb.create_sheet("填写说明")
+    ws.column_dimensions["A"].width = 100
+    ws.append([title])
+    ws["A1"].font = Font(bold=True, size=13)
+    for line in notes:
+        ws.append([line])
+        ws.cell(ws.max_row, 1).alignment = Alignment(wrap_text=True, vertical="top")
+    ws.cell(1, 1).alignment = Alignment(vertical="center")
+
+
+def _template_bytes(
+    headers: list[str],
+    example: list | None = None,
+    rows: list[list] | None = None,
+    title: str = "",
+    notes: list[str] | None = None,
+    locked_cols: int = 0,
+) -> bytes:
+    """生成模板工作簿：首个工作表是数据区，第二个工作表是填写说明。"""
     wb = Workbook()
     ws = wb.active
     ws.title = "导入模板"
-    ws.append(headers)
-    ws.append(example)
+    body = rows if rows is not None else ([example] if example is not None else [])
+    _write_sheet(ws, headers, body, locked_cols=locked_cols)
+    if notes:
+        _add_notes_sheet(wb, title or "填写说明", notes)
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _label_of(field: str) -> str:
+    """后端字段名 → 模板中文表头。"""
+    for label, name in _HEADER_ALIASES.items():
+        if name == field and not label.endswith("(固定)"):
+            return label
+    return field
+
+
+def _translate(value: str, mapping: dict[str, str], label: str) -> str:
+    """把模板里的中文取值翻译成枚举值；已是枚举值则原样返回。"""
+    if not value:
+        return value
+    if value in mapping.values():
+        return value
+    translated = mapping.get(value)
+    if translated is None:
+        allowed = "、".join(mapping.keys())
+        raise ValueError(f"{label}非法：{value}（可填：{allowed}）")
+    return translated
 
 
 class ImportService:
@@ -170,20 +302,181 @@ class ImportService:
 
     def student_template(self) -> bytes:
         return _template_bytes(
-            _STUDENT_HEADERS,
+            [_label_of(f) for f in _STUDENT_HEADERS],
             ["20240001", "张三", "20240001", "信息工程学院", "软件工程", "软件2401班"],
+            title="学生批量导入模板",
+            notes=[
+                "① 学号：必填，唯一，作为学生的登录名（可另填「登录名」列覆盖）。",
+                "② 姓名：必填。",
+                "③ 学院 / 专业 / 行政班：必填，必须与系统中已存在的名称完全一致；",
+                "   三者层级必须匹配（专业属于该学院、行政班属于该专业），系统不会自动创建。",
+                "④ 入学年份由行政班的年级自动带入，无需填写。",
+                "⑤ 首行表头请勿修改或删除；从第 2 行开始填写数据，可留空行。",
+                "⑥ 支持 .xlsx 格式，单个文件不超过 10MB。",
+            ],
+        )
+
+    def teacher_template(self) -> bytes:
+        return _template_bytes(
+            [_label_of(f) for f in _TEACHER_HEADERS],
+            ["T100", "李四", "信息工程学院", "讲师", "男", "13800000000"],
+            title="教师批量导入模板",
+            notes=[
+                "① 工号：必填，唯一，同时作为教师的登录名；初始密码与工号相同。",
+                "② 姓名：必填。",
+                "③ 学院：必填，必须与系统中已存在的学院名称完全一致，系统不会自动创建。",
+                "④ 职称：选填，可填 教授 / 副教授 / 讲师 / 助教（也可直接填 PROFESSOR 等英文值）。",
+                "⑤ 性别：选填，可填 男 / 女 / 未知。",
+                "⑥ 联系电话：选填。",
+                "⑦ 首行表头请勿修改或删除；从第 2 行开始填写数据，可留空行。",
+                "⑧ 支持 .xlsx 格式，单个文件不超过 10MB。",
+            ],
         )
 
     def course_template(self) -> bytes:
         return _template_bytes(
-            _COURSE_HEADERS,
-            ["CS101", "程序设计基础", "信息工程学院", 4.0, 64, 40, 24, "REQUIRED"],
+            [_label_of(f) for f in _COURSE_HEADERS],
+            ["CS101", "程序设计基础", "信息工程学院", 4.0, 64, 40, 24, "专业必修"],
+            title="课程批量导入模板",
+            notes=[
+                "① 课程代码：必填，唯一。课程名称：必填。",
+                "② 学院：必填，必须与系统中已存在的学院名称完全一致，系统不会自动创建。",
+                "③ 学分：必填，大于 0（本项目暂无学时→学分的自动换算规则，需人工填写）。",
+                "④ 总学时 / 理论学时 / 实践学时：必填，必须满足「理论学时 + 实践学时 = 总学时」。",
+                "⑤ 考核方式由总学时自动决定，无需也不能填写：",
+                "   总学时 ≤ 32 → 平时 20% + 期末 80%（无期中）；",
+                "   总学时 > 32 → 平时 20% + 期中 30% + 期末 50%。",
+                "   实践学时 > 0 的课程才有实践考试与实践成绩。",
+                "⑥ 课程性质：可填 专业必修 / 专业选修 / 公共必修 / 公共选修 / 实践"
+                "（也可填 REQUIRED 等英文值）。",
+                "⑦ 首行表头请勿修改或删除；从第 2 行开始填写数据，可留空行。",
+                "⑧ 支持 .xlsx 格式，单个文件不超过 10MB。",
+            ],
         )
 
-    def grade_template(self) -> bytes:
+    def grade_template(self, teaching_class_id: int) -> bytes:
+        """按教学班动态生成成绩录入模板（FIX-005 §六/§七）。
+
+        - 学生名单、学号、姓名、班级、课程、教学班由系统生成，教师不用填；
+        - 成绩列由课程 AssessmentProfile 决定（是否有期中 / 是否有实践）；
+        - 已录入的草稿成绩回填，方便教师在此基础上修改后重新上传；
+        - 总评/绩点不在模板内计算，导入后由后端 ScoreService 统一计算。
+        """
+        tc = self.db.get(TeachingClass, teaching_class_id)
+        if tc is None:
+            raise NotFound(f"教学班不存在（id={teaching_class_id}）")
+        course = self.db.get(Course, tc.course_id)
+        if course is None:
+            raise NotFound("教学班所属课程不存在")
+        profile = profile_for(course)
+
+        score_fields = ["regular_score"]
+        if profile.has_midterm:
+            score_fields += (
+                ["mid_theory_score", "mid_practice_score"]
+                if profile.has_practice
+                else ["mid_score"]
+            )
+        score_fields += (
+            ["final_theory_score", "final_practice_score"]
+            if profile.has_practice
+            else ["final_score"]
+        )
+        # 补考列：只给理论补考；实践课额外给实践补考
+        score_fields.append("theory_makeup_score")
+        if profile.has_practice:
+            score_fields.append("practice_makeup_score")
+
+        fixed_fields = [
+            "student_no", "name", "class_name",
+            "course_code", "course_name", "teaching_class_code",
+        ]
+        # 显式指定固定列表头（「班级」在学生导入模板里叫「行政班」，沿用别名表会串名）
+        fixed_labels = ["学号", "姓名", "班级", "课程代码", "课程名称", "教学班"]
+        # 实践课的补考列必须区分「理论补考 / 实践补考」
+        score_labels = [
+            "理论补考" if f == "theory_makeup_score" and profile.has_practice
+            else _GRADE_SCORE_LABELS[f]
+            for f in score_fields
+        ]
+        headers = fixed_labels + score_labels
+
+        selections = list(
+            self.db.execute(
+                select(CourseSelection)
+                .where(
+                    CourseSelection.teaching_class_id == teaching_class_id,
+                    CourseSelection.status == SelectionState.SELECTED,
+                )
+            ).scalars()
+        )
+        grades = {
+            g.student_id: g
+            for g in self.db.execute(
+                select(Grade).where(Grade.teaching_class_id == teaching_class_id)
+            ).scalars()
+        }
+
+        rows: list[list] = []
+        for sel in sorted(
+            selections, key=lambda s: s.student.student_no if s.student else ""
+        ):
+            stu = sel.student
+            if stu is None:
+                continue
+            g = grades.get(stu.id)
+            rows.append(
+                [
+                    stu.student_no,
+                    stu.user.real_name if stu.user else "",
+                    stu.klass.name if stu.klass else "",
+                    course.code,
+                    course.name,
+                    tc.code,
+                ]
+                + [
+                    (float(getattr(g, f)) if g and getattr(g, f) is not None else "")
+                    for f in score_fields
+                ]
+            )
+
+        weight = (
+            "平时 20% + 期中 30% + 期末 50%"
+            if profile.has_midterm
+            else "平时 20% + 期末 80%"
+        )
+        if profile.has_practice:
+            weight += "；理论/实践分别计算后取两侧平均"
         return _template_bytes(
-            _GRADE_HEADERS,
-            ["20240001", "CS101-01", 85, 80, 90, "", "", "", "", "", ""],
+            headers,
+            rows=rows,
+            title=f"成绩录入模板：{course.name}（{course.code}）",
+            locked_cols=len(fixed_fields),
+            notes=[
+                f"课程：{course.name}（{course.code}）　教学班：{tc.code}　"
+                f"总学时 {course.total_hours}（理论 {course.theory_hours} / "
+                f"实践 {course.practice_hours}）",
+                f"成绩构成：{weight}。",
+                "",
+                "① 灰色列（学号 / 姓名 / 班级 / 课程代码 / 课程名称 / 教学班）由系统生成，"
+                "请勿修改；改了会找不到学生或教学班。",
+                "② 只需填写右侧的成绩列，每格 0~100 分，留空表示暂不录入。",
+                "③ 本模板不计算总评：总评、绩点、是否及格全部由系统按课程考核方式统一计算。",
+            ]
+            + (
+                ["④ 本课程含实践学时，期中/期末的理论与实践成绩必须成对填写。"]
+                if profile.has_practice
+                else []
+            )
+            + (
+                []
+                if profile.has_midterm
+                else ["④ 本课程为 32 学时两段式，没有期中考试，模板已隐藏期中列。"]
+            )
+            + [
+                "⑤ 补考成绩只允许在对应期末成绩不及格（<60）时填写。",
+                "⑥ 已提交/已审核的成绩不能通过导入覆盖，请先由教务驳回。",
+            ],
         )
 
     # =========================== 学生导入 ===========================
@@ -303,6 +596,101 @@ class ImportService:
             "errors": errors,
         }
 
+    # =========================== 教师导入 ===========================
+
+    def import_teachers(self, file_bytes: bytes) -> dict:
+        ws = _load_sheet(file_bytes)
+        hmap = _header_map(ws)
+        _require_headers(hmap, ["teacher_no", "name", "college"])
+
+        rows: list[dict] = []
+        college_vals: set[str] = set()
+        no_vals: set[str] = set()
+        for r in range(2, ws.max_row + 1):
+            teacher_no = _cell_str(ws.cell(r, hmap["teacher_no"]).value)
+            name = _cell_str(ws.cell(r, hmap["name"]).value)
+            college_v = _cell_str(ws.cell(r, hmap["college"]).value)
+            title_v = _cell_str(ws.cell(r, hmap["title"]).value) if "title" in hmap else ""
+            gender_v = _cell_str(ws.cell(r, hmap["gender"]).value) if "gender" in hmap else ""
+            phone_v = _cell_str(ws.cell(r, hmap["phone"]).value) if "phone" in hmap else ""
+            if not any([teacher_no, name, college_v, title_v, gender_v, phone_v]):
+                continue
+            rows.append(
+                {
+                    "row": r, "teacher_no": teacher_no, "name": name,
+                    "college": college_v, "title": title_v, "gender": gender_v,
+                    "phone": phone_v,
+                }
+            )
+            college_vals.add(college_v)
+            no_vals.add(teacher_no)
+
+        colleges = _load_refs(self.db, College, college_vals)
+        existing_nos = set(
+            self.db.execute(
+                select(Teacher.teacher_no).where(Teacher.teacher_no.in_(no_vals))
+            ).scalars()
+        )
+        existing_usernames = set(
+            self.db.execute(select(User.username).where(User.username.in_(no_vals))).scalars()
+        )
+
+        svc = TeacherService(self.db)
+        errors: list[dict] = []
+        seen: set[str] = set()
+        success = 0
+        for row in rows:
+            r = row["row"]
+
+            def fail(field: str, msg: str) -> dict:
+                return {"row": r, "field": field, "message": msg}
+
+            if not row["teacher_no"]:
+                errors.append(fail("teacher_no", "工号不能为空")); continue
+            if not row["name"]:
+                errors.append(fail("name", "姓名不能为空")); continue
+            if not row["college"]:
+                errors.append(fail("college", "学院不能为空")); continue
+            college = _lookup(colleges, row["college"])
+            if college is None:
+                errors.append(fail("college", f"学院不存在：{row['college']}")); continue
+
+            try:
+                title = _translate(row["title"], _TITLE_VALUES, "职称") or None
+            except ValueError as e:
+                errors.append(fail("title", str(e))); continue
+            try:
+                gender = _translate(row["gender"], _GENDER_VALUES, "性别") or "UNKNOWN"
+            except ValueError as e:
+                errors.append(fail("gender", str(e))); continue
+
+            if row["teacher_no"] in existing_nos:
+                errors.append(fail("teacher_no", f"工号已存在：{row['teacher_no']}")); continue
+            if row["teacher_no"] in seen:
+                errors.append(fail("teacher_no", f"工号在导入文件中重复：{row['teacher_no']}")); continue
+            if row["teacher_no"] in existing_usernames:
+                errors.append(fail("teacher_no", f"登录名已被占用：{row['teacher_no']}")); continue
+
+            seen.add(row["teacher_no"])
+            svc.create_teacher(
+                {
+                    "teacher_no": row["teacher_no"],
+                    "real_name": row["name"],
+                    "college_id": college.id,
+                    "title": title,
+                    "gender": gender,
+                    "phone": row["phone"] or None,
+                }
+            )
+            success += 1
+
+        return {
+            "total": len(rows),
+            "success": success,
+            "failed": len(errors),
+            "errors": errors,
+        }
+
     # =========================== 课程导入 ===========================
 
     def import_courses(self, file_bytes: bytes) -> dict:
@@ -404,7 +792,11 @@ class ImportService:
                     f"当前：理论 {theory} + 实践 {practice} = {theory + practice}。"
                 )); continue
 
-            if row["course_type"] not in CourseType.ALL:
+            try:
+                ctype = _translate(row["course_type"], _COURSE_TYPE_VALUES, "课程性质")
+            except ValueError as e:
+                errors.append(fail("course_type", str(e))); continue
+            if ctype not in CourseType.ALL:
                 errors.append(fail("course_type", f"课程类型非法：{row['course_type']}")); continue
 
             if row["course_code"] in existing_codes:
@@ -418,7 +810,7 @@ class ImportService:
                     "code": row["course_code"],
                     "name": row["course_name"],
                     "college_id": college.id,
-                    "course_type": row["course_type"],
+                    "course_type": ctype,
                     "credits": credits,
                     "total_hours": int(hours),
                     "theory_hours": theory,
@@ -436,10 +828,18 @@ class ImportService:
 
     # =========================== 成绩导入 ===========================
 
-    def import_grades(self, file_bytes: bytes) -> dict:
+    def import_grades(self, file_bytes: bytes, current: User | None = None) -> dict:
+        """导入成绩（FIX-005：模板由教学班动态生成，成绩列按课程考核结构裁剪）。
+
+        ``current`` 传入调用者时按角色做归属校验：教师只能导入本人授课教学班的成绩
+        （CLAUDE.md §9：后端必须做对象级权限校验，不能只靠前端隐藏入口）。
+        """
         ws = _load_sheet(file_bytes)
         hmap = _header_map(ws)
-        _require_headers(hmap, _GRADE_HEADERS)
+        # 成绩模板的列随课程考核结构变化（32h 无期中列、无实践无实践列），
+        # 因此只强制要求定位用的两列，成绩列按实际出现的表头解析。
+        _require_headers(hmap, ["student_no", "teaching_class_code"])
+        present_scores = [f for f in _GRADE_SCORE_FIELDS if f in hmap]
 
         rows: list[dict] = []
         student_nos: set[str] = set()
@@ -447,9 +847,7 @@ class ImportService:
         for r in range(2, ws.max_row + 1):
             student_no = _cell_str(ws.cell(r, hmap["student_no"]).value)
             tc_code = _cell_str(ws.cell(r, hmap["teaching_class_code"]).value)
-            scores_raw = {
-                f: ws.cell(r, hmap[f]).value for f in _GRADE_SCORE_FIELDS
-            }
+            scores_raw = {f: ws.cell(r, hmap[f]).value for f in present_scores}
             if (
                 not student_no and not tc_code
                 and all(_cell_str(v) == "" for v in scores_raw.values())
@@ -511,6 +909,16 @@ class ImportService:
 
         errors: list[dict] = []
         valid_rows: list[dict] = []
+        me_teacher: Teacher | None = None
+        if current is not None and current.user_type == UserType.TEACHER:
+            me_teacher = self.db.execute(
+                select(Teacher).where(Teacher.user_id == current.id)
+            ).scalar_one_or_none()
+            if me_teacher is None:
+                raise PermissionDenied("教师档案不存在")
+        elif current is not None and current.user_type == UserType.STUDENT:
+            raise PermissionDenied("学生无权导入成绩")
+
         for row in rows:
             r = row["row"]
 
@@ -527,6 +935,11 @@ class ImportService:
             tc = tcs_by_code.get(row["teaching_class_code"])
             if tc is None:
                 errors.append(fail("teaching_class_code", f"教学班不存在：{row['teaching_class_code']}")); continue
+            # 对象级权限：教师只能导入本人授课教学班的成绩（CLAUDE.md §9）
+            if me_teacher is not None and tc.teacher_id != me_teacher.id:
+                errors.append(fail(
+                    "teaching_class_code", f"只能导入本人授课教学班的成绩：{tc.code}"
+                )); continue
 
             key = (student.id, tc.id)
             grade = grades_by_key.get(key)
@@ -539,7 +952,7 @@ class ImportService:
 
             scores: dict[str, Decimal] = {}
             score_err = None
-            for f in _GRADE_SCORE_FIELDS:
+            for f in present_scores:
                 try:
                     d = _cell_decimal(row["scores_raw"][f])
                 except ValueError as e:

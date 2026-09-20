@@ -439,36 +439,55 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 ## 15. 批量导入 `/api/v1/imports`
 
-仅教务管理员（`ACADEMIC_ADMIN`）可调用；`TEACHER` / `STUDENT` 一律 403。权限复用现有 `student:write` / `course:write` / `grade:write`。文件仅支持 `.xlsx`（openpyxl），单文件上限 10MB。
+教务管理员（`ACADEMIC_ADMIN`）可导入学生 / 教师 / 课程 / 成绩；教师（`TEACHER`）可导入**本人授课教学班**的成绩（对象级校验在 `ImportService` 内完成，越权行返回错误明细）；`STUDENT` 一律 403。权限复用现有 `student:write` / `teacher:write` / `course:write` / `grade:write`。文件仅支持 `.xlsx`（openpyxl），单文件上限 10MB。
 
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
-| GET | `/imports/templates/students` | 下载学生导入模板（含示例行） | `student:write` |
-| GET | `/imports/templates/courses` | 下载课程导入模板（含示例行） | `course:write` |
-| GET | `/imports/templates/grades` | 下载成绩导入模板（含示例行） | `grade:write` |
+| GET | `/imports/templates/students` | 下载学生导入模板 | `student:write` |
+| GET | `/imports/templates/teachers` | 下载教师导入模板 | `teacher:write` |
+| GET | `/imports/templates/courses` | 下载课程导入模板 | `course:write` |
+| GET | `/imports/templates/grades?teaching_class_id=` | 下载成绩导入模板（**按教学班 + 课程考核结构动态生成**，`teaching_class_id` 必填） | `grade:write` |
 | POST | `/imports/students` | 批量导入学生 | `student:write` |
+| POST | `/imports/teachers` | 批量导入教师 | `teacher:write` |
 | POST | `/imports/courses` | 批量导入课程 | `course:write` |
 | POST | `/imports/grades` | 批量导入成绩 | `grade:write` |
 
-**模板字段（首行必须与之一致）**
+**模板（FIX-005）**
 
-| 模板 | 字段 |
+- 首行是**中文字段名**，同时兼容旧的英文字段名（`student_no` 等），既有调用方不受影响；取值也支持中文（职称 `教授/副教授/讲师/助教`、性别 `男/女/未知`、课程性质 `专业必修/…`）。
+- 模板包含第 2 个工作表「填写说明」，逐条说明必填项与常见错误；说明不放在数据行，避免被当成数据解析。
+- **成绩模板按 `teaching_class_id` 动态生成**：学号 / 姓名 / 班级 / 课程代码 / 课程名称 / 教学班 由系统带出（灰底，教师不用填），成绩列由 `AssessmentProfile` 决定：
+
+| 课程 | 成绩列 |
 |---|---|
-| 学生 | `student_no`、`name`、`username`、`college`、`major`、`class_name` |
-| 课程 | `course_code`、`course_name`、`college`、`credits`、`total_hours`、`course_type`、`assessment_type` |
-| 成绩 | `student_no`、`teaching_class_code`、`regular_score`、`mid_score`、`final_score`、`mid_theory_score`、`mid_practice_score`、`final_theory_score`、`final_practice_score`、`theory_makeup_score`、`practice_makeup_score` |
+| ≤32 学时、无实践 | 平时成绩、期末成绩 |
+| ≤32 学时、有实践 | 平时成绩、期末理论、期末实践 |
+| >32 学时、无实践 | 平时成绩、期中成绩、期末成绩 |
+| >32 学时、有实践 | 平时成绩、期中理论、期中实践、期末理论、期末实践 |
 
-**导入结果**（无论成功与否均返回 200）
+  另有补考列（理论补考；实践课加实践补考）。**模板只负责录入原始成绩，不计算总评/绩点**——导入后由 `ScoreService` 统一计算。
+
+**导入结果**（无论成功与否均返回 200，部分成功策略）
 
 ```json
 {"total": 100, "success": 96, "failed": 4,
  "errors": [{"row": 3, "field": "student_no", "message": "学号已存在"}]}
 ```
 
-- 校验规则（每行取首个错误）：字段非空 → 学院/专业/行政班存在且层级匹配 → 学号/登录名/课程编号不重复（含文件内重复）→ 课程类型/考核方式合法 → 学分与学时范围合法 → 成绩 0-100 且理论/实践成对填写 → 补考只允许对应期末分项 < 60 时填写。
-- 学生导入复用 `StudentService.create_student`（`username` 缺省取学号；`enrollment_year` 取行政班 `grade_year`），并在一个事务内创建 User + Student + 角色绑定。
-- 课程导入复用 `CourseService.create`，**不会**自动创建学院。
-- 成绩导入复用 `GradeService.import_scores` → `ScoreService.compute_for_draft` 统一计算，**一律保存为 DRAFT**；`SUBMITTED` / `APPROVED` 不可覆盖，`DRAFT` / `REJECTED` 可更新，未录入（NOT_ENTERED）可新建。**不写 GPA / 排名**，不自动创建教学班/选课记录。
+- 校验规则（每行取首个错误）：字段非空 → 学院/专业/行政班存在且层级匹配 → 学号/登录名/工号/课程编号不重复（含文件内重复）→ 课程性质/职称/性别合法 → 学分与学时范围合法 → **理论+实践=总学时** → 成绩 0-100 且理论/实践成对填写 → 实践成绩与课程 `practice_hours` 匹配（FIX-009）→ 补考只允许对应期末分项 < 60 时填写 → 教师只能导入本人授课教学班。
+- 学生导入复用 `StudentService.create_student`（`username` 缺省取学号；`enrollment_year` 取行政班 `grade_year`）。
+- 教师导入复用 `TeacherService.create_teacher`（`teacher_no` 即登录名，初始密码 = 工号）。
+- 课程导入复用 `CourseService.create`，**不会**自动创建学院；考核方式由 `total_hours` 推导，**不接受也不允许手填**。
+- 成绩导入复用 `GradeService.import_scores` → `ScoreService.compute_for_draft` 统一计算，**一律保存为 DRAFT**；`SUBMITTED` / `APPROVED` 不可覆盖，`DRAFT` / `REJECTED` 可更新，未录入（NOT_ENTERED）可新建。**不写 GPA / 排名**。
+
+### 15.1 成绩草稿删除 `/api/v1/grades/{grade_id}`
+
+| 方法 | 路径 | 说明 | 权限 |
+|---|---|---|---|
+| DELETE | `/grades/{grade_id}` | 删除成绩草稿，成功 204 | `grade:write`（教师仅限本人教学班） |
+
+- **只有 `DRAFT` 允许删除**；`SUBMITTED` / `APPROVED` / `REJECTED` 一律 409（草稿与正式成绩共用 `grades` 表，删除严格依赖状态判断，不按 id 直删）。
+- 教师删除他人教学班的草稿返回 403；教务可删除任意草稿。
 
 ---
 

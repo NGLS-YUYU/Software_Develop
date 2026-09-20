@@ -249,6 +249,27 @@ def save_grades(
     return [_out(g) for g in rows]
 
 
+@router.delete(
+    "/{grade_id}",
+    status_code=204,
+    summary="删除成绩草稿（仅 DRAFT，SUBMITTED/APPROVED 返回 409）",
+)
+def delete_grade(
+    grade_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(RequirePermissions("grade:write")),
+):
+    """删除成绩草稿（FIX-005 §十二~§十五）。
+
+    教师只能删除本人授课教学班的草稿；教务可删除任意草稿。
+    非草稿状态由 Service 统一拒绝（409）。
+    """
+    if current.user_type == UserType.STUDENT:
+        raise PermissionDenied("无权删除成绩")
+    teacher = _me_teacher(db, current) if current.user_type == UserType.TEACHER else None
+    GradeService(db).delete_draft(teacher, grade_id)
+
+
 @router.post("/teaching-classes/{class_id}/submit", summary="提交成绩")
 def submit_grades(
     class_id: int,

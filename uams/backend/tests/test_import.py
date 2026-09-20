@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import delete, or_, select
 
 from app.core.config import settings
@@ -394,7 +394,8 @@ def test_course_type_invalid(env):
         [f"{P}badtype", "T10类型课", "T10学院", 3.0, 48, 48, 0, "INVALID"],
     ], admin_auth())
     assert r.json()["failed"] == 1
-    assert "课程类型非法" in r.json()["errors"][0]["message"]
+    assert "课程性质非法" in r.json()["errors"][0]["message"]
+    assert "INVALID" in r.json()["errors"][0]["message"]
 
 
 def test_course_hours_sum_mismatch(env):
@@ -631,9 +632,24 @@ def test_course_template_download(env):
 
 
 def test_grade_template_download(env):
-    r = client.get(f"{PREFIX}/imports/templates/grades", headers=admin_auth())
+    """FIX-005 §七：成绩模板按教学班动态生成，必须带 teaching_class_id。"""
+    r = client.get(
+        f"{PREFIX}/imports/templates/grades",
+        params={"teaching_class_id": env["tc48"]},
+        headers=admin_auth(),
+    )
     assert r.status_code == 200
     assert r.content[:2] == b"PK"
+    # 48 学时无实践：平时 + 期中 + 期末（无实践列）
+    ws = load_workbook(io.BytesIO(r.content)).worksheets[0]
+    headers = [c.value for c in ws[1]]
+    assert "平时成绩" in headers and "期中成绩" in headers and "期末成绩" in headers
+    assert "期中实践" not in headers and "期末实践" not in headers
+
+
+def test_grade_template_requires_teaching_class(env):
+    r = client.get(f"{PREFIX}/imports/templates/grades", headers=admin_auth())
+    assert r.status_code == 422  # 缺少 teaching_class_id
 
 
 # =========================== 文件格式 ===========================

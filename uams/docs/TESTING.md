@@ -1,6 +1,10 @@
 # 测试规范与现状
 
-> 记录当前测试实际情况（TASK-DOC-001，2026-09-17；TASK-011 更新，2026-09-18；TASK-012 更新，2026-09-18；TASK-013 更新，2026-09-18）。
+> 记录当前测试实际情况（TASK-DOC-001，2026-09-17；TASK-011 更新，2026-09-18；TASK-012 更新，2026-09-18；TASK-013 更新，2026-09-18；FIX-008/009/005 更新，2026-09-20）。
+>
+> 新增的真实链路 E2E 脚本（不依赖测试客户端，直连运行中的服务）：
+> - `backend/scripts/e2e_fix005_import.py` —— 真实 HTTP + 真实 Excel + 真实 MySQL（28 项断言）
+> - `backend/scripts/e2e_fix005_browser.py` —— Chrome + CDP 真实浏览器操作（32 项断言）
 
 ---
 
@@ -26,19 +30,22 @@ backend/tests/
 ├── test_smoke.py         # 基础设施冒烟（4 个用例）
 ├── test_rbac.py          # 三类角色权限隔离（9 个用例）
 ├── test_models.py        # 模型字段完整性与约束（13 个用例）
-├── test_score_service.py # 统一成绩计算服务（15 个用例）
+├── test_score_service.py # 统一成绩计算服务（30 个用例）
+├── test_score_consistency.py # 成绩权重一致性 + 全库成绩重算核对（14 个用例）
 ├── test_gpa_ranking.py   # GPA 换算与班级/专业排名（16 个用例）
-├── test_teacher_grade.py # 教师成绩录入与状态机（15 个用例）
+├── test_teacher_grade.py # 教师成绩录入与状态机（19 个用例）
 ├── test_grade_review.py  # 教务处成绩审核（18 个用例）
-├── test_student_grade.py # 学生成绩查询（18 个用例）
+├── test_student_grade.py # 学生成绩查询（20 个用例）
 ├── test_teaching_class.py # 教学班基础管理 + 开课计划规则（44 个用例）
 ├── test_selection.py     # 必修课预安排 + 选修课自主选课 + 容量并发（30 个用例）
 ├── test_teaching_schedule.py # 教学安排与课表管理（38 个用例）
 ├── test_academic_term.py # 学期管理与教学班学期绑定（39 个用例）
-└── test_import.py        # 基础数据 Excel 批量导入（40 个用例）
+├── test_fix009_assessment.py # 学时守恒 + 考核结构推导 + 教学班继承（10 个用例）
+├── test_fix005_import.py # 批量导入闭环 + 成绩模板动态列 + 草稿删除（35 个用例）
+└── test_import.py        # 基础数据 Excel 批量导入（43 个用例）
 ```
 
-**合计 316 个用例，全部通过。**
+**合计 399 个用例，全部通过。**
 
 | 文件 | 覆盖内容 |
 |---|---|
@@ -56,6 +63,9 @@ backend/tests/
 | `test_teaching_schedule.py` | 教学安排增删改查、参数校验（星期/节次/周次/单双周/教室）、三类冲突（教师/教室/教学班自身，分别 `TEACHING_SCHEDULE_TEACHER_CONFLICT`/`TEACHING_SCHEDULE_CLASSROOM_CONFLICT`/`TEACHING_SCHEDULE_CLASS_CONFLICT`）、学期生命周期（PLANNED/ACTIVE 可操作、ENDED 只读 `TEACHING_SCHEDULE_TERM_ENDED`）、修改排除自身、教室容量校验、教务全量列表与 4 个过滤条件（teaching_class/teacher/weekday/classroom）及排序、角色权限隔离（教师/学生写 403、教务列表/详情仅 ACADEMIC_ADMIN）、教师 `/mine`（含 term 过滤）、学生 `/my`（含 term 过滤、未选课空列表）（TASK-013） |
 | `test_academic_term.py` | 学期增删改查、状态单向流转 PLANNED→ACTIVE→ENDED、单激活约束、(学年,学期) 唯一、日期校验、删除引用保护、教学班 `term_id` 必填与已结束学期不可开课、按学期过滤、`term:read`/`term:write` 权限隔离（TASK-011） |
 | `test_import.py` | 学生/课程/成绩 Excel 批量导入、三种模板下载、`.xlsx` 格式校验、字段缺失/编号与登录名重复/学院/专业/行政班层级校验、课程类型/考核方式/学分校验、成绩 0-100 范围与理论/实践成对校验、DRAFT/REJECTED 可覆盖而 SUBMITTED/APPROVED 禁止覆盖、成绩复用 ScoreService 计算（32/48/64 课时与理论+实践）、不写 GPA/排名、教师/学生越权 403、错误行号（TASK-010） |
+| `test_fix005_import.py` | 教师批量导入（中文取值翻译/去重/权限）、成绩模板按 AssessmentProfile 动态生成（32/48/64 × 实践/非实践四态）、真实 Excel 往返（下载模板→填写→上传→查库核对总评）、非法成绩/不存在学生/不属于教学班、重复导入覆盖草稿、草稿删除（DRAFT 204；SUBMITTED/APPROVED/REJECTED 409；越权 403）、教师只能导入本人教学班、英文表头兼容（FIX-005） |
+| `test_fix009_assessment.py` | 理论+实践=总学时（Schema/Service）、考核结构由总学时推导且忽略存量 assessment_type、教学班继承课程考核结构、已出分课程禁止改学时（FIX-009） |
+| `test_score_consistency.py` | 32 学时权重回归（62.20 而非旧口径 68.40）、GPA/排名同源、成绩导入走统一规则、死字段移除、**全库成绩按 WEIGHT_RULES 重算核对**（FIX-008） |
 
 ### 2.2 测试不足的部分 ⚠️
 

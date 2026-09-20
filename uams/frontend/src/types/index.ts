@@ -410,3 +410,20 @@ export interface Overview {
   selections: number
   pending_grades: number
 }
+
+// --- 批量导入（TASK-010 / FIX-005）---
+export type ImportKind = 'students' | 'teachers' | 'courses' | 'grades'
+
+/** 单行错误：行号 + 出错列（后端字段名）+ 可读原因。 */
+export interface ImportRowError {
+  row: number
+  field: string
+  message: string
+}
+
+export interface ImportResult {
+  total: number
+  success: number
+  failed: number
+  errors: ImportRowError[]
+}

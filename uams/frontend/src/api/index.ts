@@ -1,6 +1,6 @@
 /** 按业务模块组织的 API 调用。 */
 
-import { del, get, post, put } from './request'
+import { del, download, get, post, put, upload } from './request'
 import type {
   Announcement,
   ClassInfo,
@@ -16,6 +16,8 @@ import type {
   Grade,
   GradeStatistics,
   GradeSummary,
+  ImportKind,
+  ImportResult,
   LoginResponse,
   Major,
   Overview,
@@ -214,6 +216,24 @@ export const gradeApi = {
     post<{ rejected: number; message: string }>('/grades/reject', { grade_ids, reason }),
   statistics: (classId: number) =>
     get<GradeStatistics>(`/grades/teaching-classes/${classId}/statistics`),
+  /** 删除成绩草稿（仅 DRAFT；SUBMITTED/APPROVED 后端返回 409）。 */
+  removeDraft: (gradeId: number) => del(`/grades/${gradeId}`),
+}
+
+// --- 批量导入（TASK-010 / FIX-005）---
+export const importApi = {
+  /** 下载导入模板；成绩模板按教学班动态生成，需传 teaching_class_id。 */
+  template: (kind: ImportKind, teachingClassId?: number) =>
+    download(
+      `/imports/templates/${kind}`,
+      teachingClassId ? { teaching_class_id: teachingClassId } : undefined,
+      kind === 'grades' && teachingClassId
+        ? `grade_import_template_${teachingClassId}.xlsx`
+        : `${kind}_import_template.xlsx`,
+    ),
+  /** 上传 Excel 并返回逐行导入结果（部分成功策略：成功入库 + 失败明细）。 */
+  upload: (kind: ImportKind, file: File) =>
+    upload<ImportResult>(`/imports/${kind}`, file),
 }
 
 // --- 考试 ---

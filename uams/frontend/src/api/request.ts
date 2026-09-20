@@ -84,4 +84,46 @@ export async function del<T = void>(url: string) {
   return data
 }
 
+/** 下载二进制文件（Excel 模板等）：401/业务错误的响应体是 Blob，需先解析再提示。 */
+export async function download(
+  url: string,
+  params?: unknown,
+  filename = 'download.xlsx',
+): Promise<void> {
+  try {
+    const res = await http.get(url, { params, responseType: 'blob' })
+    saveBlob(res.data as Blob, filename)
+  } catch (error) {
+    const blob = (error as { response?: { data?: unknown } }).response?.data
+    if (blob instanceof Blob) {
+      try {
+        const body = JSON.parse(await blob.text()) as ApiError
+        ElMessage.error(body.message || '下载失败')
+      } catch {
+        ElMessage.error('下载失败')
+      }
+    }
+    throw error
+  }
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** 上传文件（multipart/form-data）。 */
+export async function upload<T>(url: string, file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  const { data } = await http.post<T>(url, form)
+  return data
+}
+
 export default http

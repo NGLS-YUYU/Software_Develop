@@ -2,10 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { UploadFile, UploadInstance } from 'element-plus'
 
-import { gradeApi, teacherApi, teachingApi } from '@/api'
+import { gradeApi, importApi, teacherApi, teachingApi } from '@/api'
 import { currentSemester } from '@/composables/useSemester'
-import type { Grade, GradeStatistics, TeachingClass } from '@/types'
+import type { Grade, GradeStatistics, ImportResult, TeachingClass } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,6 +17,9 @@ const rows = ref<Grade[]>([])
 const stats = ref<GradeStatistics | null>(null)
 const loading = ref(false)
 const saving = ref(false)
+const importing = ref(false)
+const importResult = ref<ImportResult | null>(null)
+const uploader = ref<UploadInstance>()
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: '草稿',
@@ -164,6 +168,46 @@ async function submit() {
   await loadSheet()
 }
 
+async function removeDraft(row: Grade) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除 ${row.student_name ?? ''}（${row.student_no}）的成绩草稿吗？删除后该学生回到「未录入」。`,
+      '删除成绩草稿',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  await gradeApi.removeDraft(row.id)
+  ElMessage.success('删除成功')
+  await loadSheet()
+}
+
+/** 下载当前教学班的成绩模板（名单与考核结构由后端生成）。 */
+async function downloadTemplate() {
+  if (!classId.value) return
+  await importApi.template('grades', classId.value)
+  ElMessage.success('模板已开始下载：已带出学生名单，只需填写成绩列')
+}
+
+async function importFile(f: UploadFile) {
+  if (!classId.value || !f.raw) return
+  importing.value = true
+  try {
+    const res = await importApi.upload('grades', f.raw as File)
+    importResult.value = res
+    if (res.failed === 0) {
+      ElMessage.success(`导入完成：成功 ${res.success} 条，已保存为草稿`)
+    } else {
+      ElMessage.warning(`导入完成：成功 ${res.success} 条，失败 ${res.failed} 条`)
+    }
+    await loadSheet()
+  } finally {
+    importing.value = false
+    uploader.value?.clearFiles()
+  }
+}
+
 watch(classId, (v) => {
   if (v) {
     router.replace(`/teacher/grades/${v}`)
@@ -203,6 +247,20 @@ onMounted(async () => {
           <el-text size="small" type="info">
             已录入 {{ filled }}/{{ rows.length }}
           </el-text>
+          <el-button @click="downloadTemplate">下载导入模板</el-button>
+          <el-upload
+            ref="uploader"
+            class="inline-upload"
+            :auto-upload="false"
+            :limit="1"
+            accept=".xlsx"
+            :show-file-list="false"
+            :on-change="importFile"
+          >
+            <el-button :loading="importing" :disabled="!editable">
+              导入成绩
+            </el-button>
+          </el-upload>
           <el-button :disabled="!editable" :loading="saving" @click="save">
             保存草稿
           </el-button>
@@ -211,6 +269,20 @@ onMounted(async () => {
           </el-button>
         </template>
       </div>
+
+      <el-alert
+        v-if="importResult"
+        :type="importResult.failed ? 'warning' : 'success'"
+        :title="`导入结果：成功 ${importResult.success} 条，失败 ${importResult.failed} 条（已保存为草稿，请核对后提交）`"
+        :closable="true"
+        show-icon
+        style="margin-bottom: 12px"
+        @close="importResult = null"
+      >
+        <div v-for="e in importResult.errors" :key="`${e.row}-${e.field}`">
+          第 {{ e.row }} 行（{{ e.field }}）：{{ e.message }}
+        </div>
+      </el-alert>
 
       <el-alert
         v-if="rows.length && assessmentType"
@@ -415,6 +487,19 @@ onMounted(async () => {
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="90" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              link
+              type="danger"
+              size="small"
+              :disabled="row.status !== 'DRAFT'"
+              @click="removeDraft(row)"
+            >
+              删除草稿
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
 
@@ -444,6 +529,7 @@ onMounted(async () => {
 <style scoped>
 .total { font-weight: 600; }
 .empty { color: #c0c4cc; }
+.inline-upload { display: inline-block; }
 .dist { margin-top: 18px; }
 .bar-row {
   display: grid;

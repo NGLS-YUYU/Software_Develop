@@ -309,13 +309,25 @@ def test_student_sees_only_own_grades(env):
     assert env["s2_no"] not in nos and env["s3_no"] not in nos
 
 
-# --- 7 学生不能通过 grade_id 访问他人成绩（无成绩详情接口 → 404） ---
+# --- 7 学生不能通过 grade_id 访问他人成绩 ---
 
 
 def test_grade_id_access_returns_404(env):
+    """成绩详情接口不存在（404/405），且新增的删除接口同样无法越权（FIX-005）。
+
+    FIX-005 增加了 DELETE /grades/{id}，因此 GET 同一路径由 404 变为 405
+    （路由存在但方法不允许）——两者都表示「学生读不到这条成绩」。
+    这里同时验证删除路径被权限拦截且数据未被破坏。
+    """
     gid = env["grades"][(env["s2_no"], env["c48_code"])]
     r = client.get(f"{PREFIX}/grades/{gid}", headers=auth(env["s1_uname"]))
-    assert r.status_code == 404
+    assert r.status_code in (404, 405)
+    assert r.status_code != 200
+
+    r2 = client.delete(f"{PREFIX}/grades/{gid}", headers=auth(env["s1_uname"]))
+    assert r2.status_code == 403
+    with SessionLocal() as db:
+        assert db.get(Grade, gid) is not None  # 他人成绩未被删除
 
 
 # --- 8 student_id 查询参数被忽略，身份始终取自 token ---
