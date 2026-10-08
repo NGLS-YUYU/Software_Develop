@@ -4,17 +4,17 @@ import { onMounted, ref, watch } from 'vue'
 import { scheduleApi } from '@/api'
 import ScheduleGrid from '@/components/ScheduleGrid.vue'
 import { semesterOptions, currentSemester } from '@/composables/useSemester'
-import type { ScheduleItem } from '@/types'
+import type { Schedule } from '@/types'
 
 const semester = ref(currentSemester())
 const week = ref<number | undefined>(undefined)
-const items = ref<ScheduleItem[]>([])
+const items = ref<Schedule[]>([])
 const loading = ref(false)
 
 async function load() {
   loading.value = true
   try {
-    items.value = await scheduleApi.mine(semester.value, week.value)
+    items.value = await scheduleApi.my(semester.value, week.value)
   } finally {
     loading.value = false
   }

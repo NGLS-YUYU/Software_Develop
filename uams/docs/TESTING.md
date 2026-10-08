@@ -1,12 +1,14 @@
 # 测试规范与现状
 
-> 记录当前测试实际情况（TASK-DOC-001，2026-09-17；TASK-011 更新，2026-09-18；TASK-012 更新，2026-09-18；TASK-013 更新，2026-09-18；FIX-008/009/005 更新，2026-09-20；FIX-006 更新，2026-10-08）。
+> 记录当前测试实际情况（TASK-DOC-001，2026-09-17；TASK-011 更新，2026-09-18；TASK-012 更新，2026-09-18；TASK-013 更新，2026-09-18；FIX-008/009/005 更新，2026-09-20；FIX-006 更新，2026-10-08；FIX-007 更新，2026-10-08）。
 >
 > 新增的真实链路 E2E 脚本（不依赖测试客户端，直连运行中的服务）：
 > - `backend/scripts/e2e_fix005_import.py` —— 真实 HTTP + 真实 Excel + 真实 MySQL（28 项断言）
 > - `backend/scripts/e2e_fix005_browser.py` —— Chrome + CDP 真实浏览器操作（32 项断言）
 > - `backend/scripts/e2e_fix006_api.py` —— 学期管理真实 HTTP + MySQL 逐项回查（40 项断言）
-> - `backend/scripts/e2e_fix006_browser.py` —— 学期管理 Chrome 真实浏览器操作（40 项断言）
+> - `backend/scripts/e2e_fix006_browser.py` —— 学期管理 Chrome 真实浏览器操作（43 项断言）
+> - `backend/scripts/e2e_fix007_schedule.py` —— 排课真实 HTTP + MySQL（37 项断言）
+> - `backend/scripts/e2e_fix007_lan.py` —— 局域网地址下的 Chrome 真实浏览器 + 网络请求审计（25 项断言）
 
 ---
 
@@ -40,14 +42,14 @@ backend/tests/
 ├── test_student_grade.py # 学生成绩查询（20 个用例）
 ├── test_teaching_class.py # 教学班基础管理 + 开课计划规则（44 个用例）
 ├── test_selection.py     # 必修课预安排 + 选修课自主选课 + 容量并发（30 个用例）
-├── test_teaching_schedule.py # 教学安排与课表管理（38 个用例）
+├── test_teaching_schedule.py # 教学安排与课表管理（42 个用例）
 ├── test_academic_term.py # 学期管理与教学班学期绑定（45 个用例）
 ├── test_fix009_assessment.py # 学时守恒 + 考核结构推导 + 教学班继承（10 个用例）
 ├── test_fix005_import.py # 批量导入闭环 + 成绩模板动态列 + 草稿删除（35 个用例）
 └── test_import.py        # 基础数据 Excel 批量导入（43 个用例）
 ```
 
-**合计 405 个用例，全部通过。**
+**合计 409 个用例，全部通过。**
 
 | 文件 | 覆盖内容 |
 |---|---|
@@ -63,6 +65,7 @@ backend/tests/
 | `test_teaching_class.py` | 教务处创建教学班（课程/教师/教师身份/唯一性校验）、教务/教师/学生数据权限隔离、教学班学生名单（含专业与行政班）、教务处添加/移除学生、同一学生多教学班、不同课程/学期教学班共存、同一学期内编号唯一且跨学期可复用（TASK-011）、TASK-005/006/007 回归（TASK-008）；**TASK-012**：`name` 字段、`teacher_id` 必填、已结束学期增删改拒绝、`term_id`/`course_id` 不可变、换教师（无成绩可换/SUBMITTED/APPROVED 锁定）、容量不得小于已选人数、删除（空班可删/有选课/有成绩拒绝）、教务添加学生容量边界、按 `course_id`/`teacher_id` DB 层过滤 |
 | `test_selection.py` | 必修课预排（学院/专业/行政班范围、幂等、选修课不可预排、教师/学生不可预排）、选修课自主选课/退课、必修课不可自主选择/退选、重复/同课程多教学班/越权防护、可选列表只含选修课且排除已选、退选不删成绩、非 ACTIVE 学期不可选课与 ENDED 学期不可退课（TASK-011）、TASK-005/006/007/008 回归（TASK-009）；**TASK-012**：教学班满员选课拒绝（`TEACHING_CLASS_FULL`）、并发选课不超卖（4 线程抢 2 名额，计数一致） |
 | `test_teaching_schedule.py` | 教学安排增删改查、参数校验（星期/节次/周次/单双周/教室）、三类冲突（教师/教室/教学班自身，分别 `TEACHING_SCHEDULE_TEACHER_CONFLICT`/`TEACHING_SCHEDULE_CLASSROOM_CONFLICT`/`TEACHING_SCHEDULE_CLASS_CONFLICT`）、学期生命周期（PLANNED/ACTIVE 可操作、ENDED 只读 `TEACHING_SCHEDULE_TERM_ENDED`）、修改排除自身、教室容量校验、教务全量列表与 4 个过滤条件（teaching_class/teacher/weekday/classroom）及排序、角色权限隔离（教师/学生写 403、教务列表/详情仅 ACADEMIC_ADMIN）、教师 `/mine`（含 term 过滤）、学生 `/my`（含 term 过滤、未选课空列表）（TASK-013） |
+| `test_fix007` 增量（并入 `test_teaching_schedule.py`） | 教师/学生课表接口新增的可选过滤参数：`semester` 过滤（含跨学期排除）、`week` 过滤（周次区间 + 单双周）、越界周次 422（FIX-007） |
 | `test_academic_term.py` | 学期增删改查、状态单向流转 PLANNED→ACTIVE→ENDED、单激活约束、(学年,学期) 唯一、日期校验、删除引用保护、教学班 `term_id` 必填与已结束学期不可开课、按学期过滤、`term:read`/`term:write` 权限隔离（TASK-011） |
 | `test_fix006` 增量（并入 `test_academic_term.py`） | 学生写权限矩阵（增/改/删/激活/结束全部 403，只读 200）、教师结束 403、关键词检索（名称/学年）、状态筛选 + 后端分页、编辑载荷不带 `status` 时状态不被重置、一条完整生命周期（列表→新增→激活→幂等激活→结束→重复结束 409→已结束不可激活 409）（FIX-006） |
 | `test_import.py` | 学生/课程/成绩 Excel 批量导入、三种模板下载、`.xlsx` 格式校验、字段缺失/编号与登录名重复/学院/专业/行政班层级校验、课程类型/考核方式/学分校验、成绩 0-100 范围与理论/实践成对校验、DRAFT/REJECTED 可覆盖而 SUBMITTED/APPROVED 禁止覆盖、成绩复用 ScoreService 计算（32/48/64 课时与理论+实践）、不写 GPA/排名、教师/学生越权 403、错误行号（TASK-010） |

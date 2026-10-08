@@ -185,9 +185,19 @@ export interface TeachingTask {
   class_count: number
 }
 
+/** 教学安排（后端 `ScheduleOut`，TASK-013 平铺接口 /teaching-schedules）。 */
 export interface Schedule {
   id: number
   teaching_class_id: number
+  teaching_class_code?: string | null
+  teaching_class_name?: string | null
+  course_id?: number | null
+  course_code?: string | null
+  course_name?: string | null
+  teacher_id?: number | null
+  teacher_name?: string | null
+  term_id?: number | null
+  term_name?: string | null
   classroom_id: number
   classroom_code?: string | null
   building?: string | null

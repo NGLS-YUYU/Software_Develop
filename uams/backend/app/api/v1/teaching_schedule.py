@@ -88,14 +88,22 @@ def create_schedule(
     "/mine", response_model=list[ScheduleOut], summary="我的教学安排（教师）"
 )
 def my_teaching_schedules(
-    term_id: int | None = Query(None, description="学期过滤"),
+    term_id: int | None = Query(None, description="学期过滤（academic_terms.id）"),
+    semester: str | None = Query(None, description="字符串学期过滤，如 2026-2027-1"),
+    week: int | None = Query(None, ge=1, le=30, description="第几周，不填返回全部"),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
+    """教师本人授课教学班的排课；身份取自 token，不接受 teacher_id（FIX-007 起为课表数据源）。"""
     if current.user_type != UserType.TEACHER:
         raise PermissionDenied("仅教师可查询本人教学安排")
     t = _teacher_of(db, current)
-    return [_sched_out(r) for r in ScheduleService(db).mine_for_teacher(t.id, term_id)]
+    return [
+        _sched_out(r)
+        for r in ScheduleService(db).mine_for_teacher(
+            t.id, term_id, semester=semester, week=week
+        )
+    ]
 
 
 # --- 学生：本人已选教学班的安排 ---
@@ -105,14 +113,22 @@ def my_teaching_schedules(
     "/my", response_model=list[ScheduleOut], summary="我的课程安排（学生）"
 )
 def my_course_schedules(
-    term_id: int | None = Query(None, description="学期过滤"),
+    term_id: int | None = Query(None, description="学期过滤（academic_terms.id）"),
+    semester: str | None = Query(None, description="字符串学期过滤，如 2026-2027-1"),
+    week: int | None = Query(None, ge=1, le=30, description="第几周，不填返回全部"),
     db: Session = Depends(get_db),
     current: User = Depends(get_current_user),
 ):
+    """学生本人已选教学班的排课；未选课返回空列表（FIX-007 起为课表数据源）。"""
     if current.user_type != UserType.STUDENT:
         raise PermissionDenied("仅学生可查询本人课程安排")
     s = _student_of(db, current)
-    return [_sched_out(r) for r in ScheduleService(db).mine_for_student(s.id, term_id)]
+    return [
+        _sched_out(r)
+        for r in ScheduleService(db).mine_for_student(
+            s.id, term_id, semester=semester, week=week
+        )
+    ]
 
 
 @router.get("/{schedule_id}", response_model=ScheduleOut, summary="教学安排详情（教务）")

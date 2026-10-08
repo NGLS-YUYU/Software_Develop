@@ -4,11 +4,11 @@ import { onMounted, ref, watch } from 'vue'
 import { scheduleApi } from '@/api'
 import ScheduleGrid from '@/components/ScheduleGrid.vue'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
-import type { ScheduleItem } from '@/types'
+import type { Schedule } from '@/types'
 
 const semester = ref(currentSemester())
 const week = ref<number | undefined>(undefined)
-const items = ref<ScheduleItem[]>([])
+const items = ref<Schedule[]>([])
 const loading = ref(false)
 
 async function load() {

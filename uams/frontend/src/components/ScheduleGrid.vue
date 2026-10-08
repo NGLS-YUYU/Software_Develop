@@ -1,11 +1,11 @@
 <script setup lang="ts">
-/** 周课表网格。学生端与教师端复用。 */
+/** 周课表网格。学生端与教师端复用，数据来自 TASK-013 平铺接口。 */
 import { computed } from 'vue'
 
-import type { ScheduleItem } from '@/types'
+import type { Schedule } from '@/types'
 
 const props = defineProps<{
-  items: ScheduleItem[]
+  items: Schedule[]
   /** 显示教师姓名（学生课表用）还是不显示（教师本人课表） */
   showTeacher?: boolean
 }>()
@@ -24,7 +24,7 @@ const SLOTS = [
 
 /** 课程块按 (星期, 大节) 归位；节次区间与大节有交集即落入该格。 */
 const grid = computed(() => {
-  const map = new Map<string, ScheduleItem[]>()
+  const map = new Map<string, Schedule[]>()
   for (const it of props.items) {
     for (const [i, slot] of SLOTS.entries()) {
       if (it.start_period <= slot.end && it.end_period >= slot.start) {
@@ -42,7 +42,7 @@ function cell(day: number, slotIdx: number) {
   return grid.value.get(`${day}-${slotIdx}`) ?? []
 }
 
-function weekLabel(it: ScheduleItem) {
+function weekLabel(it: Schedule) {
   const base = `${it.start_week}-${it.end_week}周`
   if (it.week_type === 'ODD') return `${base} 单`
   if (it.week_type === 'EVEN') return `${base} 双`
@@ -83,7 +83,7 @@ function colorOf(name?: string | null) {
           <td v-for="d in DAYS" :key="d">
             <div
               v-for="it in cell(d, si)"
-              :key="it.schedule_id"
+              :key="it.id"
               class="course"
               :style="colorOf(it.course_name)"
             >

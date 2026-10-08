@@ -189,10 +189,32 @@ export const selectionApi = {
     put<SelectionPeriod>(`/selection-periods/${id}`, b),
 }
 
-// --- 课表 ---
+// --- 课表 / 教学安排（TASK-013 平铺接口 /teaching-schedules，FIX-007 前端全量接入）---
 export const scheduleApi = {
-  mine: (semester: string, week?: number) =>
-    get<ScheduleItem[]>('/schedules/mine', { semester, week }),
+  /** 教务：教学安排列表（支持学期/教学班/教师/星期/教室过滤，过滤在数据库层完成）。 */
+  list: (q?: {
+    term_id?: number
+    teaching_class_id?: number
+    teacher_id?: number
+    weekday?: number
+    classroom?: string
+  }) => get<Schedule[]>('/teaching-schedules', q),
+  get: (id: number) => get<Schedule>(`/teaching-schedules/${id}`),
+  /** 新增排课：教师/教室/教学班三类冲突由后端检测，冲突时返回 409。 */
+  create: (b: Record<string, unknown>) => post<Schedule>('/teaching-schedules', b),
+  /** 修改排课：改教室/时间后由后端重新检测冲突。 */
+  update: (id: number, b: Record<string, unknown>) =>
+    put<Schedule>(`/teaching-schedules/${id}`, b),
+  remove: (id: number) => del(`/teaching-schedules/${id}`),
+
+  /** 教师课表（身份取自 token，不接受 teacher_id）。 */
+  mine: (semester?: string, week?: number) =>
+    get<Schedule[]>('/teaching-schedules/mine', { semester, week }),
+  /** 学生课表（仅本人已选教学班）。 */
+  my: (semester?: string, week?: number) =>
+    get<Schedule[]>('/teaching-schedules/my', { semester, week }),
+
+  /** 查看指定学生课表（教务/教师用；学生只能查本人）。 */
   student: (studentId: number, semester: string, week?: number) =>
     get<ScheduleItem[]>(`/schedules/students/${studentId}`, { semester, week }),
 }

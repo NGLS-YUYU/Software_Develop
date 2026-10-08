@@ -552,3 +552,78 @@ def test_student_my_forbidden_teacher(env):
     r = client.get(f"{PREFIX}/teaching-schedules/my",
                    headers=auth(env["ta_uname"]))
     assert r.status_code == 403
+
+
+# =========================== FIX-007：课表过滤（semester / week） ===========================
+# 教师/学生课表前端已统一走 /teaching-schedules/mine|my；这两个可选参数
+# 让前端不必自己实现周次/学期过滤（服务端与 /schedules/mine 判定一致）。
+
+
+def test_teacher_mine_semester_filter(env):
+    _create(env, _payload(env["tc1"], env["r01"]))          # S_ACTIVE
+    _create(env, _payload(env["tc5"], env["r02"], day=2))   # S_PLANNED
+    r = client.get(f"{PREFIX}/teaching-schedules/mine",
+                   params={"semester": S_ACTIVE}, headers=auth(env["ta_uname"]))
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+    assert r.json()[0]["semester"] == S_ACTIVE
+
+    r2 = client.get(f"{PREFIX}/teaching-schedules/mine",
+                    params={"semester": S_PLANNED}, headers=auth(env["ta_uname"]))
+    assert [x["semester"] for x in r2.json()] == [S_PLANNED]
+
+    r3 = client.get(f"{PREFIX}/teaching-schedules/mine",
+                    params={"semester": "2000-2001-1"}, headers=auth(env["ta_uname"]))
+    assert r3.json() == []
+
+
+def test_teacher_mine_week_filter(env):
+    # 1-16 周每周；3-4 周单周；5-8 周双周（第三条属 S_PLANNED）
+    _create(env, _payload(env["tc1"], env["r01"], sw=1, ew=16, wt="ALL"))
+    _create(env, _payload(env["tc2"], env["r02"], day=2, sw=3, ew=4, wt="ODD"))
+    _create(env, _payload(env["tc5"], env["r02"], day=3, sw=5, ew=8, wt="EVEN"))
+    hdr = auth(env["ta_uname"])
+
+    def weeks(w, semester=S_ACTIVE):
+        # 注意：httpx 会把 None 序列化成空串（semester= / week= ），
+        # 因此"不传某参数"必须整键省略，否则会被后端判为非法整数/空串
+        params = {}
+        if semester is not None:
+            params["semester"] = semester
+        if w is not None:
+            params["week"] = w
+        r = client.get(f"{PREFIX}/teaching-schedules/mine", params=params, headers=hdr)
+        assert r.status_code == 200, r.text
+        return len(r.json())
+
+    assert weeks(None) == 2      # S_ACTIVE 的两条（tc5 属 S_PLANNED，被学期过滤掉）
+    assert weeks(2) == 1         # 第 2 周：仅 ALL 那条
+    assert weeks(3) == 2         # 第 3 周：ALL + 单周
+    assert weeks(4) == 1         # 第 4 周：ALL（单周那条在双周不生效）
+    assert weeks(20) == 0        # 超出所有区间
+    # 不加学期过滤时，S_PLANNED 的双周那条在第 6 周也应出现
+    assert weeks(6, semester=None) == 2
+    assert weeks(6) == 1         # 仅 S_ACTIVE 的 ALL 那条
+
+
+def test_student_my_semester_and_week_filter(env):
+    _create(env, _payload(env["tc1"], env["r01"], sw=1, ew=16, wt="ALL"))
+    hdr = auth(env["s1_uname"])
+    ok = client.get(f"{PREFIX}/teaching-schedules/my",
+                    params={"semester": S_ACTIVE, "week": 5}, headers=hdr)
+    assert ok.status_code == 200 and len(ok.json()) == 1
+    assert ok.json()[0]["teaching_class_id"] == env["tc1"]
+
+    other = client.get(f"{PREFIX}/teaching-schedules/my",
+                       params={"semester": S_PLANNED}, headers=hdr)
+    assert other.json() == []
+    late = client.get(f"{PREFIX}/teaching-schedules/my",
+                      params={"semester": S_ACTIVE, "week": 20}, headers=hdr)
+    assert late.json() == []
+
+
+def test_mine_week_filter_rejects_out_of_range(env):
+    r = client.get(f"{PREFIX}/teaching-schedules/mine",
+                   params={"semester": S_ACTIVE, "week": 31},
+                   headers=auth(env["ta_uname"]))
+    assert r.status_code == 422

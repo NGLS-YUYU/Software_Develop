@@ -3,7 +3,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { classroomApi, collegeApi, courseApi, teacherApi, teachingApi } from '@/api'
+import { classroomApi, collegeApi, courseApi, scheduleApi, teacherApi, teachingApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
 import type {
   Classroom,
@@ -149,7 +149,11 @@ async function toggleSelection(row: TeachingClass) {
 const schedDialog = ref(false)
 const schedClass = ref<TeachingClass | null>(null)
 const schedList = ref<Schedule[]>([])
-const schedForm = ref({
+/** 编辑中的排课 id；为空表示新增（FIX-007 新增修改入口）。 */
+const schedEditingId = ref<number | null>(null)
+const schedSaving = ref(false)
+
+const emptySchedForm = () => ({
   classroom_id: undefined as number | undefined,
   day_of_week: 1,
   start_period: 1,
@@ -158,30 +162,97 @@ const schedForm = ref({
   end_week: 16,
   week_type: 'ALL',
 })
+const schedForm = ref(emptySchedForm())
 
 async function openSchedule(row: TeachingClass) {
   schedClass.value = row
-  schedList.value = await teachingApi.schedules(row.id)
+  schedEditingId.value = null
+  schedForm.value = emptySchedForm()
+  // 教学安排统一走 TASK-013 平铺接口（按教学班过滤在数据库层完成）
+  schedList.value = await scheduleApi.list({ teaching_class_id: row.id })
   schedDialog.value = true
 }
 
-async function addSchedule() {
+async function reloadSchedules() {
+  if (!schedClass.value) return
+  schedList.value = await scheduleApi.list({ teaching_class_id: schedClass.value.id })
+}
+
+/** 把一行排课载入表单，切换为「编辑」状态。 */
+function editSchedule(row: Schedule) {
+  schedEditingId.value = row.id
+  schedForm.value = {
+    classroom_id: row.classroom_id,
+    day_of_week: row.day_of_week,
+    start_period: row.start_period,
+    end_period: row.end_period,
+    start_week: row.start_week,
+    end_week: row.end_week,
+    week_type: row.week_type,
+  }
+}
+
+function cancelEditSchedule() {
+  schedEditingId.value = null
+  schedForm.value = emptySchedForm()
+}
+
+async function saveSchedule() {
   if (!schedClass.value || !schedForm.value.classroom_id) {
     ElMessage.warning('请选择教室')
     return
   }
-  // 教室/教师冲突由后端检测，失败时拦截器会提示具体冲突原因
-  await teachingApi.addSchedule(schedClass.value.id, { ...schedForm.value })
-  ElMessage.success('排课成功')
-  schedList.value = await teachingApi.schedules(schedClass.value.id)
-  await loadClasses()
+  const f = schedForm.value
+  if (f.end_period < f.start_period) {
+    ElMessage.warning('结束节次不能早于开始节次')
+    return
+  }
+  if (f.end_week < f.start_week) {
+    ElMessage.warning('结束周不能早于开始周')
+    return
+  }
+  schedSaving.value = true
+  try {
+    if (schedEditingId.value != null) {
+      // 教室/教师/教学班冲突一律由后端重新检测，失败时拦截器提示具体冲突原因
+      await scheduleApi.update(schedEditingId.value, { ...f })
+      ElMessage.success('排课已更新')
+    } else {
+      await scheduleApi.create({
+        teaching_class_id: schedClass.value.id,
+        ...f,
+      })
+      ElMessage.success('排课成功')
+    }
+    cancelEditSchedule()
+    await reloadSchedules()
+    await loadClasses()
+  } catch {
+    // 409 冲突由 axios 拦截器统一提示，表单保持原样便于修改后重试
+  } finally {
+    schedSaving.value = false
+  }
 }
 
 async function removeSchedule(row: Schedule) {
-  if (!schedClass.value) return
-  await teachingApi.removeSchedule(schedClass.value.id, row.id)
-  schedList.value = await teachingApi.schedules(schedClass.value.id)
-  await loadClasses()
+  try {
+    await ElMessageBox.confirm(
+      `${DAY[row.day_of_week]} ${row.start_period}-${row.end_period} 节（${row.classroom_code ?? ''}）确定删除？`,
+      '删除排课',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await scheduleApi.remove(row.id)
+    ElMessage.success('已删除')
+    if (schedEditingId.value === row.id) cancelEditSchedule()
+    await reloadSchedules()
+    await loadClasses()
+  } catch {
+    // 已结束学期等业务拒绝由拦截器提示
+  }
 }
 
 function scheduleText(tc: TeachingClass) {
@@ -441,7 +512,10 @@ onMounted(async () => {
           <el-option label="单周" value="ODD" />
           <el-option label="双周" value="EVEN" />
         </el-select>
-        <el-button type="primary" @click="addSchedule">添加</el-button>
+        <el-button type="primary" :loading="schedSaving" @click="saveSchedule">
+          {{ schedEditingId != null ? '保存修改' : '添加' }}
+        </el-button>
+        <el-button v-if="schedEditingId != null" @click="cancelEditSchedule">取消修改</el-button>
       </div>
 
       <el-table :data="schedList" size="small" stripe style="margin-top: 14px">
@@ -461,8 +535,9 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column prop="classroom_code" label="教室" width="110" />
         <el-table-column prop="building" label="楼栋" min-width="110" />
-        <el-table-column label="操作" width="80" align="center">
+        <el-table-column label="操作" width="130" align="center">
           <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="editSchedule(row)">编辑</el-button>
             <el-button size="small" link type="danger" @click="removeSchedule(row)">删除</el-button>
           </template>
         </el-table-column>

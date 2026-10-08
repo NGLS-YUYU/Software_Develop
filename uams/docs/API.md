@@ -267,8 +267,8 @@ POST /api/v1/auth/login
 | POST | `/teaching-schedules` | 新增（`teaching_class_id` + `classroom_id` + 星期/节次/周次/单双周；**自动检测三类冲突**） | `schedule:write` |
 | PUT | `/teaching-schedules/{schedule_id}` | 修改（仅星期/节次/周次/教室；`teaching_class_id` 不可变） | `schedule:write` |
 | DELETE | `/teaching-schedules/{schedule_id}` | 删除 | `schedule:write` |
-| GET | `/teaching-schedules/mine?term_id=...` | 我的教学安排（教师，身份取自 token） | 登录（教师） |
-| GET | `/teaching-schedules/my?term_id=...` | 我的课程安排（学生，本人已选教学班；未选课返回空列表） | 登录（学生） |
+| GET | `/teaching-schedules/mine` | 我的教学安排（教师，身份取自 token；过滤：`term_id` / `semester` / `week`） | 登录（教师） |
+| GET | `/teaching-schedules/my` | 我的课程安排（学生，本人已选教学班；未选课返回空列表；过滤同上） | 登录（学生） |
 
 **教学安排业务规则（TASK-013）**
 
@@ -277,6 +277,7 @@ POST /api/v1/auth/login
 - 教室校验：必须存在、`ACTIVE`、且容量 ≥ 教学班容量。
 - `teaching_class_id` 创建后不可修改（`ScheduleUpdate` 不接收该字段）。
 - 响应富化：`teaching_class_code/name`、`course_code/name`、`teacher_name`、`term_name`、`classroom_code/building`。
+- **前端数据源（FIX-007）**：教务排课页（列表/新增/修改/删除）、教师课表（`/mine`）、学生课表（`/my`）全部使用本组平铺接口；`semester`（字符串学期）与 `week`（第几周，含单双周判定，范围 1–30）为 FIX-007 新增的**可选**过滤参数，由服务端过滤，前端不再自行实现周次逻辑。
 
 ---
 
@@ -337,6 +338,8 @@ POST /api/v1/auth/login
 | GET | `/schedules/students/{student_id}` | 指定学生课表（学生仅可查本人） | 登录 + 对象级校验 |
 
 > 课表由「选课记录 + 排课」实时推导，不单独建表。`week` 参数按单双周与周次区间过滤。
+>
+> **FIX-007 说明**：教师/学生课表页面已改为调用 `/teaching-schedules/mine|my`（TASK-013 平铺接口，同样支持 `semester`/`week` 过滤）。本组接口保留，供「教务/教师查看指定学生课表」等既有场景使用，未做修改。
 
 ---
 

@@ -4,14 +4,14 @@ import { useRouter } from 'vue-router'
 
 import { announcementApi, gradeApi, scheduleApi, teacherApi, teachingApi } from '@/api'
 import { currentSemester } from '@/composables/useSemester'
-import type { Announcement, ScheduleItem, Teacher, TeachingClass } from '@/types'
+import type { Announcement, Schedule, Teacher, TeachingClass } from '@/types'
 
 const router = useRouter()
 const semester = currentSemester()
 
 const profile = ref<Teacher | null>(null)
 const classes = ref<TeachingClass[]>([])
-const schedule = ref<ScheduleItem[]>([])
+const schedule = ref<Schedule[]>([])
 const announcements = ref<Announcement[]>([])
 const pendingCount = ref(0)
 const loading = ref(true)
@@ -91,7 +91,7 @@ onMounted(async () => {
           <el-timeline v-else>
             <el-timeline-item
               v-for="c in todayCourses"
-              :key="c.schedule_id"
+              :key="c.id"
               :timestamp="`第 ${c.start_period}-${c.end_period} 节`"
               placement="top"
             >

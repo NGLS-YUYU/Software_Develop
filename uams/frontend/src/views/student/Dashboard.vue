@@ -4,14 +4,14 @@ import { useRouter } from 'vue-router'
 
 import { announcementApi, examApi, gradeApi, scheduleApi, studentApi } from '@/api'
 import { currentSemester } from '@/composables/useSemester'
-import type { Announcement, Exam, GradeSummary, ScheduleItem, Student } from '@/types'
+import type { Announcement, Exam, GradeSummary, Schedule, Student } from '@/types'
 
 const router = useRouter()
 const semester = currentSemester()
 
 const profile = ref<Student | null>(null)
 const summary = ref<GradeSummary | null>(null)
-const schedule = ref<ScheduleItem[]>([])
+const schedule = ref<Schedule[]>([])
 const exams = ref<Exam[]>([])
 const announcements = ref<Announcement[]>([])
 const loading = ref(true)
@@ -37,7 +37,7 @@ onMounted(async () => {
     const [p, s, sch, ex, ann] = await Promise.allSettled([
       studentApi.me(),
       gradeApi.mySummary(),
-      scheduleApi.mine(semester),
+      scheduleApi.my(semester),
       examApi.mine(semester),
       announcementApi.list({ page: 1, page_size: 5 }),
     ])
@@ -97,7 +97,7 @@ onMounted(async () => {
           <el-timeline v-else>
             <el-timeline-item
               v-for="c in todayCourses"
-              :key="c.schedule_id"
+              :key="c.id"
               :timestamp="`第 ${c.start_period}-${c.end_period} 节`"
               placement="top"
             >

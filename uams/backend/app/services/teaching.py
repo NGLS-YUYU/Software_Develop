@@ -11,7 +11,6 @@ from datetime import datetime
 
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, selectinload
-
 from app.core.exceptions import (
     CapacityBelowEnrolled,
     Conflict,
@@ -64,6 +63,23 @@ def _period_week_overlap_clause(
             or_(Schedule.week_type == WeekType.ALL, Schedule.week_type == week_type)
         )
     return and_(*conds)
+
+
+def _in_week(s: Schedule, week: int | None) -> bool:
+    """该排课是否落在第 ``week`` 周（含单双周判断）；``week`` 为空表示不过滤。
+
+    与 ``api/v1/schedule.py::_in_week`` 同一判定；FIX-007 起教师/学生课表统一走
+    ``/teaching-schedules/mine|my``，周次过滤在服务端完成，前端不重复实现。
+    """
+    if week is None:
+        return True
+    if not (s.start_week <= week <= s.end_week):
+        return False
+    if s.week_type == WeekType.ODD:
+        return week % 2 == 1
+    if s.week_type == WeekType.EVEN:
+        return week % 2 == 0
+    return True
 
 
 class ConflictChecker:
@@ -694,20 +710,42 @@ class ScheduleService:
         )
         return list(self.db.execute(stmt).scalars())
 
-    def mine_for_teacher(self, teacher_id: int, term_id: int | None = None) -> list[Schedule]:
-        """教师本人教学班的教学安排（身份取自 token，不接受 teacher_id）。"""
+    def mine_for_teacher(
+        self,
+        teacher_id: int,
+        term_id: int | None = None,
+        semester: str | None = None,
+        week: int | None = None,
+    ) -> list[Schedule]:
+        """教师本人教学班的教学安排（身份取自 token，不接受 teacher_id）。
+
+        FIX-007：补可选 ``semester``（字符串学期，前端课表选择器直接用）与 ``week``
+        （第几周，含单双周相容判断），使教师课表可完全走本接口，不必再依赖旧课表接口。
+        """
         tc_ids = select(TeachingClass.id).where(TeachingClass.teacher_id == teacher_id)
         if term_id is not None:
             tc_ids = tc_ids.where(TeachingClass.term_id == term_id)
+        if semester is not None:
+            tc_ids = tc_ids.where(TeachingClass.semester == semester)
         stmt = (
             self.base_stmt()
             .where(Schedule.teaching_class_id.in_(tc_ids))
             .order_by(Schedule.day_of_week, Schedule.start_period, Schedule.start_week)
         )
-        return list(self.db.execute(stmt).scalars())
+        rows = list(self.db.execute(stmt).scalars())
+        return [s for s in rows if _in_week(s, week)]
 
-    def mine_for_student(self, student_id: int, term_id: int | None = None) -> list[Schedule]:
-        """学生本人已选教学班的教学安排；未选课返回空列表而非 404（TASK-013 §17）。"""
+    def mine_for_student(
+        self,
+        student_id: int,
+        term_id: int | None = None,
+        semester: str | None = None,
+        week: int | None = None,
+    ) -> list[Schedule]:
+        """学生本人已选教学班的教学安排；未选课返回空列表而非 404（TASK-013 §17）。
+
+        FIX-007：同样补可选 ``semester`` / ``week``，见 ``mine_for_teacher``。
+        """
         sel_tc = (
             select(CourseSelection.teaching_class_id)
             .join(
@@ -721,9 +759,12 @@ class ScheduleService:
         )
         if term_id is not None:
             sel_tc = sel_tc.where(TeachingClass.term_id == term_id)
+        if semester is not None:
+            sel_tc = sel_tc.where(TeachingClass.semester == semester)
         stmt = (
             self.base_stmt()
             .where(Schedule.teaching_class_id.in_(sel_tc))
             .order_by(Schedule.day_of_week, Schedule.start_period, Schedule.start_week)
         )
-        return list(self.db.execute(stmt).scalars())
+        rows = list(self.db.execute(stmt).scalars())
+        return [s for s in rows if _in_week(s, week)]
