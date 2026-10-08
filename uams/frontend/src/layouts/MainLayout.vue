@@ -337,7 +337,7 @@ async function handleLogout() {
   }
 
   .icon-btn {
-    font-size: 18px;
+    font-size: 36px;
     cursor: pointer;
     color: var(--uams-text-2);
     padding: 6px;
