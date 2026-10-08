@@ -1,14 +1,18 @@
 # 部署说明
 
-> 记录当前实际部署方式（TASK-DOC-001，2026-09-17；**FIX-007 更新，2026-10-08：已实现统一启动脚本与局域网访问**）。
+> 记录当前实际部署方式（TASK-DOC-001，2026-09-17；FIX-007 更新，2026-10-08：统一启动脚本与局域网访问；
+> **V3.0 更新，2026-10-09：补充 Windows 部署，并明确正式部署前的安全要求**）。
+>
+> **Windows 与 Ubuntu 共用同一套业务配置**：数据库结构、环境变量名、API、前端构建、
+> 业务逻辑完全一致，**只有操作系统命令不同**。因此下面先讲共用部分，再分系统讲命令。
 
 ---
 
-## 1. 部署拓扑（当前实现）
+## 1. 部署拓扑
 
 ```
-局域网客户端（另一台电脑 / 手机）
-        │  http://<服务器IP>:5173
+客户端（本机或局域网内其他电脑 / 手机）
+        │  http://<服务器IP>:5173   （生产预览模式为 :4173）
         ▼
 Vite（前端：开发服务器或 `vite preview` 静态服务，监听 0.0.0.0）
         │  /api/* 同源代理（服务端 → 服务端）
@@ -19,9 +23,9 @@ FastAPI（uvicorn，监听 0.0.0.0:8000）
 MySQL 8.4（127.0.0.1:3306，仅回环，不对外暴露）
 ```
 
-**关键点（FIX-007 §十七）**：浏览器只请求 `http://<服务器IP>:5173/api/v1/...`，
-由 Vite 在**服务器端**转发到 `127.0.0.1:8000`。因此浏览器里永远不会出现
-`127.0.0.1`（那会指向访问者自己的电脑），也**不产生跨域请求**，无需为 LAN 单独配置 CORS。
+**关键点**：浏览器只请求 `http://<服务器IP>:5173/api/v1/...`，由 Vite 在**服务器端**转发到
+`127.0.0.1:8000`。因此浏览器里永远不会出现 `127.0.0.1`（那会指向访问者自己的电脑），
+也**不产生跨域请求**，无需为局域网单独配置 CORS。
 
 ### 1.1 端口
 
@@ -30,138 +34,344 @@ MySQL 8.4（127.0.0.1:3306，仅回环，不对外暴露）
 | 前端（dev） | `0.0.0.0:5173` | Vite 开发服务器 |
 | 前端（prod） | `0.0.0.0:4173` | `vite preview` 提供 `dist/` |
 | 后端 | `0.0.0.0:8000` | uvicorn；`/health` 健康检查，`/docs` 仅 `DEBUG=true` 时开放 |
-| MySQL | `127.0.0.1:3306` | **仅回环**，不对局域网暴露（§二十三） |
+| MySQL | `127.0.0.1:3306` | **仅回环**，不对局域网暴露 |
 
 ---
 
-## 2. 环境要求
+## 2. 环境要求（两系统共用）
 
 | 项 | 要求 |
 |---|---|
-| 操作系统 | Linux（已在 Ubuntu 类环境验证） |
-| Python | 3.14（`backend/.venv`） |
-| Node.js | 20+（`frontend/node_modules` 已安装） |
-| MySQL | 8.4 LTS，InnoDB / utf8mb4 |
-| 依赖安装 | `cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`<br>`cd frontend && npm install` |
+| Python | 3.11+（本项目在 3.14 上开发验证） |
+| Node.js | 20+（含 npm） |
+| MySQL | **8.4 LTS**，InnoDB / utf8mb4（不支持 SQLite / PostgreSQL / MariaDB） |
+| Git | 用于克隆项目 |
+| 浏览器 | Chrome / Edge 近两年版本 |
 
 ---
 
-## 3. 环境变量
+## 3. 环境变量（两系统共用）
 
-配置一律走 `backend/.env`（`pydantic-settings` 读取），**启动脚本不写死任何口令**。
+配置一律走 `backend/.env`（由 `pydantic-settings` 读取）。
 
 ```bash
-cp backend/.env.example backend/.env   # 首次部署
+cp backend/.env.example backend/.env      # Ubuntu
+copy backend\.env.example backend\.env    # Windows（cmd）
+Copy-Item backend\.env.example backend\.env   # Windows（PowerShell）
 ```
 
-| 变量 | 说明 | 局域网部署要求 |
+| 变量 | 说明 | 正式部署要求 |
 |---|---|---|
 | `APP_ENV` | 运行环境 | `production` |
 | `DEBUG` | 调试开关（控制 `/docs`） | **必须 `false`** |
-| `DATABASE_URL` | MySQL 连接串 | 改为真实口令 |
+| `DATABASE_URL` | MySQL 连接串 | **必须改为真实口令** |
 | `DB_ECHO` | SQL 回显 | `false` |
-| `JWT_SECRET` | 令牌签名密钥 | **必须替换为随机值**：`python3 -c "import secrets;print(secrets.token_urlsafe(48))"` |
+| `JWT_SECRET` | 令牌签名密钥 | **必须替换为随机值**（见下） |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | 令牌有效期 | 按安全策略调整 |
-| `CORS_ORIGINS` | 允许跨域的前端来源 | 同源代理模式下**无需**登记 LAN 地址；仅当浏览器直连后端端口时才需要 |
+| `CORS_ORIGINS` | 允许跨域的前端来源 | 同源代理模式下无需登记局域网地址 |
 
-> ⚠️ **安全提示（FIX-007 §十九 报告项）**：`backend/app/core/config.py` 内置了演示用的
-> 数据库口令与占位 `JWT_SECRET=CHANGE_ME_IN_ENV`。当前仓库内**没有** `.env`，
-> 因此未配置时会直接使用这些默认值 —— 仅可用于本机演示。
-> `./start.sh` 在检测不到 `.env` 时会明确告警；局域网部署前**必须**创建 `.env` 并替换。
+生成随机密钥：
+
+```bash
+# Ubuntu
+python3 -c "import secrets;print(secrets.token_urlsafe(48))"
+# Windows（PowerShell）
+python -c "import secrets;print(secrets.token_urlsafe(48))"
+```
+
+> ⚠️ **安全声明（必读）**
+> `backend/app/core/config.py` 内置了演示用的数据库口令与占位 `JWT_SECRET`，仅用于本机演示。
+> **正式部署（含局域网）之前，必须创建 `backend/.env` 并替换数据库口令与 `JWT_SECRET`。**
+> `./start.sh` 在检测不到 `.env` 时会明确告警。
+> 演示账号只用于演示/答辩环境，**不得**作为生产环境默认账号密码。
 
 ---
 
-## 4. 启动
+## 4. Ubuntu 部署
 
-### 4.1 一键启动（推荐）
+### 4.1 环境要求与安装
 
 ```bash
-cd uams
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git
+# Node.js 20+
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt install -y nodejs
+```
+
+### 4.2 安装 MySQL 8.4 并建库
+
+```bash
+sudo apt install -y mysql-server
+sudo systemctl start mysql && sudo systemctl enable mysql
+
+sudo mysql -e "CREATE DATABASE uams CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+sudo mysql -e "CREATE USER 'uams_app'@'127.0.0.1' IDENTIFIED BY '<你的强口令>';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON uams.* TO 'uams_app'@'127.0.0.1'; FLUSH PRIVILEGES;"
+```
+
+> 仓库内也提供了 `uams/scripts/setup_mysql.sh` 可参考；**口令不要写进任何提交到 Git 的文件**。
+
+### 4.3 克隆项目
+
+```bash
+git clone <仓库地址> && cd <项目目录>/uams
+```
+
+### 4.4 配置 .env
+
+```bash
+cp backend/.env.example backend/.env
+vi backend/.env     # 修改 DATABASE_URL 口令与 JWT_SECRET
+```
+
+### 4.5 安装依赖
+
+```bash
+cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && cd ..
+cd frontend && npm install && cd ..
+```
+
+### 4.6 数据库初始化（执行迁移 + 角色权限）
+
+```bash
+cd backend
+.venv/bin/alembic upgrade head
+.venv/bin/python -m scripts.seed_rbac       # 角色与权限（必需）
+.venv/bin/python -m scripts.seed_demo       # 演示数据（可选，仅演示环境需要）
+cd ..
+```
+
+### 4.7 启动（推荐 `start.sh`）
+
+```bash
 ./start.sh            # 后端 + 前端（dev 模式）
-./start.sh prod       # 先 npm run build，再用 vite preview 提供静态服务
-./start.sh status     # 查看健康检查
+./start.sh prod       # 先构建前端，再用 vite preview 提供静态服务
+./start.sh status     # 健康检查
 ./start.sh stop       # 停止
 ./start.sh restart    # 重启
 ```
 
-脚本会依次完成：检查 venv / node_modules → 检查 MySQL 连通 → 启动后端 →
-等待 `/health` 就绪 → 启动前端 → 打印本机与局域网访问地址。
+脚本会依次：检查 venv / node_modules → 检查 MySQL 连通 → 启动后端并轮询 `/health` →
+启动前端 → 打印本机与局域网访问地址。
 
-可用环境变量覆盖默认值：`UAMS_BACKEND_HOST`、`UAMS_BACKEND_PORT`、
-`UAMS_FRONTEND_HOST`、`UAMS_FRONTEND_PORT`、`UAMS_BACKEND_URL`（前端代理目标）。
-
-### 4.2 数据库
+### 4.8 手动启动（不使用脚本）
 
 ```bash
-systemctl start mysql
-cd backend && .venv/bin/alembic upgrade head   # 迁移
-.venv/bin/python -m scripts.seed_rbac          # 角色/权限（首次）
-.venv/bin/python -m scripts.seed_demo          # 演示数据（可选）
+cd backend && .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+cd frontend && npm run dev -- --host 0.0.0.0 --port 5173
 ```
 
-### 4.3 手动启动（不使用脚本时）
+### 4.9 浏览器访问
+
+```
+本机：    http://127.0.0.1:5173
+局域网：  http://<服务器IP>:5173
+接口文档：http://<服务器IP>:8000/docs   （仅 DEBUG=true）
+```
+
+### 4.10 局域网访问与放行端口
 
 ```bash
-# 后端（必须 0.0.0.0 才能被局域网访问）
-cd backend && .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# 前端（vite.config.ts 已设 host: 0.0.0.0）
-cd frontend && npm run dev            # dev：http://<IP>:5173
-cd frontend && npm run build && npx vite preview --host 0.0.0.0 --port 4173   # prod
-```
-
----
-
-## 5. 局域网访问
-
-### 5.1 查看服务器 IP
-
-```bash
-ip route get 1.1.1.1 | grep -oP 'src \K[0-9.]+'   # 推荐：默认路由出口地址
-hostname -I | awk '{print $1}'                    # 备选
-```
-
-`./start.sh` 启动时会自动打印，例如：
-
-```
-  本机访问：  http://127.0.0.1:5173
-  局域网访问：http://192.168.1.10:5173
-```
-
-### 5.2 从另一台设备访问
-
-1. 确认两台设备在同一局域网；
-2. 浏览器打开 `http://<服务器IP>:5173`；
-3. 用演示账号登录：教务 `admin/admin123`、教师 `T001/T001`、学生 `20260001/20260001`。
-
-示例（IP 以实际为准，不要写死）：
-
-```
-服务器：   192.168.1.10
-前端：     http://192.168.1.10:5173
-后端接口： http://192.168.1.10:8000/health   （浏览器一般无需直接访问）
-```
-
-### 5.3 放行端口
-
-```bash
-# Ubuntu（ufw）示例
-sudo ufw allow 5173/tcp     # 前端
-sudo ufw allow 8000/tcp     # 后端（仅当需要直接访问接口/文档时）
+ip route get 1.1.1.1 | grep -oP 'src \K[0-9.]+'   # 查看服务器 IP
+sudo ufw allow 5173/tcp     # 前端（必需）
+sudo ufw allow 8000/tcp     # 后端（仅在需要直接访问接口文档时）
 # 3306 不要放行
 ```
 
----
-
-## 6. 停止与日志
+### 4.11 停止服务
 
 ```bash
-./start.sh stop                 # 停止脚本启动的进程
-kill $(cat uams/.run/backend.pid)    # 单独停止后端
+./start.sh stop
+# 或手动：kill $(cat .run/backend.pid) / kill $(cat .run/frontend.pid)
+```
 
-tail -f uams/logs/backend.log    # 后端日志
-tail -f uams/logs/frontend.log   # 前端日志
-tail -f uams/logs/frontend-build.log   # prod 模式构建日志
+### 4.12 查看日志
+
+```bash
+tail -f logs/backend.log
+tail -f logs/frontend.log
+journalctl -u mysql -n 50          # MySQL 日志
+```
+
+### 4.13 常见问题（Ubuntu）
+
+| 现象 | 处理 |
+|---|---|
+| `ModuleNotFoundError: app` | 未在 `backend/` 目录下用 `.venv/bin/python` 启动 |
+| 端口被占用 | `ss -ltnp \| grep -E '5173\|8000'`，先 `./start.sh stop` |
+| 数据库连不上 | `sudo systemctl status mysql`；`curl http://127.0.0.1:8000/health` 看 `database` |
+| 局域网打不开 | 确认监听 `0.0.0.0`、ufw 已放行、两台设备同网段 |
+
+---
+
+## 5. Windows 部署
+
+> 与 Ubuntu **只有命令不同**，业务配置完全一致。
+
+### 5.1 环境要求与安装
+
+1. **Python 3.11+**：官网安装包，安装时勾选 **Add Python to PATH**。
+2. **Node.js 20+**：官网 LTS 安装包（含 npm）。
+3. **MySQL 8.4**：官网 MySQL Installer，选择 *Server only* 或 *Custom*；
+   安装时设置 root 口令，字符集选 **utf8mb4**。
+4. **Git for Windows**（含 Git Bash，可选但推荐）。
+
+验证：
+
+```powershell
+python --version
+node --version
+npm --version
+mysql --version
+```
+
+### 5.2 建库（PowerShell / cmd）
+
+```powershell
+mysql -u root -p -e "CREATE DATABASE uams CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+mysql -u root -p -e "CREATE USER 'uams_app'@'127.0.0.1' IDENTIFIED BY '<你的强口令>';"
+mysql -u root -p -e "GRANT ALL PRIVILEGES ON uams.* TO 'uams_app'@'127.0.0.1'; FLUSH PRIVILEGES;"
+```
+
+确认 MySQL 服务已启动：
+
+```powershell
+Get-Service MySQL*        # 状态应为 Running
+# 若未启动： Start-Service MySQL84   （服务名以实际安装为准）
+```
+
+### 5.3 克隆项目
+
+```powershell
+git clone <仓库地址>
+cd <项目目录>\uams
+```
+
+### 5.4 配置 .env
+
+```powershell
+Copy-Item backend\.env.example backend\.env
+notepad backend\.env      # 修改 DATABASE_URL 口令与 JWT_SECRET
+```
+
+> `DATABASE_URL` 中的口令若含 `@ : / ?` 等字符需做 URL 编码，否则连接会失败；
+> 建议使用仅含字母数字与 `-_.~` 的强口令。
+
+### 5.5 安装后端依赖
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+cd ..
+```
+
+### 5.6 安装前端依赖
+
+```powershell
+cd frontend
+npm install
+cd ..
+```
+
+### 5.7 数据库初始化
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m scripts.seed_rbac     # 必需
+.\.venv\Scripts\python.exe -m scripts.seed_demo     # 可选（演示数据）
+cd ..
+```
+
+### 5.8 启动后端（新开一个 PowerShell 窗口）
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+后端就绪自检：
+
+```powershell
+curl http://127.0.0.1:8000/health
+# {"status":"ok","app":"UAMS","env":"development","database":"up"}
+```
+
+### 5.9 构建与启动前端（再开一个窗口）
+
+```powershell
+cd frontend
+npm run dev -- --host 0.0.0.0 --port 5173
+# 生产：npm run build ；然后 npx vite preview --host 0.0.0.0 --port 4173
+```
+
+> `start.sh` 是 bash 脚本，在 Windows 上请用 **Git Bash** 运行：
+> `./start.sh`（需先 `chmod +x start.sh`，或在 Git Bash 中直接 `bash start.sh`）。
+> 使用 PowerShell / cmd 时按本节步骤手动启动即可，行为完全一致。
+
+### 5.10 浏览器访问
+
+```
+本机：    http://127.0.0.1:5173
+局域网：  http://<服务器IP>:5173
+```
+
+### 5.11 查看服务器 IP（局域网用）
+
+```powershell
+ipconfig
+# 取当前网卡的 "IPv4 地址"，例如 192.168.1.10
+```
+
+### 5.12 局域网访问（Windows 防火墙）
+
+首次启动时 Windows 会弹出防火墙提示，勾选 **专用网络** 允许；
+若未弹出或误点取消：
+
+```powershell
+New-NetFirewallRule -DisplayName "UAMS Frontend 5173" -Direction Inbound -Protocol TCP -LocalPort 5173 -Action Allow
+# 仅在需要直接访问接口文档时才放行 8000
+New-NetFirewallRule -DisplayName "UAMS Backend 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
+```
+
+> **不要**放行 3306：数据库只允许本机后端访问。
+
+### 5.13 停止服务
+
+```powershell
+# 在运行后端的窗口按 Ctrl+C
+# 若窗口已关闭：
+Get-Process python | Where-Object {$_.Path -like "*\.venv\*"} | Stop-Process
+# 前端同理（node 进程），或直接关闭对应窗口
+```
+
+### 5.14 常见问题（Windows）
+
+| 现象 | 处理 |
+|---|---|
+| `python` 不是内部或外部命令 | 安装 Python 时未勾选 Add to PATH，重新安装或手动加入 PATH |
+| 执行策略禁止 npm.ps1 | 用 `npm.cmd`，或 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
+| 数据库连接报 `Access denied` | `.env` 中口令错误，或未创建 `uams_app@127.0.0.1` 用户 |
+| 局域网其他设备打不开 | 防火墙未放行 5173/8000；或后端用了 `--host 127.0.0.1` |
+| 端口被占用 | `netstat -ano \| findstr :5173` 找到 PID 后 `taskkill /PID <pid> /F` |
+| 路径过长导致 npm install 失败 | 在较短的路径下克隆，或启用 Windows 长路径支持 |
+
+---
+
+## 6. 局域网访问（两系统通用说明）
+
+1. 确认两台设备在同一局域网；
+2. 浏览器打开 `http://<服务器IP>:5173`；
+3. 使用账号登录（演示环境下见 README「演示环境账号」一节）。
+
+IP 以实际为准，不要写死到任何配置文件：
+
+```
+服务器：   192.168.1.10           （示例）
+前端：     http://192.168.1.10:5173
+后端接口： http://192.168.1.10:8000/health   （浏览器一般无需直接访问）
 ```
 
 ---
@@ -184,51 +394,52 @@ curl http://127.0.0.1:8000/health
 
 | 现象 | 原因与处理 |
 |---|---|
-| 本机能开、别的电脑打不开 | 后端/前端只监听了 `127.0.0.1`；本脚本已用 `0.0.0.0`，检查是否手动启动过 |
-| 页面能开但接口全红 / 一直转圈 | 前端代理目标不对：检查 `UAMS_BACKEND_URL` 与后端是否在 8000 端口 |
-| 浏览器控制台出现 `127.0.0.1:8000` 请求失败 | 说明有地方写死了本机地址；本项目走同源代理，不应出现（见 §1 关键点） |
+| 本机能开、别的电脑打不开 | 后端/前端只监听了 `127.0.0.1`；必须用 `--host 0.0.0.0`（`start.sh` 已默认） |
+| 页面能开但接口一直转圈 | 前端代理目标不对：检查 `UAMS_BACKEND_URL` 与后端是否在 8000 端口 |
+| 控制台出现 `127.0.0.1:8000` 请求失败 | 说明有地方写死了本机地址；本项目走同源代理，不应出现 |
 | 跨域（CORS）报错 | 同源代理模式下不会发生；若浏览器直连后端端口，需把前端地址加入 `CORS_ORIGINS` |
 | 刷新子路由 404 | 静态服务未配置 History fallback；`vite preview` 已内置，Nginx 需 `try_files $uri /index.html` |
-| 登录报「数据库连接失败」 | MySQL 未启动或 `DATABASE_URL` 口令不对；`curl /health` 会显示 `database: down` |
-| 端口被占用 | `ss -ltnp \| grep -E '5173\|8000'`，先 `./start.sh stop` 再启动 |
-| 防火墙拦截 | 见 §5.3 放行端口 |
+| 登录报数据库错误 | MySQL 未启动或 `DATABASE_URL` 口令不对；`curl /health` 会显示 `database: down` |
+| 端口被占用 | Ubuntu：`ss -ltnp`；Windows：`netstat -ano \| findstr :5173` |
+| 防火墙拦截 | 见 §4.10（Ubuntu）/ §5.12（Windows） |
 
 ---
 
-## 9. 生产构建说明
-
-**当前构建结果**：页面按路由自动代码分割，主包约 519 KB（gzip 167 KB）。
+## 9. 生产构建
 
 - `dist/` 为静态资源；`npm run preview` 已配置 `host: 0.0.0.0` 与 `/api` 同源代理，可直接用于局域网演示；
-- 若改用 Nginx 托管：需配置 History fallback（`try_files $uri /index.html`）并把 `/api/` 反向代理到后端；
-- 前端 API 基址为相对路径 `/api/v1`，因此**无需**配置 `VITE_API_BASE_URL`。
+- 若改用 Nginx 托管：配置 History fallback（`try_files $uri /index.html`）并把 `/api/` 反向代理到后端；
+- 前端 API 基址为相对路径 `/api/v1`，**无需**配置 `VITE_API_BASE_URL`。
 
 ---
 
 ## 10. 数据备份
 
-当前**无自动备份**。建议：
-
 ```bash
+# Ubuntu
 mysqldump -h 127.0.0.1 -u uams_app -p uams > uams_$(date +%Y%m%d).sql
+
+# Windows（PowerShell）
+mysqldump -h 127.0.0.1 -u uams_app -p uams > uams_$(Get-Date -Format yyyyMMdd).sql
 ```
 
 备份文件不要放在数据库数据目录内；含敏感账号的备份不得提交到公开仓库。
 
 ---
 
-## 11. 安全边界（FIX-007 §二十三）
+## 11. 安全边界
 
 - MySQL 保持仅回环监听，**不**对局域网暴露；
 - 不关闭认证 / RBAC / 参数校验；CORS 仍按白名单；
-- 不把口令与密钥写进 `start.sh`，一律走 `.env` / 环境变量；
-- 局域网开放的最小集合：前端端口（必需）、后端端口（仅在需要直接访问接口文档时）。
+- 不把口令与密钥写进启动脚本，一律走 `.env` / 环境变量；
+- 局域网开放的最小集合：前端端口（必需）、后端端口（仅在需要直接访问接口文档时）；
+- **正式部署前必须**：创建 `.env`、替换数据库口令、设置随机 `JWT_SECRET`、把 `DEBUG` 设为 `false`。
 
 ---
 
 ## 12. 相关文档
 
+- [README.md](../README.md) — 项目简介、目录结构、账号说明
 - [DEVELOPMENT.md](DEVELOPMENT.md) — 开发环境
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 架构
 - [API.md](API.md) — 接口清单
-- [ROADMAP.md](ROADMAP.md) — 版本规划

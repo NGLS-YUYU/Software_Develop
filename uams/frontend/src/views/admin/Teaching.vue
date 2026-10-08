@@ -318,9 +318,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <el-card shadow="never" v-loading="loading">
+  <el-card shadow="never" class="page-card" v-loading="loading">
+    <!-- 工具栏：学期筛选 + 当前 Tab 的新增入口 -->
     <div class="toolbar">
-      <el-select v-model="semester" style="width: 180px">
+      <el-select v-model="semester" class="sem-select" style="width: 180px">
         <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
       </el-select>
       <div class="spacer" />
@@ -334,37 +335,101 @@ onMounted(async () => {
 
     <el-tabs v-model="tab">
       <el-tab-pane label="教学班" name="class">
-        <el-table :data="classes" stripe>
-          <el-table-column prop="code" label="教学班号" min-width="170" />
-          <el-table-column prop="course_name" label="课程" min-width="150" />
-          <el-table-column prop="credits" label="学分" width="70" align="center" />
-          <el-table-column label="授课教师" width="110">
-            <template #default="{ row }">
-              <span v-if="row.teacher_name">{{ row.teacher_name }}</span>
-              <el-tag v-else type="warning" size="small">未分配</el-tag>
+        <!-- 桌面端：表格 -->
+        <div class="table-wrap">
+          <el-table :data="classes" stripe>
+            <el-table-column prop="code" label="教学班号" min-width="170" />
+            <el-table-column prop="course_name" label="课程" min-width="150" />
+            <el-table-column prop="credits" label="学分" width="70" align="center" />
+            <el-table-column label="授课教师" width="110">
+              <template #default="{ row }">
+                <span v-if="row.teacher_name">{{ row.teacher_name }}</span>
+                <el-tag v-else type="warning" size="small">未分配</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="上课安排" min-width="220">
+              <template #default="{ row }">
+                <span class="sched">{{ scheduleText(row) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="选课人数" width="110" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.remaining > 0 ? '' : 'danger'" size="small">
+                  {{ row.selected_count }}/{{ row.capacity }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="选课状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag :type="SEL_TYPE[row.selection_status] as any" size="small">
+                  {{ SEL_STATUS[row.selection_status] }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="230" align="center" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" link type="primary" @click="openSchedule(row)">
+                  排课
+                </el-button>
+                <el-button size="small" link type="primary" @click="toggleSelection(row)">
+                  {{ row.selection_status === 'OPEN' ? '关闭选课' : '开放选课' }}
+                </el-button>
+                <el-button size="small" link type="primary" @click="openClassEdit(row)">
+                  编辑
+                </el-button>
+                <el-button size="small" link type="danger" @click="removeClass(row)">
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="暂无教学班" :image-size="70" />
             </template>
-          </el-table-column>
-          <el-table-column label="上课安排" min-width="220">
-            <template #default="{ row }">
-              <span class="sched">{{ scheduleText(row) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="选课人数" width="110" align="center">
-            <template #default="{ row }">
-              <el-tag :type="row.remaining > 0 ? '' : 'danger'" size="small">
-                {{ row.selected_count }}/{{ row.capacity }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="选课状态" width="100" align="center">
-            <template #default="{ row }">
+          </el-table>
+        </div>
+
+        <!-- 窄屏：卡片列表 -->
+        <div class="row-cards">
+          <el-empty v-if="!classes.length" description="暂无教学班" :image-size="70" />
+          <article v-for="row in classes" :key="row.id" class="rcard">
+            <header class="rcard__head">
+              <div class="rcard__title">
+                <span class="rcard__name">{{ row.course_name || '未命名课程' }}</span>
+                <span class="rcard__code">{{ row.code }}</span>
+              </div>
               <el-tag :type="SEL_TYPE[row.selection_status] as any" size="small">
                 {{ SEL_STATUS[row.selection_status] }}
               </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="230" align="center" fixed="right">
-            <template #default="{ row }">
+            </header>
+
+            <div class="rcard__meta">
+              <div class="rmeta">
+                <span class="rmeta__label">授课教师</span>
+                <span class="rmeta__value">
+                  <span v-if="row.teacher_name">{{ row.teacher_name }}</span>
+                  <el-tag v-else type="warning" size="small">未分配</el-tag>
+                </span>
+              </div>
+              <div class="rmeta">
+                <span class="rmeta__label">学分</span>
+                <span class="rmeta__value">{{ row.credits }}</span>
+              </div>
+              <div class="rmeta">
+                <span class="rmeta__label">选课人数</span>
+                <span class="rmeta__value">
+                  <el-tag :type="row.remaining > 0 ? '' : 'danger'" size="small">
+                    {{ row.selected_count }}/{{ row.capacity }}
+                  </el-tag>
+                </span>
+              </div>
+            </div>
+
+            <div class="rcard__sched">
+              <el-icon class="rcard__sched-icon"><component :is="'Clock'" /></el-icon>
+              <span class="rcard__sched-text">{{ scheduleText(row) }}</span>
+            </div>
+
+            <div class="rcard__actions">
               <el-button size="small" link type="primary" @click="openSchedule(row)">
                 排课
               </el-button>
@@ -377,9 +442,10 @@ onMounted(async () => {
               <el-button size="small" link type="danger" @click="removeClass(row)">
                 删除
               </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+            </div>
+          </article>
+        </div>
+
         <div class="pager">
           <el-pagination v-model:current-page="classPage" :total="classesTotal"
             :page-size="20" layout="total, prev, pager, next" @current-change="loadClasses" />
@@ -387,27 +453,67 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane label="教学任务" name="task">
-        <el-table :data="tasks" stripe>
-          <el-table-column prop="semester" label="学期" width="130" />
-          <el-table-column prop="course_code" label="课程代码" width="110" />
-          <el-table-column prop="course_name" label="课程名称" min-width="170" />
-          <el-table-column prop="college_name" label="承担学院" min-width="160" />
-          <el-table-column label="计划/实际开班" width="130" align="center">
-            <template #default="{ row }">
-              {{ row.class_count }} / {{ row.planned_classes }}
+        <!-- 桌面端：表格 -->
+        <div class="table-wrap">
+          <el-table :data="tasks" stripe>
+            <el-table-column prop="semester" label="学期" width="130" />
+            <el-table-column prop="course_code" label="课程代码" width="110" />
+            <el-table-column prop="course_name" label="课程名称" min-width="170" />
+            <el-table-column prop="college_name" label="承担学院" min-width="160" />
+            <el-table-column label="计划/实际开班" width="130" align="center">
+              <template #default="{ row }">
+                {{ row.class_count }} / {{ row.planned_classes }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag size="small">{{ TASK_STATUS[row.status] }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="90" align="center">
+              <template #default="{ row }">
+                <el-button size="small" link type="danger" @click="removeTask(row)">删除</el-button>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="暂无教学任务" :image-size="70" />
             </template>
-          </el-table-column>
-          <el-table-column label="状态" width="100" align="center">
-            <template #default="{ row }">
+          </el-table>
+        </div>
+
+        <!-- 窄屏：卡片列表 -->
+        <div class="row-cards">
+          <el-empty v-if="!tasks.length" description="暂无教学任务" :image-size="70" />
+          <article v-for="row in tasks" :key="row.id" class="rcard">
+            <header class="rcard__head">
+              <div class="rcard__title">
+                <span class="rcard__name">{{ row.course_name || '未命名课程' }}</span>
+                <span class="rcard__code">{{ row.course_code }}</span>
+              </div>
               <el-tag size="small">{{ TASK_STATUS[row.status] }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="90" align="center">
-            <template #default="{ row }">
+            </header>
+
+            <div class="rcard__meta">
+              <div class="rmeta">
+                <span class="rmeta__label">学期</span>
+                <span class="rmeta__value">{{ row.semester }}</span>
+              </div>
+              <div class="rmeta">
+                <span class="rmeta__label">承担学院</span>
+                <span class="rmeta__value">{{ row.college_name }}</span>
+              </div>
+              <div class="rmeta">
+                <span class="rmeta__label">计划 / 实际开班</span>
+                <span class="rmeta__value">{{ row.class_count }} / {{ row.planned_classes }}</span>
+              </div>
+            </div>
+
+            <div class="rcard__actions">
               <el-button size="small" link type="danger" @click="removeTask(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+            </div>
+          </article>
+        </div>
+
         <div class="pager">
           <el-pagination v-model:current-page="taskPage" :total="tasksTotal"
             :page-size="20" layout="total, prev, pager, next" @current-change="loadTasks" />
@@ -484,76 +590,422 @@ onMounted(async () => {
 
     <!-- 排课 -->
     <el-dialog v-model="schedDialog" :title="`排课 — ${schedClass?.course_name}`" width="780px">
-      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 14px"
-        title="系统自动检测教室冲突与教师冲突；单周/双周课程在同一时段可共用教室" />
+      <!-- 三类冲突提示：教室 / 教师 / 教学班 -->
+      <el-alert class="sched-alert" type="info" :closable="false" show-icon
+        title="系统自动检测教室冲突、教师冲突与教学班冲突；单周/双周课程在同一时段可共用教室" />
+
+      <!-- 排课表单：按「教室 / 时间 / 周次」分组 -->
       <div class="sched-form">
-        <el-select v-model="schedForm.classroom_id" placeholder="教室" filterable
-          style="width: 150px">
-          <el-option v-for="r in classrooms" :key="r.id"
-            :label="`${r.code}(${r.capacity}人)`" :value="r.id" />
-        </el-select>
-        <el-select v-model="schedForm.day_of_week" style="width: 100px">
-          <el-option v-for="d in 7" :key="d" :label="DAY[d]" :value="d" />
-        </el-select>
-        <el-input-number v-model="schedForm.start_period" :min="1" :max="14"
-          controls-position="right" style="width: 100px" />
-        <span class="dash">-</span>
-        <el-input-number v-model="schedForm.end_period" :min="1" :max="14"
-          controls-position="right" style="width: 100px" />
-        <span class="unit">节</span>
-        <el-input-number v-model="schedForm.start_week" :min="1" :max="30"
-          controls-position="right" style="width: 100px" />
-        <span class="dash">-</span>
-        <el-input-number v-model="schedForm.end_week" :min="1" :max="30"
-          controls-position="right" style="width: 100px" />
-        <span class="unit">周</span>
-        <el-select v-model="schedForm.week_type" style="width: 100px">
-          <el-option label="每周" value="ALL" />
-          <el-option label="单周" value="ODD" />
-          <el-option label="双周" value="EVEN" />
-        </el-select>
+        <div class="sgroup">
+          <span class="sgroup__label">
+            <el-icon><component :is="'Location'" /></el-icon>
+            <span>教室</span>
+          </span>
+          <div class="sgroup__body">
+            <el-select v-model="schedForm.classroom_id" placeholder="选择教室" filterable
+              style="width: 150px">
+              <el-option v-for="r in classrooms" :key="r.id"
+                :label="`${r.code}(${r.capacity}人)`" :value="r.id" />
+            </el-select>
+          </div>
+        </div>
+
+        <div class="sgroup">
+          <span class="sgroup__label">
+            <el-icon><component :is="'Clock'" /></el-icon>
+            <span>时间</span>
+          </span>
+          <div class="sgroup__body">
+            <el-select v-model="schedForm.day_of_week" style="width: 100px">
+              <el-option v-for="d in 7" :key="d" :label="DAY[d]" :value="d" />
+            </el-select>
+            <el-input-number v-model="schedForm.start_period" :min="1" :max="14"
+              controls-position="right" style="width: 100px" />
+            <span class="dash">-</span>
+            <el-input-number v-model="schedForm.end_period" :min="1" :max="14"
+              controls-position="right" style="width: 100px" />
+            <span class="unit">节</span>
+          </div>
+        </div>
+
+        <div class="sgroup">
+          <span class="sgroup__label">
+            <el-icon><component :is="'Calendar'" /></el-icon>
+            <span>周次</span>
+          </span>
+          <div class="sgroup__body">
+            <el-input-number v-model="schedForm.start_week" :min="1" :max="30"
+              controls-position="right" style="width: 100px" />
+            <span class="dash">-</span>
+            <el-input-number v-model="schedForm.end_week" :min="1" :max="30"
+              controls-position="right" style="width: 100px" />
+            <span class="unit">周</span>
+            <el-select v-model="schedForm.week_type" style="width: 100px">
+              <el-option label="每周" value="ALL" />
+              <el-option label="单周" value="ODD" />
+              <el-option label="双周" value="EVEN" />
+            </el-select>
+          </div>
+        </div>
+      </div>
+
+      <div class="sched-submit">
         <el-button type="primary" :loading="schedSaving" @click="saveSchedule">
           {{ schedEditingId != null ? '保存修改' : '添加' }}
         </el-button>
         <el-button v-if="schedEditingId != null" @click="cancelEditSchedule">取消修改</el-button>
       </div>
 
-      <el-table :data="schedList" size="small" stripe style="margin-top: 14px">
-        <el-table-column label="星期" width="80" align="center">
-          <template #default="{ row }">{{ DAY[row.day_of_week] }}</template>
-        </el-table-column>
-        <el-table-column label="节次" width="100" align="center">
-          <template #default="{ row }">{{ row.start_period }}-{{ row.end_period }} 节</template>
-        </el-table-column>
-        <el-table-column label="周次" width="120" align="center">
-          <template #default="{ row }">
-            {{ row.start_week }}-{{ row.end_week }} 周
-            <span v-if="row.week_type !== 'ALL'">
-              ({{ row.week_type === 'ODD' ? '单' : '双' }})
+      <!-- 已排课列表：桌面表格，每行突出 星期 + 节次 + 教室 -->
+      <div class="table-wrap sched-table-wrap">
+        <el-table :data="schedList" size="small" stripe>
+          <el-table-column label="星期" width="80" align="center">
+            <template #default="{ row }">
+              <span class="when-day">{{ DAY[row.day_of_week] }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="节次" width="100" align="center">
+            <template #default="{ row }">
+              <span class="period">{{ row.start_period }}-{{ row.end_period }} 节</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="周次" width="120" align="center">
+            <template #default="{ row }">
+              {{ row.start_week }}-{{ row.end_week }} 周
+              <span v-if="row.week_type !== 'ALL'">
+                ({{ row.week_type === 'ODD' ? '单' : '双' }})
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="教室" width="130" align="center">
+            <template #default="{ row }">
+              <span class="room-chip">{{ row.classroom_code }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="building" label="楼栋" min-width="110" />
+          <el-table-column label="操作" width="130" align="center">
+            <template #default="{ row }">
+              <el-button size="small" link type="primary" @click="editSchedule(row)">编辑</el-button>
+              <el-button size="small" link type="danger" @click="removeSchedule(row)">删除</el-button>
+            </template>
+          </el-table-column>
+          <template #empty><el-empty description="尚未排课" :image-size="60" /></template>
+        </el-table>
+      </div>
+
+      <!-- 已排课列表：窄屏卡片 -->
+      <div class="sched-cards">
+        <el-empty v-if="!schedList.length" description="尚未排课" :image-size="60" />
+        <article v-for="row in schedList" :key="row.id" class="scard">
+          <div class="scard__main">
+            <span class="when-day">{{ DAY[row.day_of_week] }}</span>
+            <span class="period">{{ row.start_period }}-{{ row.end_period }} 节</span>
+            <span class="room-chip">{{ row.classroom_code }}</span>
+          </div>
+          <div class="scard__meta">
+            <span>
+              {{ row.start_week }}-{{ row.end_week }} 周
+              <span v-if="row.week_type !== 'ALL'">
+                ({{ row.week_type === 'ODD' ? '单' : '双' }})
+              </span>
             </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="classroom_code" label="教室" width="110" />
-        <el-table-column prop="building" label="楼栋" min-width="110" />
-        <el-table-column label="操作" width="130" align="center">
-          <template #default="{ row }">
+            <span v-if="row.building">{{ row.building }}</span>
+          </div>
+          <div class="scard__actions">
             <el-button size="small" link type="primary" @click="editSchedule(row)">编辑</el-button>
             <el-button size="small" link type="danger" @click="removeSchedule(row)">删除</el-button>
-          </template>
-        </el-table-column>
-        <template #empty><el-empty description="尚未排课" :image-size="60" /></template>
-      </el-table>
+          </div>
+        </article>
+      </div>
     </el-dialog>
   </el-card>
 </template>
 
-<style scoped>
-.sched { font-size: 12px; color: #606266; }
+<style scoped lang="scss">
+/* 桌面表格 / 窄屏卡片的显示切换由下方断点统一控制 */
+.table-wrap {
+  width: 100%;
+}
+
+/* ------------------------------------------------ 教学班/教学任务 卡片形态 */
+.row-cards {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rcard {
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface);
+  overflow: hidden;
+
+  &__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--uams-surface-sunken);
+    border-bottom: 1px solid var(--uams-border);
+  }
+
+  &__title {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  &__name {
+    font-weight: 600;
+    color: var(--uams-text);
+  }
+
+  &__code {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--uams-text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px 12px;
+    padding: 12px 14px 0;
+  }
+
+  /* 上课安排：用极浅紫底把时间地点拎出来 */
+  &__sched {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 12px 14px 0;
+    padding: 10px 12px;
+    border-radius: var(--uams-radius-sm);
+    background: var(--uams-primary-softer);
+    border: 1px solid var(--uams-primary-soft);
+  }
+
+  &__sched-icon {
+    margin-top: 3px;
+    color: var(--uams-primary-dark);
+  }
+
+  &__sched-text {
+    font-size: 13px;
+    color: var(--uams-text-2);
+    word-break: break-word;
+  }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-top: 1px dashed var(--uams-border);
+  }
+
+  &__actions .el-button {
+    margin-left: 0;
+  }
+}
+
+.rmeta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+
+  &__label {
+    font-size: 12px;
+    color: var(--uams-text-3);
+  }
+
+  &__value {
+    font-size: 13px;
+    color: var(--uams-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* 上课安排文字（桌面表格内） */
+.sched {
+  font-size: 12px;
+  color: var(--uams-text-2);
+}
+
+/* --------------------------------------------------------- 排课弹窗 */
+.sched-alert {
+  margin-bottom: 14px;
+}
+
+/* 表单按 教室 / 时间 / 周次 三组纵向排列 */
 .sched-form {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 10px;
 }
-.dash, .unit { color: #909399; font-size: 13px; }
+
+.sgroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface-sunken);
+
+  &__label {
+    flex: 0 0 60px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--uams-text-2);
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+.dash,
+.unit {
+  color: var(--uams-text-3);
+  font-size: 13px;
+}
+
+.sched-submit {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* 排课列表中的强调元素：星期 / 节次 / 教室 */
+.when-day {
+  display: inline-block;
+  min-width: 42px;
+  padding: 2px 8px;
+  border-radius: var(--uams-radius-xs);
+  background: var(--uams-primary-soft);
+  color: var(--uams-primary-dark);
+  font-weight: 600;
+  text-align: center;
+}
+
+.period {
+  font-weight: 600;
+  color: var(--uams-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.room-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--uams-radius-xs);
+  background: var(--uams-surface-sunken);
+  border: 1px solid var(--uams-border);
+  color: var(--uams-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.sched-table-wrap {
+  margin-top: 14px;
+}
+
+/* 排课列表：窄屏卡片 */
+.sched-cards {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.scard {
+  padding: 12px 14px;
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface);
+
+  &__main {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--uams-text-3);
+  }
+
+  &__actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--uams-border);
+  }
+
+  &__actions .el-button {
+    margin-left: 0;
+  }
+}
+
+/* ------------------------------------------------------------- 响应式 */
+@media (max-width: 768px) {
+  /* 表格换卡片，避免窄屏横向溢出 */
+  .table-wrap {
+    display: none;
+  }
+
+  .row-cards,
+  .sched-cards {
+    display: flex;
+  }
+
+  /* 排课表单：分组标签移到控件上方，控件换行排满 */
+  .sgroup {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .sgroup__label {
+    flex: none;
+  }
+
+  .sched-submit {
+    gap: 8px;
+  }
+
+  .sched-submit .el-button {
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
+
+  .rcard__meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .rcard__meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 </style>

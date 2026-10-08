@@ -224,8 +224,9 @@ onMounted(async () => {
 <template>
   <div v-loading="loading">
     <el-card shadow="never" class="page-card">
+      <!-- 工具条：教学班选择 + 整班状态 + 操作 -->
       <div class="toolbar">
-        <el-select v-model="classId" placeholder="选择教学班" style="width: 320px">
+        <el-select v-model="classId" placeholder="选择教学班" class="class-select">
           <el-option
             v-for="c in classes"
             :key="c.id"
@@ -233,20 +234,25 @@ onMounted(async () => {
             :value="c.id"
           />
         </el-select>
-        <el-tag v-if="currentClass" type="info">
+        <el-tag v-if="currentClass" type="info" effect="plain">
           已选 {{ currentClass.selected_count }} 人
         </el-tag>
         <el-tag v-if="rows.length" :type="STATUS_TYPE[sheetStatus] as any">
           {{ STATUS_LABEL[sheetStatus] ?? sheetStatus }}
         </el-tag>
+
         <div class="spacer" />
+
         <el-button v-if="!rows.length" type="primary" @click="initSheet">
+          <el-icon><component :is="'Plus'" /></el-icon>
           生成成绩单
         </el-button>
         <template v-else>
-          <el-text size="small" type="info">
-            已录入 {{ filled }}/{{ rows.length }}
-          </el-text>
+          <span class="filled-hint">
+            已录入
+            <b>{{ filled }}</b>
+            / {{ rows.length }}
+          </span>
           <el-button @click="downloadTemplate">下载导入模板</el-button>
           <el-upload
             ref="uploader"
@@ -270,237 +276,504 @@ onMounted(async () => {
         </template>
       </div>
 
+      <!-- 导入结果与错误明细 -->
       <el-alert
         v-if="importResult"
+        class="notice-block"
         :type="importResult.failed ? 'warning' : 'success'"
         :title="`导入结果：成功 ${importResult.success} 条，失败 ${importResult.failed} 条（已保存为草稿，请核对后提交）`"
         :closable="true"
         show-icon
-        style="margin-bottom: 12px"
         @close="importResult = null"
       >
-        <div v-for="e in importResult.errors" :key="`${e.row}-${e.field}`">
+        <div
+          v-for="e in importResult.errors"
+          :key="`${e.row}-${e.field}`"
+          class="import-error"
+        >
           第 {{ e.row }} 行（{{ e.field }}）：{{ e.message }}
         </div>
       </el-alert>
 
-      <el-alert
-        v-if="rows.length && assessmentType"
-        :title="`成绩规则：${weightHint}。理论/实践总评、成绩总评、绩点、结果均由系统按课程考核方式统一计算，保存后回显。`"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-      />
-      <el-alert
-        v-if="sheetStatus === 'REJECTED'"
-        :title="`成绩被教务驳回：${rejectReason ?? '未填写原因'}。修改后可重新提交。`"
-        type="error"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-      />
-      <el-alert
-        v-else-if="sheetStatus === 'SUBMITTED'"
-        title="成绩已提交，等待教务审核，此期间不可修改"
-        type="warning"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-      />
-      <el-alert
-        v-else-if="sheetStatus === 'APPROVED'"
-        title="成绩已审核通过，不可直接修改。如需更正请联系教务"
-        type="success"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-      />
+      <!-- 成绩规则说明 -->
+      <div v-if="rows.length && assessmentType" class="note note--info">
+        <el-icon class="note__icon"><component :is="'InfoFilled'" /></el-icon>
+        <span class="note__text">
+          成绩规则：{{ weightHint }}。理论/实践总评、成绩总评、绩点、结果均由系统按课程考核方式统一计算，保存后回显。
+        </span>
+      </div>
+
+      <!-- 整班状态提示条：统一视觉，颜色随状态变化 -->
+      <div v-if="sheetStatus === 'REJECTED'" class="note note--danger">
+        <el-icon class="note__icon"><component :is="'CircleCloseFilled'" /></el-icon>
+        <span class="note__text">
+          成绩被教务驳回：{{ rejectReason ?? '未填写原因' }}。修改后可重新提交。
+        </span>
+      </div>
+      <div v-else-if="sheetStatus === 'SUBMITTED'" class="note note--warning">
+        <el-icon class="note__icon"><component :is="'WarningFilled'" /></el-icon>
+        <span class="note__text">成绩已提交，等待教务审核，此期间不可修改</span>
+      </div>
+      <div v-else-if="sheetStatus === 'APPROVED'" class="note note--success">
+        <el-icon class="note__icon"><component :is="'SuccessFilled'" /></el-icon>
+        <span class="note__text">成绩已审核通过，不可直接修改。如需更正请联系教务</span>
+      </div>
 
       <el-empty v-if="!rows.length" description="尚未生成成绩单，请先点击「生成成绩单」" />
-      <el-table v-else :data="rows" stripe border size="small">
-        <el-table-column type="index" label="#" width="45" align="center" fixed="left" />
-        <el-table-column prop="student_no" label="学号" width="120" fixed="left" />
-        <el-table-column prop="student_name" label="姓名" width="90" fixed="left" />
 
-        <!-- 教师可编辑：原始成绩 -->
-        <el-table-column label="平时成绩" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.regular_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!is32h && !hasPractice" label="期中成绩" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.mid_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!is32h && hasPractice" label="期中理论" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.mid_theory_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!is32h && hasPractice" label="期中实践" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.mid_practice_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!hasPractice" label="期末成绩" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.final_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="hasPractice" label="期末理论" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.final_theory_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="hasPractice" label="期末实践" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.final_practice_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column :label="hasPractice ? '理论补考' : '补考成绩'" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.theory_makeup_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column v-if="hasPractice" label="实践补考" width="110" align="center">
-          <template #default="{ row }">
-            <el-input-number
-              v-model="row.practice_makeup_score"
-              :min="0"
-              :max="100"
-              :precision="1"
-              :controls="false"
-              :disabled="!editable"
-              style="width: 90px"
-            />
-          </template>
-        </el-table-column>
+      <template v-else>
+        <!-- 桌面端：表格式录入。左侧白底输入框可编辑，右侧浅底为系统计算区 -->
+        <div class="sheet-table">
+          <el-table :data="rows" border size="small">
+            <el-table-column type="index" label="#" width="45" align="center" fixed="left" />
+            <el-table-column prop="student_no" label="学号" width="118" fixed="left" />
+            <el-table-column prop="student_name" label="姓名" width="88" fixed="left" />
 
-        <!-- 系统计算：只读 -->
-        <el-table-column label="理论总评" width="95" align="center">
-          <template #default="{ row }">
-            <span v-if="row.theory_total_score != null" class="total">
-              {{ row.theory_total_score }}
-            </span>
-            <span v-else class="empty">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="hasPractice" label="实践总评" width="95" align="center">
-          <template #default="{ row }">
-            <span v-if="row.practice_total_score != null" class="total">
-              {{ row.practice_total_score }}
-            </span>
-            <span v-else class="empty">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="成绩总评" width="95" align="center">
-          <template #default="{ row }">
-            <span v-if="row.total_score != null" class="total">{{ row.total_score }}</span>
-            <span v-else class="empty">未计算</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="grade_point" label="绩点" width="70" align="center">
-          <template #default="{ row }">{{ row.grade_point ?? '-' }}</template>
-        </el-table-column>
-        <el-table-column label="结果" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag
-              v-if="row.is_passed != null"
-              :type="row.is_passed ? 'success' : 'danger'"
-              size="small"
+            <!-- 教师可编辑：原始成绩（白底输入框） -->
+            <el-table-column
+              label="平时成绩"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
             >
-              {{ row.is_passed ? '通过' : '不及格' }}
-            </el-tag>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="90" align="center" fixed="right">
-          <template #default="{ row }">
-            <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
-              {{ STATUS_LABEL[row.status] }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" align="center" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              link
-              type="danger"
-              size="small"
-              :disabled="row.status !== 'DRAFT'"
-              @click="removeDraft(row)"
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.regular_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="!is32h && !hasPractice"
+              label="期中成绩"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
             >
-              删除草稿
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.mid_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="!is32h && hasPractice"
+              label="期中理论"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
+            >
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.mid_theory_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="!is32h && hasPractice"
+              label="期中实践"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
+            >
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.mid_practice_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="!hasPractice"
+              label="期末成绩"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
+            >
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.final_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="hasPractice"
+              label="期末理论"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
+            >
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.final_theory_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="hasPractice"
+              label="期末实践"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
+            >
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.final_practice_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="hasPractice ? '理论补考' : '补考成绩'"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
+            >
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.theory_makeup_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="hasPractice"
+              label="实践补考"
+              width="108"
+              align="center"
+              label-class-name="th-edit"
+            >
+              <template #default="{ row }">
+                <el-input-number
+                  v-model="row.practice_makeup_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="cell-input"
+                />
+              </template>
+            </el-table-column>
+
+            <!-- 系统计算：只读，浅底 + 小字，与录入区分隔 -->
+            <el-table-column
+              label="理论总评"
+              width="92"
+              align="center"
+              class-name="td-calc td-calc-first"
+              label-class-name="th-calc th-calc-first"
+            >
+              <template #default="{ row }">
+                <span v-if="row.theory_total_score != null" class="total">
+                  {{ row.theory_total_score }}
+                </span>
+                <span v-else class="empty">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              v-if="hasPractice"
+              label="实践总评"
+              width="92"
+              align="center"
+              class-name="td-calc"
+              label-class-name="th-calc"
+            >
+              <template #default="{ row }">
+                <span v-if="row.practice_total_score != null" class="total">
+                  {{ row.practice_total_score }}
+                </span>
+                <span v-else class="empty">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="成绩总评"
+              width="92"
+              align="center"
+              class-name="td-calc"
+              label-class-name="th-calc"
+            >
+              <template #default="{ row }">
+                <span v-if="row.total_score != null" class="total">{{ row.total_score }}</span>
+                <span v-else class="empty">未计算</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              prop="grade_point"
+              label="绩点"
+              width="70"
+              align="center"
+              class-name="td-calc"
+              label-class-name="th-calc"
+            >
+              <template #default="{ row }">{{ row.grade_point ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column
+              label="结果"
+              width="80"
+              align="center"
+              class-name="td-calc"
+              label-class-name="th-calc"
+            >
+              <template #default="{ row }">
+                <el-tag
+                  v-if="row.is_passed != null"
+                  :type="row.is_passed ? 'success' : 'danger'"
+                  size="small"
+                >
+                  {{ row.is_passed ? '通过' : '不及格' }}
+                </el-tag>
+                <span v-else class="empty">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="88" align="center" fixed="right">
+              <template #default="{ row }">
+                <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
+                  {{ STATUS_LABEL[row.status] }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="88" align="center" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  link
+                  type="danger"
+                  size="small"
+                  :disabled="row.status !== 'DRAFT'"
+                  @click="removeDraft(row)"
+                >
+                  删除草稿
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div class="table-legend">
+            <span class="legend legend--edit"><i /> 可编辑原始成绩</span>
+            <span class="legend legend--calc"><i /> 系统计算结果</span>
+          </div>
+        </div>
+
+        <!-- 移动端：每个学生一张卡片，可编辑项用输入框，计算项为只读行 -->
+        <div class="stu-list">
+          <div v-for="(row, idx) in rows" :key="row.id" class="stu">
+            <div class="stu__head">
+              <span class="stu__idx">{{ idx + 1 }}</span>
+              <div class="stu__who">
+                <span class="stu__name">{{ row.student_name }}</span>
+                <span class="stu__no muted">{{ row.student_no }}</span>
+              </div>
+              <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
+                {{ STATUS_LABEL[row.status] }}
+              </el-tag>
+            </div>
+
+            <div class="stu__fields">
+              <div class="field">
+                <span class="field__label">平时成绩</span>
+                <el-input-number
+                  v-model="row.regular_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+              <div v-if="!is32h && !hasPractice" class="field">
+                <span class="field__label">期中成绩</span>
+                <el-input-number
+                  v-model="row.mid_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+              <div v-if="!is32h && hasPractice" class="field">
+                <span class="field__label">期中理论</span>
+                <el-input-number
+                  v-model="row.mid_theory_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+              <div v-if="!is32h && hasPractice" class="field">
+                <span class="field__label">期中实践</span>
+                <el-input-number
+                  v-model="row.mid_practice_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+              <div v-if="!hasPractice" class="field">
+                <span class="field__label">期末成绩</span>
+                <el-input-number
+                  v-model="row.final_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+              <div v-if="hasPractice" class="field">
+                <span class="field__label">期末理论</span>
+                <el-input-number
+                  v-model="row.final_theory_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+              <div v-if="hasPractice" class="field">
+                <span class="field__label">期末实践</span>
+                <el-input-number
+                  v-model="row.final_practice_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+              <div class="field">
+                <span class="field__label">{{ hasPractice ? '理论补考' : '补考成绩' }}</span>
+                <el-input-number
+                  v-model="row.theory_makeup_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+              <div v-if="hasPractice" class="field">
+                <span class="field__label">实践补考</span>
+                <el-input-number
+                  v-model="row.practice_makeup_score"
+                  :min="0"
+                  :max="100"
+                  :precision="1"
+                  :controls="false"
+                  :disabled="!editable"
+                  class="field__input"
+                />
+              </div>
+            </div>
+
+            <div class="stu__calc">
+              <div class="stu__calc-title">系统计算</div>
+              <div class="calc-row">
+                <span class="calc-row__label">理论总评</span>
+                <span class="calc-row__val">
+                  {{ row.theory_total_score != null ? row.theory_total_score : '-' }}
+                </span>
+              </div>
+              <div v-if="hasPractice" class="calc-row">
+                <span class="calc-row__label">实践总评</span>
+                <span class="calc-row__val">
+                  {{ row.practice_total_score != null ? row.practice_total_score : '-' }}
+                </span>
+              </div>
+              <div class="calc-row">
+                <span class="calc-row__label">成绩总评</span>
+                <span class="calc-row__val">
+                  {{ row.total_score != null ? row.total_score : '未计算' }}
+                </span>
+              </div>
+              <div class="calc-row">
+                <span class="calc-row__label">绩点</span>
+                <span class="calc-row__val">{{ row.grade_point ?? '-' }}</span>
+              </div>
+              <div class="calc-row">
+                <span class="calc-row__label">结果</span>
+                <el-tag
+                  v-if="row.is_passed != null"
+                  :type="row.is_passed ? 'success' : 'danger'"
+                  size="small"
+                >
+                  {{ row.is_passed ? '通过' : '不及格' }}
+                </el-tag>
+                <span v-else class="calc-row__val">-</span>
+              </div>
+            </div>
+
+            <div class="stu__foot">
+              <el-button
+                link
+                type="danger"
+                size="small"
+                :disabled="row.status !== 'DRAFT'"
+                @click="removeDraft(row)"
+              >
+                删除草稿
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </template>
     </el-card>
 
     <el-card v-if="stats && stats.count" shadow="never" class="page-card">
@@ -527,10 +800,294 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.total { font-weight: 600; }
-.empty { color: #c0c4cc; }
-.inline-upload { display: inline-block; }
-.dist { margin-top: 18px; }
+/* ------------------------------------------------------------ 工具条 */
+.class-select {
+  width: 320px;
+}
+
+.filled-hint {
+  font-size: 13px;
+  color: var(--uams-text-2);
+  white-space: nowrap;
+}
+
+.filled-hint b {
+  color: var(--uams-primary-dark);
+  font-weight: 600;
+}
+
+.inline-upload {
+  display: inline-block;
+}
+
+/* ------------------------------------------------------------ 提示条 */
+.notice-block {
+  margin-bottom: 12px;
+}
+
+.import-error {
+  font-size: 12px;
+  color: var(--uams-text-2);
+}
+
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface-sunken);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.note__icon {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  font-size: 15px;
+}
+
+.note__text {
+  color: var(--uams-text-2);
+}
+
+.note--info {
+  background: var(--uams-primary-softer);
+  border-color: var(--uams-primary-soft);
+}
+
+.note--info .note__icon {
+  color: var(--uams-primary);
+}
+
+.note--warning {
+  background: color-mix(in srgb, var(--uams-warning) 12%, var(--uams-surface));
+  border-color: color-mix(in srgb, var(--uams-warning) 26%, var(--uams-surface));
+}
+
+.note--warning .note__icon {
+  color: var(--uams-warning);
+}
+
+.note--danger {
+  background: color-mix(in srgb, var(--uams-danger) 10%, var(--uams-surface));
+  border-color: color-mix(in srgb, var(--uams-danger) 26%, var(--uams-surface));
+}
+
+.note--danger .note__icon {
+  color: var(--uams-danger);
+}
+
+.note--success {
+  background: color-mix(in srgb, var(--uams-success) 10%, var(--uams-surface));
+  border-color: color-mix(in srgb, var(--uams-success) 26%, var(--uams-surface));
+}
+
+.note--success .note__icon {
+  color: var(--uams-success);
+}
+
+/* ------------------------------------------------------- 桌面：录入表 */
+.sheet-table :deep(.el-table) {
+  border-radius: var(--uams-radius-sm);
+}
+
+/* 可编辑列：白底输入框，表头用主文本色强化「可填写」语义 */
+.sheet-table :deep(.cell-input) {
+  width: 86px;
+}
+
+.sheet-table :deep(.el-table th.th-edit .cell) {
+  color: var(--uams-text);
+}
+
+/* 系统计算区：浅底 + 小字 + 次要色表头，与录入区形成视觉分隔 */
+.sheet-table :deep(.el-table .td-calc) {
+  background: var(--uams-surface-sunken);
+}
+
+.sheet-table :deep(.el-table .td-calc .cell) {
+  font-size: 12.5px;
+  color: var(--uams-text-2);
+}
+
+.sheet-table :deep(.el-table th.th-calc .cell) {
+  color: var(--uams-text-3);
+}
+
+.sheet-table :deep(.el-table td.td-calc-first),
+.sheet-table :deep(.el-table th.th-calc-first) {
+  border-left: 2px solid var(--uams-border-strong);
+}
+
+.total {
+  font-weight: 600;
+  color: var(--uams-text);
+}
+
+.empty {
+  color: var(--uams-text-3);
+}
+
+.table-legend {
+  display: flex;
+  gap: 18px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--uams-text-3);
+}
+
+.legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.legend--edit i {
+  background: var(--uams-surface);
+  border: 1px solid var(--uams-border-strong);
+}
+
+.legend--calc i {
+  background: var(--uams-surface-sunken);
+  border: 1px solid var(--uams-border);
+}
+
+/* ----------------------------------------------------- 移动端：学生卡 */
+.stu-list {
+  display: none;
+}
+
+.stu {
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface);
+  box-shadow: var(--uams-shadow-sm);
+  padding: 12px;
+}
+
+.stu + .stu {
+  margin-top: 10px;
+}
+
+.stu__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--uams-border);
+}
+
+.stu__idx {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--uams-radius-xs);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--uams-primary-dark);
+  background: var(--uams-primary-soft);
+}
+
+.stu__who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.stu__name {
+  font-weight: 600;
+  color: var(--uams-text);
+}
+
+.stu__no {
+  font-size: 12px;
+}
+
+.stu__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  padding: 12px 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field__label {
+  font-size: 12px;
+  color: var(--uams-text-2);
+}
+
+.field__input {
+  width: 100%;
+}
+
+.stu__calc {
+  border-top: 1px dashed var(--uams-border-strong);
+  padding-top: 8px;
+}
+
+.stu__calc-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--uams-text-3);
+  margin-bottom: 2px;
+}
+
+.calc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.calc-row + .calc-row {
+  border-top: 1px solid var(--uams-border);
+}
+
+.calc-row__label {
+  font-size: 12px;
+  color: var(--uams-text-3);
+}
+
+.calc-row__val {
+  font-weight: 600;
+  color: var(--uams-text);
+}
+
+.stu__foot {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+  margin-top: 4px;
+  border-top: 1px solid var(--uams-border);
+}
+
+/* ------------------------------------------------------------ 成绩分布 */
+.dist {
+  margin-top: 18px;
+}
+
 .bar-row {
   display: grid;
   grid-template-columns: 80px 1fr 70px;
@@ -538,6 +1095,41 @@ onMounted(async () => {
   gap: 12px;
   margin-bottom: 8px;
 }
-.bar-row .label { font-size: 13px; color: #606266; }
-.bar-row .count { font-size: 12px; color: #909399; text-align: right; }
+
+.bar-row .label {
+  font-size: 13px;
+  color: var(--uams-text-2);
+}
+
+.bar-row .count {
+  font-size: 12px;
+  color: var(--uams-text-3);
+  text-align: right;
+}
+
+/* ------------------------------------------------------------- 响应式 */
+@media (max-width: 768px) {
+  /* 手机端不再用横向滚动的大表格，改为「每个学生一张卡片」 */
+  .sheet-table {
+    display: none;
+  }
+
+  .stu-list {
+    display: block;
+  }
+
+  .class-select {
+    width: 100%;
+  }
+
+  .table-legend {
+    margin-top: 10px;
+  }
+}
+
+@media (max-width: 420px) {
+  .stu__fields {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

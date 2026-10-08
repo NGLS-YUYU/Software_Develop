@@ -75,80 +75,442 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card shadow="never" v-loading="loading">
-    <div class="toolbar">
-      <el-select v-model="semester" clearable placeholder="全部学期" style="width: 180px"
-        @change="load">
-        <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
-      </el-select>
-      <el-button type="primary" @click="load">刷新</el-button>
-      <div class="spacer" />
-      <el-tag type="warning">待审核 {{ rows.length }} 条</el-tag>
-      <el-button type="success" :disabled="!selected.length"
-        @click="approve(selected.map(s => s.id))">
-        批量通过 ({{ selected.length }})
-      </el-button>
-      <el-button type="danger" plain :disabled="!selected.length"
-        @click="reject(selected.map(s => s.id))">
-        批量驳回
-      </el-button>
-    </div>
+  <div v-loading="loading" class="grade-approval">
+    <!-- 筛选与批量操作 -->
+    <el-card shadow="never" class="page-card">
+      <div class="toolbar">
+        <el-select
+          v-model="semester"
+          clearable
+          placeholder="全部学期"
+          class="semester-select"
+          style="width: 180px"
+          @change="load"
+        >
+          <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
+        </el-select>
+        <el-button type="primary" @click="load">刷新</el-button>
+        <div class="spacer" />
+        <el-tag class="pending-tag" type="warning" effect="light">
+          待审核 {{ rows.length }} 条
+        </el-tag>
+        <span class="hide-on-mobile batch-actions">
+          <el-button
+            class="batch-approve"
+            type="success"
+            :disabled="!selected.length"
+            @click="approve(selected.map(s => s.id))"
+          >
+            批量通过 ({{ selected.length }})
+          </el-button>
+          <el-button
+            class="batch-reject"
+            type="danger"
+            plain
+            :disabled="!selected.length"
+            @click="reject(selected.map(s => s.id))"
+          >
+            批量驳回
+          </el-button>
+        </span>
+      </div>
+    </el-card>
 
-    <el-empty v-if="!rows.length" description="没有待审核的成绩" />
-
-    <template v-else>
-      <el-card v-for="group in grouped" :key="group[0].teaching_class_id"
-        shadow="never" class="group-card">
-        <template #header>
-          <div class="group-head">
-            <span>
-              {{ group[0].course_name }}
-              <el-tag size="small" type="info" style="margin-left: 8px">
-                {{ group.length }} 人
-              </el-tag>
-              <span class="sem">{{ group[0].semester }}</span>
-            </span>
-            <div>
-              <el-button size="small" type="success"
-                @click="approve(group.map(g => g.id))">整班通过</el-button>
-              <el-button size="small" type="danger" plain
-                @click="reject(group.map(g => g.id))">整班驳回</el-button>
-            </div>
-          </div>
+    <!-- 空状态 -->
+    <el-card v-if="!rows.length" shadow="never" class="page-card">
+      <el-empty description="暂无待审核的成绩">
+        <template #description>
+          <p class="empty-title">当前没有待审核的成绩</p>
+          <p class="empty-hint muted">教师提交成绩后会出现在这里，可切换学期或点击「刷新」查看。</p>
         </template>
+      </el-empty>
+    </el-card>
+
+    <!-- 按教学班分组审核 -->
+    <template v-else>
+      <el-card
+        v-for="group in grouped"
+        :key="group[0].teaching_class_id"
+        shadow="never"
+        class="page-card group-card"
+      >
+      <template #header>
+        <div class="group-head">
+          <div class="group-head__title">
+            <span class="group-course">{{ group[0].course_name || '未命名课程' }}</span>
+            <el-tag size="small" type="info" effect="plain">
+              {{ group.length }} 人
+            </el-tag>
+            <span class="sem muted">{{ group[0].semester }}</span>
+          </div>
+          <div class="group-head__ops">
+            <el-button size="small" type="success"
+              @click="approve(group.map(g => g.id))">整班通过</el-button>
+            <el-button size="small" type="danger" plain
+              @click="reject(group.map(g => g.id))">整班驳回</el-button>
+          </div>
+        </div>
+      </template>
+
+      <!-- 桌面端：表格（选中后可批量审核，操作列固定右侧） -->
+      <div class="table-wrap">
         <el-table :data="group" size="small" stripe
           @selection-change="(v: Grade[]) => selected = v">
           <el-table-column type="selection" width="45" />
           <el-table-column prop="student_no" label="学号" width="130" />
           <el-table-column prop="student_name" label="姓名" width="100" />
           <el-table-column label="平时" width="80" align="center">
-            <template #default="{ row }">{{ row.regular_score ?? '-' }}</template>
+            <template #default="{ row }">
+              <span class="cell-dim">{{ row.regular_score ?? '—' }}</span>
+            </template>
           </el-table-column>
           <el-table-column label="期末" width="80" align="center">
-            <template #default="{ row }">{{ row.final_score ?? '-' }}</template>
-          </el-table-column>
-          <el-table-column label="总评" width="90" align="center">
             <template #default="{ row }">
-              <el-tag :type="Number(row.total_score) >= 60 ? '' : 'danger'" size="small">
-                {{ row.total_score }}
+              <span class="cell-dim">{{ row.final_score ?? '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="总评" width="92" align="center">
+            <template #default="{ row }">
+              <el-tag class="cell-total" :type="Number(row.total_score) >= 60 ? '' : 'danger'"
+                size="small">
+                {{ row.total_score ?? '—' }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="grade_point" label="绩点" width="80" align="center" />
+          <el-table-column label="绩点" width="80" align="center">
+            <template #default="{ row }">
+              <span class="cell-gp">{{ row.grade_point ?? '—' }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="credits" label="学分" width="80" align="center" />
           <el-table-column label="提交时间" min-width="160">
             <template #default="{ row }">
-              {{ row.submitted_at?.slice(0, 16).replace('T', ' ') }}
+              <span class="cell-time">
+                {{ row.submitted_at ? row.submitted_at.slice(0, 16).replace('T', ' ') : '—' }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="128" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="success" size="small"
+                @click="approve([row.id])">通过</el-button>
+              <el-button link type="danger" size="small"
+                @click="reject([row.id])">驳回</el-button>
             </template>
           </el-table-column>
         </el-table>
+      </div>
+
+      <!-- 移动端：每条成绩一张卡片，操作可达 -->
+      <div class="stu-cards">
+        <article v-for="row in group" :key="row.id" class="scard">
+          <header class="scard__head">
+            <div class="scard__who">
+              <span class="scard__name">{{ row.student_name || '—' }}</span>
+              <span class="scard__no muted">{{ row.student_no || '—' }}</span>
+            </div>
+            <el-tag class="cell-total" :type="Number(row.total_score) >= 60 ? '' : 'danger'"
+              size="small">
+              {{ row.total_score ?? '—' }}
+            </el-tag>
+          </header>
+
+          <div class="scard__scores">
+            <div class="sbox is-total">
+              <span class="sbox__num">{{ row.total_score ?? '—' }}</span>
+              <span class="sbox__label">成绩总评</span>
+            </div>
+            <div class="sbox is-gp">
+              <span class="sbox__num">{{ row.grade_point ?? '—' }}</span>
+              <span class="sbox__label">绩点</span>
+            </div>
+          </div>
+
+          <dl class="scard__dl">
+            <div><dt>平时</dt><dd>{{ row.regular_score ?? '—' }}</dd></div>
+            <div><dt>期末</dt><dd>{{ row.final_score ?? '—' }}</dd></div>
+            <div><dt>学分</dt><dd>{{ row.credits }}</dd></div>
+            <div><dt>提交时间</dt>
+              <dd>{{ row.submitted_at ? row.submitted_at.slice(0, 16).replace('T', ' ') : '—' }}</dd>
+            </div>
+          </dl>
+
+          <div class="scard__foot">
+            <el-button type="success" size="small" @click="approve([row.id])">通过</el-button>
+            <el-button type="danger" plain size="small" @click="reject([row.id])">驳回</el-button>
+          </div>
+        </article>
+      </div>
       </el-card>
     </template>
-  </el-card>
+  </div>
 </template>
 
-<style scoped>
-.group-card { margin-bottom: 16px; }
-.group-head { display: flex; justify-content: space-between; align-items: center; }
-.sem { color: #909399; font-size: 12px; margin-left: 10px; }
+<style scoped lang="scss">
+/* ------------------------------------------------------------- 工具条 */
+.semester-select {
+  width: 180px;
+}
+
+.pending-tag {
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------- 空状态 */
+.empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--uams-text-2);
+}
+
+.empty-hint {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+
+/* ------------------------------------------------------------- 分组头 */
+.group-card + .group-card {
+  margin-top: var(--uams-gap);
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.group-head__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.group-course {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--uams-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-head__ops {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+}
+
+.sem {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------- 表格单元格强调 */
+/* 次要数字：弱化色调，避免与总评抢视线 */
+.cell-dim {
+  color: var(--uams-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.cell-time {
+  font-size: 12.5px;
+  color: var(--uams-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 总评：重点突出 */
+.cell-total {
+  font-size: 14px;
+  font-weight: 700;
+  padding: 3px 10px;
+}
+
+/* 绩点：淡紫药丸 */
+.cell-gp {
+  display: inline-block;
+  min-width: 38px;
+  padding: 2px 8px;
+  border-radius: var(--uams-radius-xs);
+  background: var(--uams-primary-soft);
+  color: var(--uams-primary-dark);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------- 移动端卡片 */
+.stu-cards {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scard {
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface);
+  overflow: hidden;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--uams-surface-sunken);
+    border-bottom: 1px solid var(--uams-border);
+  }
+
+  &__who {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  &__name {
+    font-weight: 600;
+    color: var(--uams-text);
+  }
+
+  &__no {
+    font-size: 12px;
+  }
+
+  /* 卡片主视觉：成绩总评 + 绩点 */
+  &__scores {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 14px;
+  }
+
+  &__dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+    padding: 0 14px 14px;
+
+    > div {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 8px 10px;
+      border-radius: var(--uams-radius-xs);
+      background: var(--uams-surface-sunken);
+      border: 1px solid var(--uams-border);
+    }
+
+    dt {
+      font-size: 12px;
+      color: var(--uams-text-3);
+    }
+
+    dd {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--uams-text);
+      font-variant-numeric: tabular-nums;
+    }
+  }
+
+  &__foot {
+    display: flex;
+    gap: 10px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--uams-border);
+
+    .el-button {
+      flex: 1;
+      margin-left: 0;
+    }
+  }
+}
+
+.sbox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px;
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface-sunken);
+  border: 1px solid var(--uams-border);
+
+  &.is-total {
+    background: var(--uams-primary-soft);
+    border-color: transparent;
+  }
+
+  &__num {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--uams-text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &.is-total &__num,
+  &.is-gp &__num {
+    color: var(--uams-primary-dark);
+  }
+
+  &__label {
+    font-size: 12px;
+    color: var(--uams-text-3);
+  }
+}
+
+/* ------------------------------------------------------------- 响应式 */
+@media (max-width: 768px) {
+  /* 工具条换行成两列网格，筛选与批量操作各自占满整行，避免拥挤 */
+  .toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .toolbar > .spacer {
+    display: none;
+  }
+
+  .toolbar > .semester-select,
+  .toolbar > .pending-tag,
+  .toolbar > .el-button {
+    grid-column: 1 / -1;
+  }
+
+  .toolbar > .pending-tag {
+    justify-self: start;
+  }
+
+  /* 分组操作整行等宽 */
+  .group-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .group-head__ops .el-button {
+    flex: 1;
+    margin-left: 0;
+  }
+
+  /* 大表格换成卡片列表 */
+  .table-wrap {
+    display: none;
+  }
+
+  .stu-cards {
+    display: flex;
+  }
+}
+
+@media (max-width: 420px) {
+  .scard__dl {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

@@ -128,62 +128,140 @@ onMounted(async () => {
 </script>
 
 <template>
-  <el-card shadow="never" v-loading="loading">
-    <div class="toolbar">
-      <el-select v-model="semester" style="width: 180px">
-        <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
-      </el-select>
-      <div class="spacer" />
-      <el-button type="primary" :icon="'Plus'" @click="openCreate">创建考试</el-button>
-    </div>
+  <div class="admin-exams">
+    <el-card shadow="never" class="page-card" v-loading="loading">
+      <!-- 筛选 + 主操作 -->
+      <div class="toolbar">
+        <el-select v-model="semester" style="width: 180px">
+          <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
+        </el-select>
+        <div class="spacer" />
+        <el-button type="primary" :icon="'Plus'" @click="openCreate">创建考试</el-button>
+      </div>
 
-    <el-table :data="exams" stripe>
-      <el-table-column prop="course_name" label="课程" min-width="160" />
-      <el-table-column prop="teaching_class_code" label="教学班" min-width="170" />
-      <el-table-column label="类型" width="90" align="center">
-        <template #default="{ row }">{{ TYPE[row.exam_type] }}</template>
-      </el-table-column>
-      <el-table-column prop="exam_date" label="日期" width="120" />
-      <el-table-column label="时间" width="130">
-        <template #default="{ row }">
-          {{ row.start_time?.slice(0, 5) }}-{{ row.end_time?.slice(0, 5) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="考场" min-width="150">
-        <template #default="{ row }">
-          <template v-if="row.rooms?.length">
-            <el-tag v-for="r in row.rooms" :key="r.id" size="small" style="margin-right: 4px">
-              {{ r.classroom_code }} ({{ r.assigned_count }}/{{ r.capacity }})
-            </el-tag>
-          </template>
-          <el-tag v-else type="warning" size="small">未设置</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="100" align="center">
-        <template #default="{ row }">
-          <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
-            {{ STATUS[row.status] }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="230" align="center" fixed="right">
-        <template #default="{ row }">
-          <el-button size="small" link type="primary" @click="openRooms(row)">考场</el-button>
-          <el-button size="small" link type="primary" :disabled="!row.rooms?.length"
-            @click="assign(row)">排座</el-button>
-          <el-button size="small" link type="primary" :disabled="row.status === 'PUBLISHED'"
-            @click="publish(row)">发布</el-button>
-          <el-button size="small" link type="danger" @click="remove(row)">删除</el-button>
-        </template>
-      </el-table-column>
-      <template #empty><el-empty description="本学期暂无考试安排" /></template>
-    </el-table>
+      <!-- 空状态 -->
+      <el-empty
+        v-if="!exams.length"
+        description="本学期暂无考试安排，点击右上角「创建考试」录入考试时间与教学班"
+      />
 
-    <div class="pager">
-      <el-pagination v-model:current-page="page" :total="total" :page-size="20"
-        layout="total, prev, pager, next" @current-change="load" />
-    </div>
+      <template v-else>
+        <!-- 桌面端：表格 -->
+        <div class="table-wrap">
+          <el-table :data="exams" stripe>
+            <el-table-column label="课程" min-width="180">
+              <template #default="{ row }">
+                <div class="cell-course">
+                  <span class="cell-course__name">{{ row.course_name }}</span>
+                  <span class="cell-course__meta muted">{{ row.course_code }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="teaching_class_code" label="教学班" min-width="170" />
+            <el-table-column label="类型" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" effect="plain" type="info">
+                  {{ TYPE[row.exam_type] }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="exam_date" label="日期" width="120" />
+            <el-table-column label="时间" width="120" align="center">
+              <template #default="{ row }">
+                <span class="cell-time">
+                  {{ row.start_time?.slice(0, 5) }}-{{ row.end_time?.slice(0, 5) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="考场" min-width="200">
+              <template #default="{ row }">
+                <div v-if="row.rooms?.length" class="room-list">
+                  <span v-for="r in row.rooms" :key="r.id" class="room-chip">
+                    <span class="room-chip__code">{{ r.classroom_code }}</span>
+                    <span class="room-chip__seat">已排 {{ r.assigned_count }}/{{ r.capacity }}</span>
+                  </span>
+                </div>
+                <el-tag v-else type="warning" size="small" effect="plain">未设置考场</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
+                  {{ STATUS[row.status] }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="230" align="center" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" link type="primary" @click="openRooms(row)">考场</el-button>
+                <el-button size="small" link type="primary" :disabled="!row.rooms?.length"
+                  @click="assign(row)">排座</el-button>
+                <el-button size="small" link type="primary" :disabled="row.status === 'PUBLISHED'"
+                  @click="publish(row)">发布</el-button>
+                <el-button size="small" link type="danger" @click="remove(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
 
+        <!-- 移动端：每场考试一张卡片 -->
+        <div class="exam-cards">
+          <article v-for="row in exams" :key="row.id" class="exam-card">
+            <header class="exam-card__head">
+              <div class="exam-card__title">
+                <span class="exam-card__name">{{ row.course_name }}</span>
+                <span class="exam-card__meta muted">
+                  {{ row.course_code }} · {{ row.teaching_class_code }}
+                </span>
+              </div>
+              <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
+                {{ STATUS[row.status] }}
+              </el-tag>
+            </header>
+
+            <div class="exam-card__when">
+              <span class="when__item">
+                <el-icon><component :is="'Calendar'" /></el-icon>
+                {{ row.exam_date }}
+              </span>
+              <span class="when__item">
+                <el-icon><component :is="'Clock'" /></el-icon>
+                {{ row.start_time?.slice(0, 5) }}-{{ row.end_time?.slice(0, 5) }}
+              </span>
+              <el-tag size="small" effect="plain" type="info">{{ TYPE[row.exam_type] }}</el-tag>
+            </div>
+
+            <div class="exam-card__rooms">
+              <template v-if="row.rooms?.length">
+                <span v-for="r in row.rooms" :key="r.id" class="room-chip">
+                  <span class="room-chip__code">{{ r.classroom_code }}</span>
+                  <span class="room-chip__seat">已排 {{ r.assigned_count }}/{{ r.capacity }}</span>
+                </span>
+              </template>
+              <el-tag v-else type="warning" size="small" effect="plain">未设置考场</el-tag>
+            </div>
+
+            <footer class="exam-card__foot">
+              <el-button size="small" @click="openRooms(row)">考场</el-button>
+              <el-button size="small" :disabled="!row.rooms?.length" @click="assign(row)">
+                排座
+              </el-button>
+              <el-button size="small" :disabled="row.status === 'PUBLISHED'" @click="publish(row)">
+                发布
+              </el-button>
+              <el-button size="small" type="danger" plain @click="remove(row)">删除</el-button>
+            </footer>
+          </article>
+        </div>
+      </template>
+
+      <div class="pager">
+        <el-pagination v-model:current-page="page" :total="total" :page-size="20"
+          layout="total, prev, pager, next" @current-change="load" />
+      </div>
+    </el-card>
+
+    <!-- 创建考试 -->
     <el-dialog v-model="dialog" title="创建考试" width="500px">
       <el-form label-width="100px">
         <el-form-item label="教学班" required>
@@ -221,6 +299,7 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
+    <!-- 考场设置 -->
     <el-dialog v-model="roomDialog" :title="`考场设置 — ${currentExam?.course_name}`" width="560px">
       <div class="toolbar">
         <el-select v-model="roomForm.classroom_id" placeholder="选择教室" filterable
@@ -232,15 +311,222 @@ onMounted(async () => {
           style="width: 130px" />
         <el-button type="primary" @click="addRoom">添加考场</el-button>
       </div>
-      <el-table :data="currentExam?.rooms ?? []" size="small" stripe>
-        <el-table-column prop="classroom_code" label="教室" width="120" />
-        <el-table-column prop="building" label="楼栋" min-width="120" />
-        <el-table-column prop="capacity" label="容量" width="90" align="center" />
-        <el-table-column prop="assigned_count" label="已排" width="90" align="center" />
-        <template #empty><el-empty description="尚未设置考场" :image-size="60" /></template>
-      </el-table>
+
+      <div class="table-wrap">
+        <el-table :data="currentExam?.rooms ?? []" size="small" stripe>
+          <el-table-column prop="classroom_code" label="教室" width="120" />
+          <el-table-column prop="building" label="楼栋" min-width="120" />
+          <el-table-column prop="capacity" label="容量" width="90" align="center" />
+          <el-table-column prop="assigned_count" label="已排" width="90" align="center" />
+          <template #empty><el-empty description="尚未设置考场" :image-size="60" /></template>
+        </el-table>
+      </div>
+
+      <div class="room-cards">
+        <div v-for="r in currentExam?.rooms ?? []" :key="r.id" class="room-row">
+          <span class="room-row__code">{{ r.classroom_code }}</span>
+          <span class="room-row__building muted">{{ r.building }}</span>
+          <span class="room-row__seat">已排 {{ r.assigned_count }}/{{ r.capacity }}</span>
+        </div>
+        <el-empty v-if="!(currentExam?.rooms?.length)"
+          description="尚未设置考场" :image-size="60" />
+      </div>
+
       <el-alert type="info" :closable="false" show-icon style="margin-top: 12px"
         title="添加考场后点击「排座」自动为已选课学生分配座位号" />
     </el-dialog>
-  </el-card>
+  </div>
 </template>
+
+<style scoped>
+.admin-exams {
+  display: block;
+}
+
+/* ------------------------------------------------------------- 表格单元 */
+.cell-course {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
+}
+
+.cell-course__name {
+  font-weight: 600;
+  color: var(--uams-text);
+}
+
+.cell-course__meta {
+  font-size: 12px;
+}
+
+/* 考试时间属核心信息，稍作强调 */
+.cell-time {
+  font-weight: 600;
+  color: var(--uams-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------------------------------------------------- 考场 chip */
+.room-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.room-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--uams-radius-xs);
+  background: var(--uams-primary-soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.room-chip__code {
+  font-weight: 600;
+  color: var(--uams-primary-dark);
+}
+
+.room-chip__seat {
+  color: var(--uams-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------- 移动端考试卡片 */
+.exam-cards {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.exam-card {
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface);
+  overflow: hidden;
+}
+
+.exam-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--uams-surface-sunken);
+  border-bottom: 1px solid var(--uams-border);
+}
+
+.exam-card__title {
+  min-width: 0;
+}
+
+.exam-card__name {
+  font-weight: 600;
+  color: var(--uams-text);
+}
+
+.exam-card__meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.exam-card__when {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 12px 14px;
+}
+
+.when__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--uams-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.when__item .el-icon {
+  color: var(--uams-primary);
+}
+
+.exam-card__rooms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 14px 12px;
+}
+
+.exam-card__foot {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--uams-border);
+}
+
+.exam-card__foot .el-button {
+  width: 100%;
+  margin-left: 0;
+}
+
+/* --------------------------------------------------- 弹窗内考场移动形态 */
+.room-cards {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.room-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-xs);
+  background: var(--uams-surface-sunken);
+}
+
+.room-row__code {
+  font-weight: 600;
+  color: var(--uams-text);
+}
+
+.room-row__building {
+  flex: 1;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.room-row__seat {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--uams-primary-dark);
+  font-variant-numeric: tabular-nums;
+}
+
+/* -------------------------------------------------------------- 响应式 */
+@media (max-width: 768px) {
+  .table-wrap {
+    display: none;
+  }
+
+  .exam-cards {
+    display: flex;
+  }
+
+  .room-cards {
+    display: flex;
+  }
+
+  /* 触控目标：按钮加高，操作列更易点按 */
+  .exam-card__foot .el-button {
+    height: 38px;
+  }
+}
+</style>

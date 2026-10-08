@@ -25,7 +25,7 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card shadow="never">
+  <el-card shadow="never" class="page-card">
     <div class="toolbar">
       <el-select v-model="semester" style="width: 170px">
         <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
@@ -34,11 +34,35 @@ onMounted(load)
         <el-option v-for="w in 20" :key="w" :label="`第 ${w} 周`" :value="w" />
       </el-select>
       <div class="spacer" />
-      <el-tag type="info">共 {{ items.length }} 门次安排</el-tag>
+      <span class="count-chip">
+        <el-icon><component :is="'Calendar'" /></el-icon>
+        共 <strong>{{ items.length }}</strong> 门次安排
+      </span>
     </div>
     <div v-loading="loading">
-      <el-empty v-if="!items.length" description="本学期暂无授课安排" />
+      <el-empty v-if="!items.length" description="本学期暂无授课安排">
+        <template #description>
+          <p class="muted">该学期你还没有排课记录，可联系教务确认教学任务安排。</p>
+        </template>
+      </el-empty>
       <ScheduleGrid v-else :items="items" />
     </div>
   </el-card>
 </template>
+
+<style scoped lang="scss">
+.count-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--uams-primary-dark);
+  background: var(--uams-primary-soft);
+
+  strong {
+    font-size: 15px;
+  }
+}
+</style>

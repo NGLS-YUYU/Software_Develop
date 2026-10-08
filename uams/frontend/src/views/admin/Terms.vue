@@ -24,6 +24,11 @@ const t = useCrudTable<Term>(termApi as never, {
   }),
 })
 
+/** 纯展示：进行中的学期整行浅紫底，便于一眼定位当前学期。 */
+function activeRowClass({ row }: { row: Term }): string {
+  return row.status === 'ACTIVE' ? 'row-active' : ''
+}
+
 const STATUS_LABEL: Record<string, string> = {
   PLANNED: '未开始',
   ACTIVE: '进行中',
@@ -117,12 +122,34 @@ onMounted(load)
 </script>
 
 <template>
-  <div>
+  <div class="terms">
+    <!-- 当前激活学期状态条：一眼看清系统正在使用哪个学期 -->
+    <section class="active-bar page-card" :class="{ 'is-empty': !activeTerm }">
+      <el-icon class="active-bar__icon"><component :is="'Calendar'" /></el-icon>
+      <div class="active-bar__main">
+        <span class="active-bar__label">当前激活学期</span>
+        <span class="active-bar__name">
+          {{ activeTerm ? activeTerm.name : '暂无进行中的学期' }}
+        </span>
+      </div>
+      <template v-if="activeTerm">
+        <div class="active-bar__meta">
+          <span>{{ activeTerm.academic_year }} · {{ semesterLabel(activeTerm.semester) }}</span>
+          <span class="muted">{{ activeTerm.start_date }} ~ {{ activeTerm.end_date }}</span>
+        </div>
+        <el-tag type="success" size="small" effect="dark" round>进行中</el-tag>
+      </template>
+      <p v-else class="active-bar__hint muted">
+        可在下方列表中激活一个「未开始」的学期，激活后该学期进入进行中状态。
+      </p>
+    </section>
+
     <el-card shadow="never" class="page-card">
       <div class="toolbar">
         <el-input
           v-model="t.query.keyword"
           placeholder="搜索学期名称 / 学年"
+          class="toolbar__search"
           style="width: 220px"
           clearable
           @keyup.enter="t.search"
@@ -141,31 +168,132 @@ onMounted(load)
         </el-select>
         <el-button type="primary" @click="t.search">查询</el-button>
         <div class="spacer" />
-        <el-text size="small" type="info">
-          当前激活学期：{{ activeTerm ? activeTerm.name : '无' }}
-        </el-text>
         <el-button type="primary" @click="t.openCreate">新增学期</el-button>
       </div>
 
-      <el-table v-loading="t.loading.value" :data="t.rows.value" stripe border size="small">
-        <el-table-column prop="name" label="学期名称" min-width="200" />
-        <el-table-column prop="academic_year" label="学年" width="120" align="center" />
-        <el-table-column label="学期" width="100" align="center">
-          <template #default="{ row }">{{ semesterLabel(row.semester) }}</template>
-        </el-table-column>
-        <el-table-column prop="start_date" label="开始日期" width="120" align="center" />
-        <el-table-column prop="end_date" label="结束日期" width="120" align="center" />
-        <el-table-column prop="teaching_class_count" label="教学班数" width="100" align="center" />
-        <el-table-column label="状态" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
+      <!-- 桌面端：表格 -->
+      <div class="table-wrap">
+        <el-table
+          v-loading="t.loading.value"
+          :data="t.rows.value"
+          stripe
+          border
+          size="small"
+          :row-class-name="activeRowClass"
+        >
+          <el-table-column prop="name" label="学期名称" min-width="200">
+            <template #default="{ row }">
+              <div class="cell-name">
+                <span
+                  class="dot"
+                  :class="{ 'dot--active': row.status === 'ACTIVE' }"
+                  aria-hidden="true"
+                />
+                <span class="cell-name__text">{{ row.name }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="academic_year" label="学年" width="120" align="center" />
+          <el-table-column label="学期" width="100" align="center">
+            <template #default="{ row }">{{ semesterLabel(row.semester) }}</template>
+          </el-table-column>
+          <el-table-column prop="start_date" label="开始日期" width="120" align="center" />
+          <el-table-column prop="end_date" label="结束日期" width="120" align="center" />
+          <el-table-column prop="teaching_class_count" label="教学班数" width="100" align="center" />
+          <el-table-column label="状态" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag
+                :type="STATUS_TYPE[row.status] as any"
+                size="small"
+                :effect="row.status === 'ACTIVE' ? 'dark' : 'light'"
+              >
+                {{ STATUS_LABEL[row.status] }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="230" align="center" fixed="right">
+            <template #default="{ row }">
+              <!-- 按钮只按后端真实状态机显示：未开始才可激活，进行中才可结束 -->
+              <el-button
+                v-if="row.status === 'PLANNED'"
+                size="small"
+                link
+                type="success"
+                @click="activate(row)"
+              >
+                激活
+              </el-button>
+              <el-button
+                v-if="row.status === 'ACTIVE'"
+                size="small"
+                link
+                type="warning"
+                @click="endTerm(row)"
+              >
+                结束
+              </el-button>
+              <el-button size="small" link type="primary" @click="t.openEdit(row)">编辑</el-button>
+              <el-button size="small" link type="danger" @click="t.remove(row, row.name)">
+                删除
+              </el-button>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <el-empty
+              description="暂无学期数据，点击右上角「新增学期」创建第一个学年学期"
+              :image-size="70"
+            />
+          </template>
+        </el-table>
+      </div>
+
+      <!-- 移动端：卡片列表 -->
+      <div v-loading="t.loading.value" class="term-cards">
+        <article
+          v-for="row in t.rows.value"
+          :key="row.id"
+          class="tcard"
+          :class="{ 'is-active': row.status === 'ACTIVE' }"
+        >
+          <header class="tcard__head">
+            <div class="tcard__title">
+              <span class="cell-name">
+                <span
+                  class="dot"
+                  :class="{ 'dot--active': row.status === 'ACTIVE' }"
+                  aria-hidden="true"
+                />
+                <span class="cell-name__text">{{ row.name }}</span>
+              </span>
+              <span class="tcard__sub">
+                {{ row.academic_year }} · {{ semesterLabel(row.semester) }}
+              </span>
+            </div>
+            <el-tag
+              :type="STATUS_TYPE[row.status] as any"
+              size="small"
+              :effect="row.status === 'ACTIVE' ? 'dark' : 'light'"
+            >
               {{ STATUS_LABEL[row.status] }}
             </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="230" align="center" fixed="right">
-          <template #default="{ row }">
-            <!-- 按钮只按后端真实状态机显示：未开始才可激活，进行中才可结束 -->
+          </header>
+
+          <dl class="tcard__meta">
+            <div>
+              <dt>开始日期</dt>
+              <dd>{{ row.start_date }}</dd>
+            </div>
+            <div>
+              <dt>结束日期</dt>
+              <dd>{{ row.end_date }}</dd>
+            </div>
+            <div>
+              <dt>教学班数</dt>
+              <dd>{{ row.teaching_class_count }}</dd>
+            </div>
+          </dl>
+
+          <div class="tcard__actions">
             <el-button
               v-if="row.status === 'PLANNED'"
               size="small"
@@ -188,12 +316,15 @@ onMounted(load)
             <el-button size="small" link type="danger" @click="t.remove(row, row.name)">
               删除
             </el-button>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty description="暂无学期数据，请先新增学期" :image-size="70" />
-        </template>
-      </el-table>
+          </div>
+        </article>
+
+        <el-empty
+          v-if="!t.rows.value.length"
+          description="暂无学期数据，点击上方「新增学期」创建第一个学年学期"
+          :image-size="70"
+        />
+      </div>
 
       <div class="pager">
         <el-pagination
@@ -259,3 +390,246 @@ onMounted(load)
     </el-dialog>
   </div>
 </template>
+
+<style scoped lang="scss">
+/* --------------------------------------------------- 激活学期状态条 */
+.active-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background: linear-gradient(120deg, var(--uams-primary-softer) 0%, var(--uams-surface) 78%);
+  border-color: var(--uams-primary-soft);
+
+  &__icon {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--uams-radius-sm);
+    display: grid;
+    place-items: center;
+    font-size: 20px;
+    color: var(--uams-primary-dark);
+    background: color-mix(in srgb, var(--uams-primary) 12%, transparent);
+  }
+
+  &__main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  &__label {
+    font-size: 12px;
+    color: var(--uams-text-3);
+  }
+
+  &__name {
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--uams-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__meta {
+    margin-left: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--uams-text-2);
+    font-variant-numeric: tabular-nums;
+
+    .muted {
+      font-size: 12px;
+    }
+  }
+
+  &__hint {
+    margin: 0;
+    font-size: 13px;
+  }
+
+  &.is-empty {
+    background: var(--uams-surface);
+    border-color: var(--uams-border);
+
+    .active-bar__icon {
+      color: var(--uams-text-3);
+      background: var(--uams-surface-sunken);
+    }
+  }
+}
+
+/* ------------------------------------------------------- 列表与状态点 */
+.cell-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cell-name__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--uams-border-strong);
+
+  &--active {
+    background: var(--uams-primary);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--uams-primary) 16%, transparent);
+  }
+}
+
+/* 进行中的学期整行浅紫底，突出当前学期 */
+:deep(.el-table__row.row-active) > td.el-table__cell {
+  background: var(--uams-primary-softer);
+}
+
+:deep(.el-table__row.row-active:hover) > td.el-table__cell {
+  background: var(--uams-primary-soft);
+}
+
+/* --------------------------------------------------------- 移动端卡片 */
+.term-cards {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tcard {
+  border: 1px solid var(--uams-border);
+  border-radius: var(--uams-radius-sm);
+  background: var(--uams-surface);
+  overflow: hidden;
+
+  &.is-active {
+    border-color: var(--uams-primary-soft);
+    background: var(--uams-primary-softer);
+  }
+
+  &__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--uams-border);
+  }
+
+  &__title {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  &__sub {
+    font-size: 12px;
+    color: var(--uams-text-3);
+  }
+
+  &__meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+    padding: 12px 14px;
+
+    > div {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    dt {
+      font-size: 12px;
+      color: var(--uams-text-3);
+    }
+
+    dd {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--uams-text);
+      font-variant-numeric: tabular-nums;
+    }
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    border-top: 1px solid var(--uams-border);
+    background: var(--uams-surface);
+  }
+}
+
+/* ------------------------------------------------------------- 响应式 */
+@media (max-width: 768px) {
+  .table-wrap {
+    display: none;
+  }
+
+  .term-cards {
+    display: flex;
+  }
+
+  /* 状态条竖向排布，信息不挤压 */
+  .active-bar {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px;
+
+    &__icon {
+      flex: 0 0 34px;
+      width: 34px;
+      height: 34px;
+      font-size: 17px;
+    }
+
+    &__main {
+      flex: 1 1 auto;
+    }
+
+    &__name {
+      font-size: 15px;
+    }
+
+    &__meta {
+      flex: 1 1 100%;
+      margin-left: 0;
+      align-items: flex-start;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 4px 14px;
+      padding-left: 44px;
+    }
+
+    &__hint {
+      flex: 1 1 100%;
+      padding-left: 44px;
+    }
+  }
+}
+
+@media (max-width: 420px) {
+  .tcard__meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+</style>
