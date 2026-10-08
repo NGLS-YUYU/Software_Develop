@@ -14,6 +14,11 @@ const summary = ref<GradeSummary | null>(null)
 const schedule = ref<Schedule[]>([])
 const exams = ref<Exam[]>([])
 const announcements = ref<Announcement[]>([])
+/** 班级/专业排名：来自 /grades/my（含实时排名），与「我的成绩」页同源 */
+const ranks = ref<{ class_rank: number | null; major_rank: number | null }>({
+  class_rank: null,
+  major_rank: null,
+})
 const loading = ref(true)
 
 /** 今日课程：day_of_week 1=周一，JS getDay() 0=周日 */
@@ -45,18 +50,25 @@ const myCourses = computed(() => {
 
 onMounted(async () => {
   try {
-    const [p, s, sch, ex, ann] = await Promise.allSettled([
+    const [p, s, sch, ex, ann, rk] = await Promise.allSettled([
       studentApi.me(),
       gradeApi.mySummary(),
       scheduleApi.my(semester),
       examApi.mine(semester),
       announcementApi.list({ page: 1, page_size: 5 }),
+      gradeApi.my(),
     ])
     if (p.status === 'fulfilled') profile.value = p.value
     if (s.status === 'fulfilled') summary.value = s.value
     if (sch.status === 'fulfilled') schedule.value = sch.value
     if (ex.status === 'fulfilled') exams.value = ex.value
     if (ann.status === 'fulfilled') announcements.value = ann.value.items
+    if (rk.status === 'fulfilled') {
+      ranks.value = {
+        class_rank: rk.value.class_rank,
+        major_rank: rk.value.major_rank,
+      }
+    }
   } finally {
     loading.value = false
   }
@@ -118,11 +130,11 @@ onMounted(async () => {
         <div class="grade-card__ranks">
           <div class="rank">
             <span class="rank__label">班级排名</span>
-            <span class="rank__value">—</span>
+            <span class="rank__value">{{ ranks.class_rank ?? '—' }}</span>
           </div>
           <div class="rank">
             <span class="rank__label">专业排名</span>
-            <span class="rank__value">—</span>
+            <span class="rank__value">{{ ranks.major_rank ?? '—' }}</span>
           </div>
         </div>
 

@@ -24,7 +24,6 @@
 fastapi==0.141.1        SQLAlchemy==2.0.52       alembic==1.20.0
 pydantic==2.13.5        pydantic-settings==2.15.0 PyMySQL==1.2.0
 uvicorn==0.53.0         bcrypt==5.0.0            python-jose==3.5.0
-pytest==9.1.1           pytest-asyncio==1.4.0
 ```
 
 完整清单见 `backend/requirements.txt`。
@@ -131,7 +130,7 @@ feature/*           # 功能分支
 ```
 修改代码
   ↓
-运行测试（pytest / npm run build）
+前端类型检查与构建（vue-tsc / npm run build）
   ↓
 git diff 审阅改动
   ↓
@@ -245,9 +244,6 @@ cd uams/backend
 
 # 回滚一个版本
 .venv/bin/alembic downgrade -1
-
-# 运行测试
-.venv/bin/python -m pytest tests/ -q
 
 # 前端：类型检查
 cd uams/frontend && node_modules/.bin/vue-tsc --noEmit

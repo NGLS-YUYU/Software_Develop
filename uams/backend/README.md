@@ -21,7 +21,6 @@ backend/
 │   │   └── v1/           11 个路由模块，75 个路径
 │   └── utils/            预留（当前为空）
 ├── alembic/              数据库迁移
-├── tests/                pytest 测试
 ├── scripts/              种子数据与环境脚本
 ├── requirements.txt      依赖清单
 ├── alembic.ini           Alembic 配置

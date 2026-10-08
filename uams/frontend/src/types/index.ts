@@ -421,6 +421,14 @@ export interface Overview {
   pending_grades: number
 }
 
+// --- 学生成绩总览（后端 /grades/my，含实时 GPA 与排名）---
+export interface StudentGradeOverview {
+  items: Grade[]
+  gpa: number | null
+  class_rank: number | null
+  major_rank: number | null
+}
+
 // --- 学期（TASK-011 / FIX-006）---
 export type TermStatusValue = 'PLANNED' | 'ACTIVE' | 'ENDED'
 

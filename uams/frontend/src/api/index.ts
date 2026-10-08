@@ -30,6 +30,7 @@ import type {
   Selection,
   SelectionPeriod,
   Student,
+  StudentGradeOverview,
   Teacher,
   TeachingClass,
   TeachingTask,
@@ -239,6 +240,8 @@ export const gradeApi = {
     post<{ rejected: number; message: string }>('/grades/reject', { grade_ids, reason }),
   statistics: (classId: number) =>
     get<GradeStatistics>(`/grades/teaching-classes/${classId}/statistics`),
+  /** 我的成绩总览：已审核成绩 + 实时 GPA + 班级/专业排名（TASK-007）。 */
+  my: () => get<StudentGradeOverview>('/grades/my'),
   /** 删除成绩草稿（仅 DRAFT；SUBMITTED/APPROVED 后端返回 409）。 */
   removeDraft: (gradeId: number) => del(`/grades/${gradeId}`),
 }

@@ -149,7 +149,7 @@ ALTER USER 'uams_app'@'127.0.0.1' IDENTIFIED BY '${UAMS_DB_PASSWORD}';
 GRANT ALL PRIVILEGES ON uams.* TO 'uams_app'@'localhost';
 GRANT ALL PRIVILEGES ON uams.* TO 'uams_app'@'127.0.0.1';
 
--- Alembic 迁移与 pytest 需要能建临时库
+-- Alembic 迁移需要能建临时库
 GRANT ALL PRIVILEGES ON \`uams_test\`.* TO 'uams_app'@'localhost';
 GRANT ALL PRIVILEGES ON \`uams_test\`.* TO 'uams_app'@'127.0.0.1';
 

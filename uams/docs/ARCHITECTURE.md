@@ -66,7 +66,6 @@ backend/
 │   │   └── v1/               11 个路由模块 + __init__.py 汇总
 │   └── utils/                预留（当前为空）
 ├── alembic/                  数据库迁移
-├── tests/                    pytest 测试
 └── scripts/                  种子数据与环境脚本
 ```
 
