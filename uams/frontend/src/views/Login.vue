@@ -28,12 +28,13 @@ async function submit() {
   }
 }
 
-/** 演示账号，方便验收时快速切换角色。 */
+/** 演示账号，方便验收时快速切换角色。 
 const demoAccounts = [
   { label: '教务', username: 'admin', password: 'admin123' },
   { label: '教师', username: 'T001', password: 'T001' },
   { label: '学生', username: '20260001', password: '20260001' },
 ]
+*/
 
 function fill(a: { username: string; password: string }) {
   form.value.username = a.username
@@ -94,6 +95,7 @@ function fill(a: { username: string; password: string }) {
           </el-button>
         </el-form>
 
+        <!-- 演示账号 
         <div class="demo">
           <span class="demo__label">演示账号</span>
           <div class="demo__list">
@@ -108,6 +110,7 @@ function fill(a: { username: string; password: string }) {
             </el-link>
           </div>
         </div>
+        -->
       </section>
     </div>
   </div>
