@@ -176,6 +176,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '选课管理', icon: 'Checked' },
       },
       {
+        path: 'terms',
+        name: 'admin-terms',
+        component: () => import('@/views/admin/Terms.vue'),
+        meta: { title: '学期管理', icon: 'Calendar' },
+      },
+      {
         path: 'imports',
         name: 'admin-imports',
         component: () => import('@/views/admin/ImportCenter.vue'),

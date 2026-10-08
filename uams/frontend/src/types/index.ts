@@ -411,6 +411,23 @@ export interface Overview {
   pending_grades: number
 }
 
+// --- 学期（TASK-011 / FIX-006）---
+export type TermStatusValue = 'PLANNED' | 'ACTIVE' | 'ENDED'
+
+/** 对应后端 `schemas/term.py::TermOut`。 */
+export interface Term {
+  id: number
+  name: string
+  /** 学年，如 2026-2027 */
+  academic_year: string
+  /** 学期序号：1 或 2 */
+  semester: number
+  start_date: string
+  end_date: string
+  status: TermStatusValue
+  teaching_class_count: number
+}
+
 // --- 批量导入（TASK-010 / FIX-005）---
 export type ImportKind = 'students' | 'teachers' | 'courses' | 'grades'
 

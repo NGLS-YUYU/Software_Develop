@@ -33,6 +33,7 @@ import type {
   Teacher,
   TeachingClass,
   TeachingTask,
+  Term,
   UserInfo,
 } from '@/types'
 
@@ -218,6 +219,20 @@ export const gradeApi = {
     get<GradeStatistics>(`/grades/teaching-classes/${classId}/statistics`),
   /** 删除成绩草稿（仅 DRAFT；SUBMITTED/APPROVED 后端返回 409）。 */
   removeDraft: (gradeId: number) => del(`/grades/${gradeId}`),
+}
+
+// --- 学期（TASK-011 / FIX-006）---
+export const termApi = {
+  list: (q?: PageQuery & { academic_year?: string; status?: string }) =>
+    get<PageResult<Term>>('/terms', q),
+  get: (id: number) => get<Term>(`/terms/${id}`),
+  create: (b: Record<string, unknown>) => post<Term>('/terms', b),
+  update: (id: number, b: Record<string, unknown>) => put<Term>(`/terms/${id}`, b),
+  remove: (id: number) => del(`/terms/${id}`),
+  /** 激活学期：后端保证「最多一个 ACTIVE」，已结束学期拒绝（409）。 */
+  activate: (id: number) => post<Term>(`/terms/${id}/activate`),
+  /** 结束学期：仅进行中的学期可结束（409）。 */
+  end: (id: number) => post<Term>(`/terms/${id}/end`),
 }
 
 // --- 批量导入（TASK-010 / FIX-005）---

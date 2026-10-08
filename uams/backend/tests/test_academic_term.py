@@ -589,3 +589,153 @@ def test_teacher_cannot_activate_term(env):
 def test_unauthenticated_denied(env):
     r = client.get(f"{PREFIX}/terms")
     assert r.status_code == 401
+
+
+# =========================== FIX-006：学期管理前端闭环 ===========================
+# 前端只调用既有 /terms 接口；本节补齐「学生写权限矩阵」「关键词检索」
+# 「组合筛选 + 分页」「前端编辑载荷不重置状态」「一条完整生命周期」。
+
+
+def test_student_cannot_write_terms(env):
+    """学生拥有 term:read 但无 term:write：增/改/删/激活/结束全部 403。"""
+    tid = env["term"]
+    assert client.post(
+        f"{PREFIX}/terms", json=_term_payload(2200), headers=auth(env["s_uname"])
+    ).status_code == 403
+    assert client.put(
+        f"{PREFIX}/terms/{tid}", json={"name": "越权"}, headers=auth(env["s_uname"])
+    ).status_code == 403
+    assert client.delete(
+        f"{PREFIX}/terms/{tid}", headers=auth(env["s_uname"])
+    ).status_code == 403
+    assert client.post(
+        f"{PREFIX}/terms/{tid}/activate", headers=auth(env["s_uname"])
+    ).status_code == 403
+    assert client.post(
+        f"{PREFIX}/terms/{tid}/end", headers=auth(env["s_uname"])
+    ).status_code == 403
+    # 只读接口仍然开放（学生课表/成绩需要学期信息）
+    assert client.get(f"{PREFIX}/terms", headers=auth(env["s_uname"])).status_code == 200
+
+
+def test_teacher_cannot_end_term(env):
+    """教师同样无 term:write：结束学期 403（激活已在既有用例覆盖）。"""
+    r = client.post(
+        f"{PREFIX}/terms/{env['term']}/end", headers=auth(env["ta_uname"])
+    )
+    assert r.status_code == 403
+
+
+def test_list_keyword_search(env):
+    """关键词同时匹配 name 与 academic_year（列表页搜索框）。"""
+    tid = client.post(
+        f"{PREFIX}/terms", json=_term_payload(2400), headers=admin_auth()
+    ).json()["id"]
+    by_name = client.get(
+        f"{PREFIX}/terms", params={"keyword": f"{P}term2400-1"}, headers=admin_auth()
+    ).json()
+    assert [x["id"] for x in by_name["items"]] == [tid]
+
+    by_year = client.get(
+        f"{PREFIX}/terms", params={"keyword": "2400-2401"}, headers=admin_auth()
+    ).json()
+    assert [x["id"] for x in by_year["items"]] == [tid]
+
+    none = client.get(
+        f"{PREFIX}/terms", params={"keyword": "不存在的学期xyz"}, headers=admin_auth()
+    ).json()
+    assert none["items"] == [] and none["total"] == 0
+
+
+def test_list_status_filter_with_pagination(env):
+    """状态筛选 + 分页：前端不得自行切片，必须由后端分页。"""
+    ids = []
+    for year in (2500, 2501, 2502):
+        ids.append(client.post(
+            f"{PREFIX}/terms", json=_term_payload(year, status="ACTIVE"
+                                                 if year == 2500 else None),
+            headers=admin_auth(),
+        ).json()["id"])
+    active = client.get(
+        f"{PREFIX}/terms", params={"status": "ACTIVE"}, headers=admin_auth()
+    ).json()
+    assert [x["id"] for x in active["items"]] == [ids[0]]
+
+    page1 = client.get(
+        f"{PREFIX}/terms",
+        params={"keyword": f"{P}term25", "page": 1, "page_size": 2},
+        headers=admin_auth(),
+    ).json()
+    assert page1["total"] == 3 and len(page1["items"]) == 2
+    assert page1["page"] == 1 and page1["page_size"] == 2 and page1["total_pages"] == 2
+    page2 = client.get(
+        f"{PREFIX}/terms",
+        params={"keyword": f"{P}term25", "page": 2, "page_size": 2},
+        headers=admin_auth(),
+    ).json()
+    assert len(page2["items"]) == 1
+    assert {x["id"] for x in page1["items"]} | {x["id"] for x in page2["items"]} == set(ids)
+
+
+def test_update_payload_without_status_keeps_status(env):
+    """前端编辑只提交 name/学年/学期/日期（不带 status）→ 状态保持不变。"""
+    tid = client.post(
+        f"{PREFIX}/terms", json=_term_payload(2200), headers=admin_auth()
+    ).json()["id"]
+    client.post(f"{PREFIX}/terms/{tid}/activate", headers=admin_auth())
+
+    r = client.put(
+        f"{PREFIX}/terms/{tid}",
+        json={
+            "name": f"{P}term2200-1改", "academic_year": "2200-2201", "semester": 1,
+            "start_date": "2200-09-02", "end_date": "2201-01-16",
+        },
+        headers=admin_auth(),
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["name"] == f"{P}term2200-1改"
+    assert body["start_date"] == "2200-09-02"
+    assert body["status"] == "ACTIVE"  # 未被编辑载荷重置
+
+
+def test_full_term_lifecycle_via_frontend_endpoints(env):
+    """列表 → 新增 → 激活 → 结束 → 刷新后状态正确（前端页面的真实调用序列）。"""
+    # 列表（页面加载）
+    assert client.get(f"{PREFIX}/terms", headers=admin_auth()).status_code == 200
+
+    # 新增（弹窗提交）
+    created = client.post(
+        f"{PREFIX}/terms", json=_term_payload(2600), headers=admin_auth()
+    )
+    assert created.status_code == 201, created.text
+    tid = created.json()["id"]
+    assert created.json()["status"] == "PLANNED"
+
+    # 激活（二次确认后调用）
+    act = client.post(f"{PREFIX}/terms/{tid}/activate", headers=admin_auth())
+    assert act.status_code == 200 and act.json()["status"] == "ACTIVE"
+
+    # 重复激活：后端幂等返回 200（前端按状态隐藏按钮，不依赖后端报错）
+    again = client.post(f"{PREFIX}/terms/{tid}/activate", headers=admin_auth())
+    assert again.status_code == 200 and again.json()["status"] == "ACTIVE"
+
+    # 刷新列表：状态来自服务器
+    listed = client.get(
+        f"{PREFIX}/terms", params={"keyword": f"{P}term2600-1"}, headers=admin_auth()
+    ).json()
+    assert listed["items"][0]["status"] == "ACTIVE"
+
+    # 结束
+    end = client.post(f"{PREFIX}/terms/{tid}/end", headers=admin_auth())
+    assert end.status_code == 200 and end.json()["status"] == "ENDED"
+
+    # 非法重复结束 → 409
+    r = client.post(f"{PREFIX}/terms/{tid}/end", headers=admin_auth())
+    assert r.status_code == 409
+    assert "进行中" in r.json()["message"]
+
+    # 已结束学期不可再激活 → 409
+    r2 = client.post(f"{PREFIX}/terms/{tid}/activate", headers=admin_auth())
+    assert r2.status_code == 409
+    assert "已结束" in r2.json()["message"]
