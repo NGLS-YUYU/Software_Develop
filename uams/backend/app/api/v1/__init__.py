@@ -38,4 +38,7 @@ for _m in (
 ):
     api_router.include_router(_m.router)
 
+# 管理员管理使用独立前缀 /admins（与账号管理 /users 分开）
+api_router.include_router(user.admins)
+
 __all__ = ["api_router"]

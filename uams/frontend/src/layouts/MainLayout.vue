@@ -51,6 +51,13 @@ const activeMenu = computed(() => {
   return found?.path ?? route.path
 })
 
+/** 是否处于教务端（用于双身份切换按钮的文案） */
+const inAdminConsole = computed(() => route.path.startsWith('/admin'))
+
+function switchConsole() {
+  router.push(inAdminConsole.value ? '/teacher/dashboard' : '/admin/dashboard')
+}
+
 /** 当前页面标题/说明（来自路由 meta，页面无需重复写标题） */
 const pageTitle = computed(() => (route.meta.title as string) || '')
 const pageDesc = computed(() => (route.meta.desc as string) || '')
@@ -131,6 +138,10 @@ async function handleLogout() {
           <span class="crumb">{{ roleLabel }}</span>
         </div>
         <div class="right">
+          <!-- 教师兼任管理员：可在教务端与教师端之间切换 -->
+          <el-button v-if="auth.isDualRole" link type="primary" @click="switchConsole">
+            {{ inAdminConsole ? '切换到教学工作台' : '切换到教务控制台' }}
+          </el-button>
           <el-tag class="semester-chip" size="small" effect="plain">
             {{ semester }}
           </el-tag>

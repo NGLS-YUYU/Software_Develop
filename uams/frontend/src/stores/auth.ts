@@ -26,7 +26,17 @@ export const useAuthStore = defineStore('auth', () => {
   const isLoggedIn = computed(() => !!token.value)
   const isStudent = computed(() => user.value?.user_type === 'STUDENT')
   const isTeacher = computed(() => user.value?.user_type === 'TEACHER')
-  const isAdmin = computed(() => user.value?.user_type === 'ADMIN')
+  /** 管理员以**角色**为准：教师被授予 ACADEMIC_ADMIN 后同样算管理员 */
+  const isAdmin = computed(
+    () => user.value?.user_type === 'ADMIN' || roles.value.includes('ACADEMIC_ADMIN'),
+  )
+  /** 访问身份集合 = user_type ∪ 角色代码，供路由守卫判断能否进入某端 */
+  const identities = computed(() => [
+    ...(user.value?.user_type ? [user.value.user_type] : []),
+    ...roles.value,
+  ])
+  /** 教师兼任管理员：同时具备教师端与教务端身份 */
+  const isDualRole = computed(() => isTeacher.value && isAdmin.value)
 
   function has(permission: string) {
     return permissions.value.includes(permission)
@@ -95,6 +105,8 @@ export const useAuthStore = defineStore('auth', () => {
     isStudent,
     isTeacher,
     isAdmin,
+    identities,
+    isDualRole,
     has,
     hasAny,
     login,

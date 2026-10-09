@@ -108,6 +108,8 @@ export interface Student {
 
 export interface Teacher {
   id: number
+  /** 关联账号 id（管理员授权时使用） */
+  user_id: number
   teacher_no: string
   real_name: string
   college_id: number
@@ -419,6 +421,33 @@ export interface Overview {
   teaching_classes: number
   selections: number
   pending_grades: number
+}
+
+// --- 管理员账号与审计（后端 /admins、/users、/audit-logs）---
+export interface AdminAccount {
+  id: number
+  username: string
+  real_name: string
+  user_type: 'STUDENT' | 'TEACHER' | 'ADMIN'
+  email?: string | null
+  phone?: string | null
+  status: string
+  last_login_at?: string | null
+  /** 角色代码：含 ACADEMIC_ADMIN 即为管理员 */
+  roles: string[]
+}
+
+export interface AuditLog {
+  id: number
+  user_id?: number | null
+  username?: string | null
+  action: string
+  module: string
+  resource_type?: string | null
+  resource_id?: number | null
+  detail?: string | null
+  result: string
+  created_at: string
 }
 
 // --- 学生成绩总览（后端 /grades/my，含实时 GPA 与排名）---

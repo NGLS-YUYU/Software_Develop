@@ -60,7 +60,23 @@
 | GET | `/users/{id}` | 用户详情 | `user:read` |
 | POST | `/users` | 新建账号（默认按 user_type 分配角色） | `user:write` |
 | PUT | `/users/{id}/password` | 重置密码（204，重置后解锁） | `user:write` |
-| PUT | `/users/{id}/status` | 停用/启用账号 | `user:write` |
+| PUT | `/users/{id}/status` | 停用/启用账号（停用唯一管理员返回 409；不能停用自己） | `user:write` |
+
+**管理员管理**（V3.0）
+
+| 方法 | 路径 | 说明 | 权限 |
+|---|---|---|---|
+| GET | `/admins` | 管理员列表（含教师兼任账号） | `user:read` |
+| POST | `/admins/{user_id}/grant` | 授予管理员角色（典型：教师兼任） | `user:write` |
+| POST | `/admins/{user_id}/revoke` | 撤销管理员角色（不删账号、不动教学数据） | `user:write` |
+
+> **判定依据是角色，不是 `user_type`**：持有 `ACADEMIC_ADMIN` 角色即为管理员。
+> - 教师兼任管理员时 `user_type` **保持 `TEACHER` 不变**，教学班、课表、成绩等归属完全不受影响；
+> - 撤销只删除 `user_roles` 关联，账号与教学数据全部保留；
+> - 令牌只携带 `sub`，角色每次请求重新解析，因此**撤销后旧会话在下一次请求即失效**；
+> - 保护规则：不能撤销/停用唯一的管理员（409），不能撤销/停用当前登录账号自己（409）；
+> - 审计：授权/撤销/启停会写入 `operation_logs`（`action` 为 `ADMIN_GRANT`/`ADMIN_REVOKE`/`ADMIN_ENABLE`/`ADMIN_DISABLE`，含操作人、目标与时间），
+>   可通过 `GET /audit-logs?resource_type=user&resource_id=` 查询（`audit-logs` 本次新增 `resource_type`/`resource_id` 过滤参数）。
 
 **请求示例**
 

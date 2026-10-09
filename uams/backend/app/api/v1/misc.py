@@ -454,7 +454,9 @@ class LogOut(BaseModel):
 def list_logs(
     params: PageParams = Depends(),
     action: str | None = Query(None),
-    user_id: int | None = Query(None),
+    user_id: int | None = Query(None, description="按操作人过滤"),
+    resource_type: str | None = Query(None, description="按目标资源类型过滤"),
+    resource_id: int | None = Query(None, description="按目标资源 id 过滤"),
     db: Session = Depends(get_db),
     _=Depends(RequirePermissions("audit:read")),
 ):
@@ -463,6 +465,10 @@ def list_logs(
         stmt = stmt.where(OperationLog.action == action)
     if user_id:
         stmt = stmt.where(OperationLog.user_id == user_id)
+    if resource_type:
+        stmt = stmt.where(OperationLog.resource_type == resource_type)
+    if resource_id:
+        stmt = stmt.where(OperationLog.resource_id == resource_id)
     total = db.execute(select(func.count()).select_from(stmt.subquery())).scalar() or 0
     rows = db.execute(
         stmt.order_by(OperationLog.created_at.desc())

@@ -124,7 +124,8 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin',
     component: () => import('@/layouts/MainLayout.vue'),
-    meta: { roles: ['ADMIN'] },
+    // 允许「账号类别为 ADMIN」或「持有 ACADEMIC_ADMIN 角色」的账号进入教务端
+    meta: { roles: ['ADMIN', 'ACADEMIC_ADMIN'] },
     children: [
       { path: '', redirect: '/admin/dashboard' },
       {
@@ -174,6 +175,12 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-selection',
         component: () => import('@/views/admin/SelectionManage.vue'),
         meta: { title: '选课管理', desc: '选课开放与选课结果管理', icon: 'Checked' },
+      },
+      {
+        path: 'admins',
+        name: 'admin-admins',
+        component: () => import('@/views/admin/AdminManage.vue'),
+        meta: { title: '管理员管理', icon: 'Key', desc: '管理员账号创建、教师授权与权限变更记录' },
       },
       {
         path: 'terms',
@@ -260,8 +267,10 @@ router.beforeEach(async (to) => {
     }
   }
 
+  // 访问身份 = user_type ∪ 角色代码：教师兼任管理员时 user_type 仍为 TEACHER，
+  // 但其拥有 ACADEMIC_ADMIN 角色，应当允许进入教务端（后端权限仍是最终裁判）。
   const allowed = to.matched.find((r) => r.meta.roles)?.meta.roles as string[] | undefined
-  if (allowed && !allowed.includes(auth.user?.user_type ?? '')) {
+  if (allowed && !allowed.some((r) => auth.identities.includes(r))) {
     return { path: '/403' }
   }
   return true

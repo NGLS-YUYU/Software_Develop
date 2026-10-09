@@ -88,6 +88,8 @@ class TeacherOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    # 关联的账号 id：管理员授权时需要用它把教师账号加为管理员（V3.0）
+    user_id: int
     teacher_no: str
     real_name: str = ""
     college_id: int

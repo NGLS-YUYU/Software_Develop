@@ -2,8 +2,10 @@
 
 import { del, download, get, post, put, upload } from './request'
 import type {
+  AdminAccount,
   Announcement,
   ClassInfo,
+  AuditLog,
   Classroom,
   College,
   Course,
@@ -218,6 +220,25 @@ export const scheduleApi = {
   /** 查看指定学生课表（教务/教师用；学生只能查本人）。 */
   student: (studentId: number, semester: string, week?: number) =>
     get<ScheduleItem[]>(`/schedules/students/${studentId}`, { semester, week }),
+}
+
+// --- 管理员管理（V3.0：管理员账号与权限授予）---
+export const adminApi = {
+  /** 管理员列表：含独立管理员与「教师兼任」账号（判定依据是角色，不是 user_type）。 */
+  list: () => get<AdminAccount[]>('/admins'),
+  /** 创建独立管理员账号（复用既有 /users，user_type=ADMIN）。 */
+  create: (b: Record<string, unknown>) => post<AdminAccount>('/users', b),
+  /** 给既有账号授予管理员角色（典型：教师兼任），只加角色、不改 user_type。 */
+  grant: (userId: number) => post<AdminAccount>(`/admins/${userId}/grant`),
+  /** 撤销管理员角色：只删角色关联，不删账号、不动教学数据。 */
+  revoke: (userId: number) => post<AdminAccount>(`/admins/${userId}/revoke`),
+  resetPassword: (userId: number, newPassword: string) =>
+    put<void>(`/users/${userId}/password`, { new_password: newPassword }),
+  setStatus: (userId: number, status: 'ACTIVE' | 'DISABLED') =>
+    put<AdminAccount>(`/users/${userId}/status`, { status }),
+  /** 权限变更记录（管理员管理的审计展示）。 */
+  auditLogs: (q?: PageQuery & { action?: string; resource_type?: string; resource_id?: number }) =>
+    get<PageResult<AuditLog>>('/audit-logs', q),
 }
 
 // --- 成绩 ---
