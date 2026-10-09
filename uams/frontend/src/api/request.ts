@@ -16,6 +16,17 @@ export function setUnauthorizedHandler(fn: () => void) {
   onUnauthorized = fn
 }
 
+/** 403 时的回调（由 auth store 注入）。
+ *
+ * 403 有两种来源，必须区分对待（不能一律退出登录）：
+ *   1. 普通业务越权（例如学生调教师接口）→ 只提示，不动登录态；
+ *   2. 管理员权限刚被撤销 → 需要重新拉取权限并调整界面/跳转。
+ * 具体判定放在 auth store（它才知道本地缓存的身份），这里只负责通知。 */
+let onForbidden: (() => void) | null = null
+export function setForbiddenHandler(fn: () => void) {
+  onForbidden = fn
+}
+
 http.interceptors.request.use((config) => {
   const token = localStorage.getItem('uams_token')
   if (token) {
@@ -36,6 +47,10 @@ http.interceptors.response.use(
         ElMessage.error('登录已过期，请重新登录')
         onUnauthorized?.()
       }
+    } else if (status === 403) {
+      // 提示照旧；是否调整登录态/跳转交给 auth store 判定
+      ElMessage.error(data?.message || '没有权限执行该操作')
+      onForbidden?.()
     } else if (status === 422 && data?.errors?.length) {
       ElMessage.error(
         data.errors.map((e) => `${e.field}: ${e.msg}`).join('；'),

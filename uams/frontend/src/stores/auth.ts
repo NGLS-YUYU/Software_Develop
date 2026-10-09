@@ -6,12 +6,15 @@
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 
 import { authApi } from '@/api'
-import { setUnauthorizedHandler } from '@/api/request'
+import { setForbiddenHandler, setUnauthorizedHandler } from '@/api/request'
 import type { UserInfo } from '@/types'
 
 const TOKEN_KEY = 'uams_token'
+/** 管理员角色代码：前端判定管理员身份的唯一依据（与后端一致） */
+const ADMIN_ROLE = 'ACADEMIC_ADMIN'
 const USER_KEY = 'uams_user'
 
 export const useAuthStore = defineStore('auth', () => {
@@ -26,13 +29,16 @@ export const useAuthStore = defineStore('auth', () => {
   const isLoggedIn = computed(() => !!token.value)
   const isStudent = computed(() => user.value?.user_type === 'STUDENT')
   const isTeacher = computed(() => user.value?.user_type === 'TEACHER')
-  /** 管理员以**角色**为准：教师被授予 ACADEMIC_ADMIN 后同样算管理员 */
-  const isAdmin = computed(
-    () => user.value?.user_type === 'ADMIN' || roles.value.includes('ACADEMIC_ADMIN'),
-  )
-  /** 访问身份集合 = user_type ∪ 角色代码，供路由守卫判断能否进入某端 */
+  /** 管理员**只看角色**：教师被授予 ACADEMIC_ADMIN 后算管理员；
+   *  反过来，user_type 为 ADMIN 但角色被撤销后**不再**算管理员（权限本就来自角色）。 */
+  const isAdmin = computed(() => roles.value.includes('ACADEMIC_ADMIN'))
+  /** 访问身份集合 = 端身份(user_type，排除 ADMIN) ∪ 角色代码，供路由守卫判断能否进入某端。
+   *  'ADMIN' 不作为身份来源：否则 user_type=ADMIN 且角色被撤销的账号仍能进入教务端，
+   *  进去后每个接口都 403，界面与真实权限不一致。 */
   const identities = computed(() => [
-    ...(user.value?.user_type ? [user.value.user_type] : []),
+    ...(user.value?.user_type && user.value.user_type !== 'ADMIN'
+      ? [user.value.user_type]
+      : []),
     ...roles.value,
   ])
   /** 教师兼任管理员：同时具备教师端与教务端身份 */
@@ -93,6 +99,58 @@ export const useAuthStore = defineStore('auth', () => {
   setUnauthorizedHandler(() => {
     clear()
     location.href = '/login'
+  })
+
+  /** 403 处理：只在「确认管理员权限已被撤销」时才调整界面，普通业务越权不打扰登录态。 */
+  let reconciling = false
+  setForbiddenHandler(async () => {
+    // 以「角色」判定：本地从未持有管理员角色 → 属普通业务越权（如学生调教师接口），
+    // 只提示，绝不清理登录态、绝不跳转。
+    if (!roles.value.includes(ADMIN_ROLE) || reconciling) return
+    reconciling = true
+    try {
+      await refresh() // 重新拉取当前用户真实角色/权限（后端为最终裁判）
+    } catch {
+      // 刷新失败（如 401）会由 401 分支处理，这里不重复动作
+      return
+    } finally {
+      reconciling = false
+    }
+    if (roles.value.includes(ADMIN_ROLE)) return // 角色仍在 → 瞬态 403，交给调用方
+    ElMessage.warning('你的管理员权限已被撤销，正在切换到当前身份')
+    redirectToHomeByIdentity()
+  })
+
+  /** 按当前真实身份回到对应工作台；无任何有效身份则清理登录态回登录页。 */
+  function redirectToHomeByIdentity() {
+    if (isTeacher.value) {
+      location.assign('/teacher/dashboard')
+    } else if (isStudent.value) {
+      location.assign('/student/dashboard')
+    } else if (user.value?.user_type === 'ADMIN') {
+      // 账号类别仍是管理员但已无管理员角色：无任何可用工作台
+      clear()
+      location.assign('/login')
+    } else {
+      clear()
+      location.assign('/login')
+    }
+  }
+
+  /** 多标签页一致性：其他标签页登录/退出后，本页重新对齐（避免旧身份界面与新 Token 不一致）。 */
+  window.addEventListener('storage', (e) => {
+    if (e.key !== TOKEN_KEY) return
+    const next = e.newValue ?? ''
+    if (next === token.value) return
+    if (!next) {
+      // 其他标签页已退出 → 本页同步清理（避免仍用旧身份展示界面）
+      clear()
+      location.assign('/login')
+    } else {
+      // 其他标签页切换了登录身份 → 回到入口按新身份重新分发工作台，
+      // 避免「旧角色界面 + 新 Token」的不一致状态
+      location.assign('/')
+    }
   })
 
   return {
