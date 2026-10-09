@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /** 开课排课：教学任务 → 教学班 → 排课 → 开放选课。 */
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { classroomApi, collegeApi, courseApi, scheduleApi, teacherApi, teachingApi } from '@/api'
+import { classroomApi, collegeApi, courseApi, scheduleApi, teacherApi, teachingApi, termApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
 import type {
   Classroom,
@@ -13,6 +13,7 @@ import type {
   Teacher,
   TeachingClass,
   TeachingTask,
+  Term,
 } from '@/types'
 
 const tab = ref('class')
@@ -22,6 +23,26 @@ const colleges = ref<College[]>([])
 const courses = ref<Course[]>([])
 const teachers = ref<Teacher[]>([])
 const classrooms = ref<Classroom[]>([])
+/** 学期（academic_terms）列表：用于把页面上的学期字符串解析成后端要求的 term_id */
+const terms = ref<Term[]>([])
+
+/**
+ * 把页面的学期字符串（如 2026-2027-1）解析为学期实体。
+ * 后端 POST /teaching-classes 要求 term_id（academic_terms.id），
+ * 而本页的学期筛选用的是 "学年-学年-序号" 字符串，两者需要在此对应（不写死 ID）。
+ */
+function termForSemester(s: string): Term | null {
+  const m = /^(\d{4}-\d{4})-([12])$/.exec(s)
+  if (!m) return null
+  return (
+    terms.value.find(
+      (t) => t.academic_year === m[1] && t.semester === Number(m[2]),
+    ) ?? null
+  )
+}
+
+/** 新增教学班将归属的学期（取自页面当前选择的学期） */
+const createTerm = computed(() => termForSemester(semester.value))
 
 const tasks = ref<TeachingTask[]>([])
 const tasksTotal = ref(0)
@@ -65,6 +86,8 @@ async function saveTask() {
     ElMessage.success('教学任务已创建')
     taskDialog.value = false
     await loadTasks()
+  } catch {
+    // 失败提示由 axios 拦截器统一给出；保留弹窗便于修改后重试
   } finally {
     taskSaving.value = false
   }
@@ -78,9 +101,13 @@ async function removeTask(row: TeachingTask) {
   } catch {
     return
   }
-  await teachingApi.removeTask(row.id)
-  ElMessage.success('已删除')
-  await loadTasks()
+  try {
+    await teachingApi.removeTask(row.id)
+    ElMessage.success('已删除')
+    await loadTasks()
+  } catch {
+    // 有引用等业务拒绝由拦截器提示
+  }
 }
 
 // --- 教学班表单 ---
@@ -91,9 +118,23 @@ const classEditingId = ref<number | null>(null)
 const classSaving = ref(false)
 
 function openClassCreate() {
+  // 没有对应学期就不要打开表单：后端要求 term_id，提交必然失败
+  if (!createTerm.value) {
+    ElMessage.warning(
+      `当前学期「${semester.value}」在学期管理中不存在，请先在「学期管理」创建该学期后再新增教学班`,
+    )
+    return
+  }
   classMode.value = 'create'
   classEditingId.value = null
-  classForm.value = { code: '', task_id: undefined, teacher_id: undefined, capacity: 40 }
+  classForm.value = {
+    code: '',
+    task_id: undefined,
+    teacher_id: undefined,
+    capacity: 40,
+    // 后端 TeachingClassCreate.term_id 必填；course_id / semester 由教学任务带入
+    term_id: createTerm.value.id,
+  }
   classDialog.value = true
 }
 
@@ -109,17 +150,36 @@ function openClassEdit(row: TeachingClass) {
 }
 
 async function saveClass() {
+  if (classMode.value === 'create') {
+    // 提交前校验：字段缺失或学期不可用时给出明确提示，不发出无效请求
+    const t = createTerm.value
+    if (!t) {
+      ElMessage.warning(`学期「${semester.value}」不存在，无法新增教学班`)
+      return
+    }
+    if (t.status === 'ENDED') {
+      ElMessage.warning(`学期「${t.name}」已结束，不能新增教学班`)
+      return
+    }
+    if (!classForm.value.code || !classForm.value.task_id) {
+      ElMessage.warning('请填写教学班号并选择教学任务')
+      return
+    }
+  }
   classSaving.value = true
   try {
     if (classMode.value === 'create') {
       await teachingApi.createClass(classForm.value)
       ElMessage.success('教学班已创建')
     } else if (classEditingId.value) {
+      // 编辑不带 term_id：后端约定教学班所属学期不可修改（TeachingClassTermImmutable）
       await teachingApi.updateClass(classEditingId.value, classForm.value)
       ElMessage.success('教学班已更新')
     }
     classDialog.value = false
     await loadClasses()
+  } catch {
+    // 失败时保留弹窗与已填内容，错误提示由 axios 拦截器统一给出
   } finally {
     classSaving.value = false
   }
@@ -133,16 +193,24 @@ async function removeClass(row: TeachingClass) {
   } catch {
     return
   }
-  await teachingApi.removeClass(row.id)
-  ElMessage.success('已删除')
-  await loadClasses()
+  try {
+    await teachingApi.removeClass(row.id)
+    ElMessage.success('已删除')
+    await loadClasses()
+  } catch {
+    // 有选课/成绩等业务拒绝由拦截器提示
+  }
 }
 
 async function toggleSelection(row: TeachingClass) {
   const open = row.selection_status !== 'OPEN'
-  await teachingApi.toggleSelection(row.id, open)
-  ElMessage.success(open ? '已开放选课' : '已关闭选课')
-  await loadClasses()
+  try {
+    await teachingApi.toggleSelection(row.id, open)
+    ElMessage.success(open ? '已开放选课' : '已关闭选课')
+    await loadClasses()
+  } catch {
+    // 开放条件不满足等业务拒绝由拦截器提示
+  }
 }
 
 // --- 排课 ---
@@ -302,16 +370,18 @@ watch(semester, () => {
 watch(tab, (v) => (v === 'task' ? loadTasks() : loadClasses()))
 
 onMounted(async () => {
-  const [co, cr, te, rm] = await Promise.allSettled([
+  const [co, cr, te, rm, tm] = await Promise.allSettled([
     collegeApi.list({ page_size: 200 }),
     courseApi.list({ page_size: 200 }),
     teacherApi.list({ page_size: 200 }),
     classroomApi.list({ page_size: 200 }),
+    termApi.list({ page_size: 200 }),
   ])
   if (co.status === 'fulfilled') colleges.value = co.value.items
   if (cr.status === 'fulfilled') courses.value = cr.value.items
   if (te.status === 'fulfilled') teachers.value = te.value.items
   if (rm.status === 'fulfilled') classrooms.value = rm.value.items
+  if (tm.status === 'fulfilled') terms.value = tm.value.items
   await loadTasks()
   await loadClasses()
 })
@@ -564,6 +634,11 @@ onMounted(async () => {
                 :label="`${t.course_name}（${t.semester}）`" :value="t.id" />
             </el-select>
           </el-form-item>
+          <el-form-item label="所属学期">
+            <span class="term-hint">
+              {{ createTerm ? createTerm.name : `${semester}（学期管理中不存在）` }}
+            </span>
+          </el-form-item>
         </template>
         <el-form-item label="授课教师">
           <el-select v-model="classForm.teacher_id" filterable clearable style="width: 100%">
@@ -722,6 +797,11 @@ onMounted(async () => {
 </template>
 
 <style scoped lang="scss">
+.term-hint {
+  color: var(--uams-text-2);
+  font-size: 13px;
+}
+
 /* 桌面表格 / 窄屏卡片的显示切换由下方断点统一控制 */
 .table-wrap {
   width: 100%;
