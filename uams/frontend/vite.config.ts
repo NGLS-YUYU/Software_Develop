@@ -63,9 +63,13 @@ const apiProxy = {
 }
 
 // 仅允许指定的 Cloudflare Tunnel 域名
+//const allowedHosts = [
+//  'elatives-active-janet-concord.trycloudflare.com',
+//]
 const allowedHosts = [
-  'spirit-floyd-classics-take.trycloudflare.com',
+  '.trycloudflare.com',
 ]
+
 
 export default defineConfig({
   plugins: [
