@@ -106,16 +106,16 @@ class ExamService:
         )
         if not target:
             return []
-        other_class_ids = list(
-            self.db.execute(
-                select(Exam.teaching_class_id).where(
-                    Exam.id != exam.id,
-                    Exam.exam_date == exam_date,
-                    Exam.start_time < end,
-                    Exam.end_time > start,
-                )
-            ).scalars()
+        stmt = select(Exam.teaching_class_id).where(
+            Exam.exam_date == exam_date,
+            Exam.start_time < end,
+            Exam.end_time > start,
         )
+        # 新建考试尚未 flush，id 为 None；`Exam.id != NULL` 在 SQL 中恒为 UNKNOWN，
+        # 会把所有已有考试排除掉，导致创建时学生冲突检测失效。
+        if exam.id is not None:
+            stmt = stmt.where(Exam.id != exam.id)
+        other_class_ids = list(self.db.execute(stmt).scalars())
         if not other_class_ids:
             return []
         other_students = set(

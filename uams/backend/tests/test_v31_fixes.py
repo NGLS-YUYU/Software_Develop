@@ -174,6 +174,17 @@ def test_exam_conflict_detection():
         db.commit()
         try:
             assert svc.student_conflicts(exam, exam.exam_date, exam.start_time, exam.end_time)
+            # 新建考试（id=None）也必须检测到与已有考试的学生冲突
+            transient = Exam(
+                teaching_class_id=2, course_id=2, semester="2026-2027-1",
+                exam_type="MAKEUP", exam_date=exam.exam_date,
+                start_time=exam.start_time, end_time=exam.end_time,
+                duration_minutes=120, status="DRAFT",
+            )
+            assert transient.id is None
+            assert svc.student_conflicts(
+                transient, exam.exam_date, exam.start_time, exam.end_time
+            )
         finally:
             db.delete(tmp)
             db.commit()
