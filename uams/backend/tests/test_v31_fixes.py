@@ -6,21 +6,23 @@
 from __future__ import annotations
 
 import io
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-from app.core.security import create_access_token
+from app.core.security import create_access_token, hash_password
 from app.db.session import SessionLocal, engine
 from app.main import app
 from app.models.grade import Grade
 from app.models.material import TeachingMaterial
+from app.models.misc import EvaluationTask
 from app.models.person import Student
 from app.models.role import UserRole
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
+from app.models.user import User, UserStatus
 
 
 @pytest.fixture(scope="module")
@@ -190,6 +192,34 @@ def test_exam_conflict_detection():
             db.commit()
 
 
+def test_schedule_conflict_uses_or_semantics():
+    """同教学班或同教室任一命中即冲突（不能写成 AND）。"""
+    from app.models.exam import Exam, ExamRoom
+    from app.services.exam import ExamService
+
+    with _db() as db:
+        e = Exam(
+            teaching_class_id=5, course_id=4, semester="2026-2027-1",
+            exam_type="MAKEUP", exam_date=date(2026, 10, 5),
+            start_time=time(9, 0), end_time=time(11, 0),
+            duration_minutes=120, status="DRAFT",
+        )
+        db.add(e)
+        db.flush()
+        # 教学班 5 周一无课，但教室 1 周一第 1-2 节有教学班 1 的课。
+        db.add(ExamRoom(exam_id=e.id, classroom_id=1, capacity=10, assigned_count=0))
+        db.commit()
+        try:
+            hit = ExamService(db).schedule_conflict(
+                e, e.exam_date, e.start_time, e.end_time
+            )
+            assert hit is not None
+            assert hit.classroom_id == 1
+        finally:
+            db.delete(e)
+            db.commit()
+
+
 def test_exam_api_validation_and_room_crud(client):
     # 时长与起止时间不一致
     r = client.put("/api/v1/exams/2", headers=ADMIN, json={"duration_minutes": 60})
@@ -209,6 +239,14 @@ def test_exam_api_validation_and_room_crud(client):
     assert r.json()["capacity"] == 50
     r = client.put("/api/v1/exams/2/rooms/2", headers=ADMIN, json={"capacity": 60})
     assert r.status_code == 200, r.text
+
+    # 显式传 null 取消监考教师
+    r = client.put("/api/v1/exams/2/rooms/2", headers=ADMIN, json={"invigilator_id": None})
+    assert r.status_code == 200, r.text
+    assert r.json()["invigilator_id"] is None
+    r = client.put("/api/v1/exams/2/rooms/2", headers=ADMIN, json={"invigilator_id": 2})
+    assert r.status_code == 200, r.text
+    assert r.json()["invigilator_id"] == 2
 
 
 def test_exam_delete_empty_room(client):
@@ -294,6 +332,16 @@ def test_evaluation_task_update(client):
         json={"start_time": "2026-11-01T00:00:00", "end_time": "2026-10-01T00:00:00"},
     )
     assert r.status_code == 409, r.text
+    # 创建时同样要校验，不能靠数据库 CheckConstraint 变成 500
+    r = client.post(
+        "/api/v1/evaluations", headers=ADMIN,
+        json={
+            "name": "PYTEST 非法时间", "semester": "2026-2027-1",
+            "start_time": "2026-11-01T00:00:00",
+            "end_time": "2026-10-01T00:00:00",
+        },
+    )
+    assert r.status_code == 422, r.text
 
 
 # ---------------- F-09/F-15 审计日志 ----------------
@@ -357,6 +405,65 @@ def test_teacher_data_isolation(client):
         f"/api/v1/schedules/students/{outsider}", headers=TEACHER1,
         params={"semester": "2026-2027-1"},
     ).status_code == 403
+
+
+def test_teacher_student_list_is_scoped(client):
+    with _db() as db:
+        owned_ids = list(
+            db.execute(
+                select(TeachingClass.id).where(TeachingClass.teacher_id == 1)
+            ).scalars()
+        )
+        allowed = set(
+            db.execute(
+                select(CourseSelection.student_id).where(
+                    CourseSelection.teaching_class_id.in_(owned_ids),
+                    CourseSelection.status == SelectionState.SELECTED,
+                )
+            ).scalars()
+        )
+    r = client.get("/api/v1/students", headers=TEACHER1, params={"page_size": 100})
+    assert r.status_code == 200, r.text
+    ids = {x["id"] for x in r.json()["items"]}
+    assert ids and ids <= allowed
+
+
+def test_admin_type_without_admin_role_is_denied(client):
+    with _db() as db:
+        u = User(
+            username="PYTEST_ADMIN_NOROLE", password_hash=hash_password("x"),
+            real_name="pytest", user_type="ADMIN", status=UserStatus.ACTIVE,
+        )
+        db.add(u)
+        db.commit()
+        uid = u.id
+    try:
+        h = _h(uid, "PYTEST_ADMIN_NOROLE")
+        assert client.get("/api/v1/students/1", headers=h).status_code == 403
+        assert client.get("/api/v1/teaching-classes/1", headers=h).status_code == 403
+    finally:
+        _exec("DELETE FROM users WHERE id=:i", i=uid)
+
+
+def test_evaluation_submit_rejects_cross_semester(client):
+    with _db() as db:
+        now = datetime.now()
+        t = EvaluationTask(
+            name="PYTEST 跨学期", semester="2026-2027-2", status="ACTIVE",
+            start_time=now - timedelta(days=1),
+            end_time=now + timedelta(days=1),
+        )
+        db.add(t)
+        db.commit()
+        tid = t.id
+    try:
+        r = client.post(
+            "/api/v1/evaluations", headers=STUDENT1,
+            json={"task_id": tid, "teaching_class_id": 1, "score": 90},
+        )
+        assert r.status_code == 409, r.text
+    finally:
+        _exec("DELETE FROM evaluation_tasks WHERE id=:i", i=tid)
 
 
 # ---------------- F-14 学生排名 ----------------
@@ -472,6 +579,29 @@ def test_adjustment_flow(client):
     finally:
         _exec("DELETE FROM schedules WHERE id > :i", i=before_sched)
         _exec("DELETE FROM schedule_adjustments WHERE id > :i", i=before_adj)
+
+
+def test_adjustment_rejects_inverted_ranges(client):
+    r = client.post(
+        "/api/v1/schedule-adjustments",
+        headers=TEACHER1,
+        json={
+            "teaching_class_id": 1, "request_type": "ADD", "reason": "bad",
+            "new_day_of_week": 7, "new_start_period": 10, "new_end_period": 2,
+            "new_start_week": 1, "new_end_week": 16, "new_classroom_id": 5,
+        },
+    )
+    assert r.status_code == 422, r.text
+    r = client.post(
+        "/api/v1/schedule-adjustments",
+        headers=TEACHER1,
+        json={
+            "teaching_class_id": 1, "request_type": "ADD", "reason": "bad",
+            "new_day_of_week": 7, "new_start_period": 5, "new_end_period": 6,
+            "new_start_week": 16, "new_end_week": 2, "new_classroom_id": 5,
+        },
+    )
+    assert r.status_code == 422, r.text
 
 
 def test_adjustment_reject_and_permissions(client):

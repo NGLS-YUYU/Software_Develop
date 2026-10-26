@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -43,6 +43,12 @@ class EvalTaskCreate(BaseModel):
     start_time: datetime
     end_time: datetime
     status: str = Field("PENDING", pattern="^(PENDING|ACTIVE|CLOSED)$")
+
+    @model_validator(mode="after")
+    def check_time(self):
+        if self.end_time <= self.start_time:
+            raise ValueError("评价结束时间必须晚于开始时间")
+        return self
 
 
 class EvalTaskOut(EvalTaskCreate):
@@ -191,6 +197,8 @@ def submit_eval(
     tc = db.get(TeachingClass, payload.teaching_class_id)
     if tc is None:
         raise NotFound("教学班不存在")
+    if tc.semester != task.semester:
+        raise Conflict("评价任务的学期与该教学班不一致")
     if tc.teacher_id is None:
         raise Conflict("该教学班未分配教师，无法评价")
 

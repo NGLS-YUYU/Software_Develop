@@ -11,7 +11,6 @@ from app.api.deps import RequirePermissions, get_current_user, is_admin_user
 from app.core.exceptions import Conflict, NotFound, PermissionDenied
 from app.db.session import get_db
 from app.models.exam import Exam, ExamRoom, ExamStudent
-from app.models.organization import Classroom
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
@@ -321,10 +320,13 @@ def update_room(
     room = db.get(ExamRoom, room_id)
     if room is None or room.exam_id != exam_id:
         raise NotFound("考场不存在")
-    data = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
-    classroom_id = data.get("classroom_id", room.classroom_id)
-    capacity = data.get("capacity", room.capacity)
-    invigilator_id = data.get("invigilator_id", room.invigilator_id)
+    data = payload.model_dump(exclude_unset=True)
+    classroom_id = data.get("classroom_id") or room.classroom_id
+    capacity = data.get("capacity") or room.capacity
+    # 显式传 null 表示取消监考；未传字段才沿用原值。
+    invigilator_id = (
+        data["invigilator_id"] if "invigilator_id" in data else room.invigilator_id
+    )
     ExamService(db).validate_room(
         e, classroom_id, capacity, invigilator_id,
         exclude_room_id=room.id, assigned_count=room.assigned_count,

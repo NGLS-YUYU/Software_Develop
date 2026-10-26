@@ -14,7 +14,7 @@ import json
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import Conflict, NotFound, PermissionDenied
@@ -24,7 +24,7 @@ from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
 from app.services.assessment import profile_for
-from app.services.gpa_service import GpaService, NoGradesError
+from app.services.gpa_service import GpaError, GpaService, NoGradesError
 from app.services.ranking_service import RankingService
 from app.services.score_service import ScoreService
 
@@ -391,8 +391,10 @@ class GradeService:
             self._log_change(
                 r, "APPROVE", "教务审核通过", approver_id, before, self._snapshot(r)
             )
-        self.db.commit()
+        # 成绩状态与学分/GPA 必须在同一事务内提交，避免成绩已生效但统计未更新。
+        self.db.flush()
         self._refresh_student_credits({r.student_id for r in rows})
+        self.db.commit()
         return len(rows)
 
     def reject(self, approver_id: int, grade_ids: list[int], reason: str) -> int:
@@ -433,8 +435,9 @@ class GradeService:
         self._log_change(
             g, "UN_APPROVE", reason, operator_id, before, self._snapshot(g)
         )
-        self.db.commit()
+        self.db.flush()
         self._refresh_student_credits({g.student_id})
+        self.db.commit()
         return g
 
     def correct(
@@ -500,13 +503,14 @@ class GradeService:
         self._log_change(
             g, "CORRECT", reason, operator_id, before, self._snapshot(g)
         )
-        self.db.commit()
+        self.db.flush()
         self._refresh_student_credits({g.student_id})
+        self.db.commit()
         return g
 
     def _refresh_student_credits(self, student_ids: set[int]) -> None:
         """重算已修学分与 GPA（学分只计及格课程；GPA 由 GpaService 统一口径）。"""
-        for sid in student_ids:
+        for sid in sorted(student_ids):
             rows = list(
                 self.db.execute(
                     select(Grade).where(
@@ -520,13 +524,16 @@ class GradeService:
             # GPA 单一来源（DATABASE.md §9.3）：与 /grades/my、排名同口径，不及格计入 0.0
             try:
                 gpa = GpaService(self.db).gpa_of(sid)
-            except NoGradesError:
+            except GpaError:
+                # 无有效成绩或存在脏数据时置空，不阻断成绩状态变更。
                 gpa = None
-            stu = self.db.get(Student, sid)
+            stu = self.db.execute(
+                select(Student).where(Student.id == sid).with_for_update()
+            ).scalar_one_or_none()
             if stu:
                 stu.total_credits = total_credits
                 stu.gpa = gpa
-        self.db.commit()
+        # 不在此处提交：由调用方与成绩状态变更放在同一事务内提交。
 
     # --- 学生侧 ---
 

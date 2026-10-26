@@ -228,6 +228,8 @@ def class_grades(
         svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
     elif current.user_type == UserType.STUDENT:
         raise PermissionDenied("无权查看整班成绩")
+    elif not is_admin_user(current):
+        raise PermissionDenied("无权查看整班成绩")
     return [_out(g) for g in svc.list_by_class(class_id)]
 
 
@@ -247,6 +249,8 @@ def class_roster(
         svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
     elif current.user_type == UserType.STUDENT:
         raise PermissionDenied("无权查看学生名单")
+    elif not is_admin_user(current):
+        raise PermissionDenied("无权查看学生名单")
     return svc.roster(class_id)
 
 
@@ -263,6 +267,8 @@ def init_sheet(
     svc = GradeService(db)
     if current.user_type == UserType.TEACHER and not is_admin_user(current):
         svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
+    elif not is_admin_user(current):
+        raise PermissionDenied("无权生成成绩单")
     return [_out(g) for g in svc.init_sheet(class_id)]
 
 
@@ -297,6 +303,8 @@ def delete_grade(
     非草稿状态由 Service 统一拒绝（409）。
     """
     if current.user_type == UserType.STUDENT:
+        raise PermissionDenied("无权删除成绩")
+    if current.user_type == UserType.ADMIN and not is_admin_user(current):
         raise PermissionDenied("无权删除成绩")
     teacher = (
         _me_teacher(db, current)
@@ -407,5 +415,7 @@ def statistics(
     if current.user_type == UserType.TEACHER and not is_admin_user(current):
         svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
     elif current.user_type == UserType.STUDENT:
+        raise PermissionDenied("无权查看成绩统计")
+    elif not is_admin_user(current):
         raise PermissionDenied("无权查看成绩统计")
     return svc.class_statistics(class_id)

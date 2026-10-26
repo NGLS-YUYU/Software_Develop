@@ -164,6 +164,8 @@ def list_classes(
         if me is None:
             raise PermissionDenied("教师档案不存在")
         teacher_id = me.id
+    elif not is_admin_user(current):
+        raise PermissionDenied("无权查询教学班")
     items, total = TeachingClassService(db).paginate(
         params,
         semester=semester,
@@ -216,6 +218,8 @@ def get_class(
         ).scalar_one_or_none()
         if me is None or tc.teacher_id != me.id:
             raise PermissionDenied("只能查看本人授课教学班")
+    elif not is_admin_user(current):
+        raise PermissionDenied("无权查看教学班")
     return _tc_out(tc, svc.selection_count(class_id))
 
 
@@ -290,6 +294,8 @@ def list_schedules(
         ).scalar_one_or_none()
         if me is None or tc.teacher_id != me.id:
             raise PermissionDenied("只能查看本人授课教学班的排课")
+    elif not is_admin_user(current):
+        raise PermissionDenied("无权查看教学班排课")
     return [_sched_out(s) for s in tc.schedules]
 
 

@@ -53,9 +53,13 @@ def _teacher_out(t: Teacher) -> TeacherOut:
 
 def _assert_can_view_student(db: Session, current: User, stu: Student) -> None:
     """对象级权限校验（PRD §4.3：不能只依赖角色级菜单控制）。"""
-    if current.user_type == UserType.STUDENT and stu.user_id != current.id:
-        raise PermissionDenied("只能查看本人信息")
-    if current.user_type == UserType.TEACHER and not is_admin_user(current):
+    if is_admin_user(current):
+        return
+    if current.user_type == UserType.STUDENT:
+        if stu.user_id != current.id:
+            raise PermissionDenied("只能查看本人信息")
+        return
+    if current.user_type == UserType.TEACHER:
         me = db.execute(
             select(Teacher).where(Teacher.user_id == current.id)
         ).scalar_one_or_none()
@@ -73,6 +77,9 @@ def _assert_can_view_student(db: Session, current: User, stu: Student) -> None:
         ).scalar_one_or_none()
         if owns is None:
             raise PermissionDenied("只能查看本人授课教学班的学生")
+        return
+    # user_type=ADMIN 但没有 ACADEMIC_ADMIN 角色（角色被撤销/创建异常）时不得放行。
+    raise PermissionDenied("无权限查看学生信息")
 
 
 # =========================== 学生 ===========================
@@ -92,12 +99,29 @@ def list_students(
     # 学生无 student:read 权限，走不到这里；此处再挡一次纵深防御
     if current.user_type == UserType.STUDENT:
         raise PermissionDenied("无权查看学生列表")
+    student_ids = None
+    if not is_admin_user(current):
+        if current.user_type != UserType.TEACHER:
+            raise PermissionDenied("无权查看学生列表")
+        me = db.execute(
+            select(Teacher).where(Teacher.user_id == current.id)
+        ).scalar_one_or_none()
+        if me is None:
+            raise PermissionDenied("教师档案不存在")
+        # 教师列表只返回本人授课教学班的学生，避免集合接口绕过详情接口的对象校验。
+        student_ids = select(CourseSelection.student_id).join(
+            TeachingClass, CourseSelection.teaching_class_id == TeachingClass.id
+        ).where(
+            CourseSelection.status == SelectionState.SELECTED,
+            TeachingClass.teacher_id == me.id,
+        )
     items, total = StudentService(db).paginate(
         params,
         class_id=class_id,
         major_id=major_id,
         college_id=college_id,
         academic_status=academic_status,
+        student_ids=student_ids,
     )
     return PageResult.build([_student_out(i) for i in items], total, params)
 
@@ -106,14 +130,11 @@ def list_students(
 def my_student_profile(
     db: Session = Depends(get_db), current: User = Depends(get_current_user)
 ):
-    from sqlalchemy import select
-
     stu = db.execute(
         StudentService(db).base_stmt().where(Student.user_id == current.id)
     ).scalar_one_or_none()
     if stu is None:
         raise PermissionDenied("当前账号不是学生")
-    _ = select  # 保持 import 使用
     return _student_out(stu)
 
 

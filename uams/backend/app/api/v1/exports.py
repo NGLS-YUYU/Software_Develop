@@ -12,10 +12,8 @@ from app.api.deps import RequirePermissions
 from app.db.session import get_db
 from app.models.course import Course
 from app.models.grade import Grade, GradeStatus
-from app.models.organization import Class, College, Major
 from app.models.person import Student
 from app.models.selection import CourseSelection, SelectionState
-from app.models.teaching import TeachingClass
 
 router = APIRouter(prefix="/exports", tags=["导出"])
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, Query, status as http_status
 from sqlalchemy.orm import Session
 
-from app.api.deps import RequirePermissions, get_current_user
+from app.api.deps import RequirePermissions
 from app.db.session import get_db
 from app.schemas.common import PageParams, PageResult
 from app.schemas.term import TermCreate, TermOut, TermUpdate

@@ -6,20 +6,16 @@
 """
 from datetime import date, time
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
 
 from app.core.exceptions import Conflict, NotFound
 from app.models.exam import Exam, ExamRoom, ExamStudent
 from app.models.organization import Classroom
-from app.models.person import Student, Teacher
+from app.models.person import Teacher
 from app.models.selection import CourseSelection, SelectionState
-from app.models.teaching import Schedule, TeachingClass
+from app.models.teaching import Schedule
 from app.models.term import AcademicTerm
-
-
-def _overlap(start_a: time, end_a: time, start_b: time, end_b: time) -> bool:
-    return start_a < end_b and start_b < end_a
 
 
 class ExamService:
@@ -145,6 +141,7 @@ class ExamService:
                 select(ExamRoom).where(ExamRoom.exam_id == exam.id)
             ).scalars()
         ]
+        # 同教学班“或”同教室都算潜在冲突，不能把两个条件做 AND。
         conditions = [Schedule.teaching_class_id == exam.teaching_class_id]
         if room_ids:
             conditions.append(Schedule.classroom_id.in_(room_ids))
@@ -153,7 +150,7 @@ class ExamService:
             Schedule.day_of_week == weekday,
             Schedule.start_week <= week_no,
             Schedule.end_week >= week_no,
-            *conditions,
+            or_(*conditions),
         )
         rows = [
             s

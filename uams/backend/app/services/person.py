@@ -49,6 +49,14 @@ class StudentService(BaseCrudService[Student]):
             (Student.student_no.like(like)) | (User.real_name.like(like))
         )
 
+    def apply_filters(self, stmt: Select, **filters: Any) -> Select:
+        """支持 ``student_ids``（教师只能列出本人授课教学班的学生，F-13）。"""
+        student_ids = filters.pop("student_ids", None)
+        stmt = super().apply_filters(stmt, **filters)
+        if student_ids is not None:
+            stmt = stmt.where(Student.id.in_(student_ids))
+        return stmt
+
     def create_student(self, data: dict[str, Any]) -> Student:
         no = data["student_no"]
         # 登录名默认取学号；Excel 批量导入可显式指定 username（TASK-010）

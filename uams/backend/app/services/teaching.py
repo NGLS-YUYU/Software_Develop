@@ -745,6 +745,10 @@ class ScheduleService:
             raise NotFound(f"教学班不存在（id={data['teaching_class_id']}）")
         self._term_guard(tc)
         self._room_guard(data["classroom_id"], tc)
+        if data["end_period"] < data["start_period"]:
+            raise Conflict("结束节次不能早于开始节次")
+        if data["end_week"] < data["start_week"]:
+            raise Conflict("结束周不能早于开始周")
 
         sched = self._sched_dict(tc, data)
         self._check_conflicts(sched, tc)

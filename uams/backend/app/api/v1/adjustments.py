@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -30,6 +30,22 @@ class AdjustmentCreate(BaseModel):
     new_end_week: int | None = Field(None, ge=1, le=30)
     new_week_type: str | None = Field(None, pattern="^(ALL|ODD|EVEN)$")
     new_classroom_id: int | None = None
+
+    @model_validator(mode="after")
+    def check_new_time(self):
+        if (
+            self.new_start_period is not None
+            and self.new_end_period is not None
+            and self.new_end_period < self.new_start_period
+        ):
+            raise ValueError("结束节次不能早于开始节次")
+        if (
+            self.new_start_week is not None
+            and self.new_end_week is not None
+            and self.new_end_week < self.new_start_week
+        ):
+            raise ValueError("结束周不能早于开始周")
+        return self
 
 
 class AdjustmentReject(BaseModel):

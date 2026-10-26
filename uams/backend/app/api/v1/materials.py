@@ -19,8 +19,9 @@ from app.models.teaching import TeachingClass
 from app.models.user import User, UserType
 
 router = APIRouter(prefix="/materials", tags=["教学资料"])
-BACKEND = Path(__file__).resolve().parents[2]
-MATERIAL_DIR = BACKEND / "uploads" / "materials"
+# app/api/v1/materials.py -> parents[3] == backend/（源码树外，.gitignore 已忽略 uploads/）
+BACKEND = Path(__file__).resolve().parents[3]
+MATERIAL_DIR = (BACKEND / "uploads" / "materials").resolve()
 MAX_BYTES = 10 * 1024 * 1024
 ALLOWED = {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".txt", ".zip", ".png", ".jpg", ".jpeg"}
 
@@ -148,7 +149,8 @@ async def upload_material(
     suffix = Path(name).suffix.lower()
     if suffix not in ALLOWED:
         raise Conflict("不支持的文件类型（仅 pdf/doc/ppt/xls/txt/zip/图片）")
-    content = await file.read()
+    # 最多读取 MAX_BYTES+1，超限立即拒绝，避免把超大请求体整体载入内存。
+    content = await file.read(MAX_BYTES + 1)
     if len(content) > MAX_BYTES:
         raise Conflict("文件不能超过 10MB")
     MATERIAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -185,8 +187,8 @@ def download_material(
         raise NotFound("教学资料不存在")
     if not _can_view(db, current, m.teaching_class):
         raise PermissionDenied("无权下载该资料")
-    path = Path(m.file_path)
-    if not path.is_file():
+    path = Path(m.file_path).resolve()
+    if not path.is_relative_to(MATERIAL_DIR) or not path.is_file():
         raise NotFound("资料文件不存在")
     return FileResponse(path, filename=m.file_name, media_type=m.content_type or "application/octet-stream")
 
@@ -204,7 +206,8 @@ def delete_material(
         raise PermissionDenied("无权删除该资料")
     if current.user_type == UserType.STUDENT:
         raise PermissionDenied("学生不能删除教学资料")
-    path = Path(m.file_path)
+    path = Path(m.file_path).resolve()
     db.delete(m)
     db.commit()
-    path.unlink(missing_ok=True)
+    if path.is_relative_to(MATERIAL_DIR):
+        path.unlink(missing_ok=True)
