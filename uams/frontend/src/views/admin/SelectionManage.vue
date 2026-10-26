@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { selectionApi, teachingApi } from '@/api'
@@ -24,6 +24,44 @@ const rosterTitle = ref('')
 
 const STATUS: Record<string, string> = { PENDING: '未开始', ACTIVE: '进行中', CLOSED: '已结束' }
 const STATUS_TYPE: Record<string, string> = { PENDING: 'info', ACTIVE: 'success', CLOSED: 'warning' }
+const TIME_STATE: Record<string, string> = {
+  OPEN: '开放中', NOT_STARTED: '未开始', EXPIRED: '已过期', INACTIVE: '未激活',
+}
+const TIME_STATE_TYPE: Record<string, string> = {
+  OPEN: 'success', NOT_STARTED: 'info', EXPIRED: 'warning', INACTIVE: 'info',
+}
+
+/** 实际生效 = 时间开放 + 学期存在且 ACTIVE。 */
+function effectiveLabel(row: SelectionPeriod) {
+  if (row.is_effective) return '生效中'
+  if (row.time_state === 'OPEN') {
+    return row.term_status ? `学期${row.term_status}` : '学期不存在'
+  }
+  return TIME_STATE[row.time_state ?? 'INACTIVE']
+}
+
+function effectiveType(row: SelectionPeriod) {
+  if (row.is_effective) return 'success'
+  if (row.time_state === 'OPEN') return 'danger'
+  return TIME_STATE_TYPE[row.time_state ?? 'INACTIVE']
+}
+
+/** 同一学期多个 ACTIVE 窗口时间重叠的组数（后端按并集判断）。 */
+const overlappingActive = computed(() => {
+  const active = periods.value.filter((p) => p.status === 'ACTIVE')
+  let pairs = 0
+  for (let i = 0; i < active.length; i += 1) {
+    for (let j = i + 1; j < active.length; j += 1) {
+      if (active[i].semester !== active[j].semester) continue
+      const aStart = new Date(active[i].start_time).getTime()
+      const aEnd = new Date(active[i].end_time).getTime()
+      const bStart = new Date(active[j].start_time).getTime()
+      const bEnd = new Date(active[j].end_time).getTime()
+      if (aStart < bEnd && bStart < aEnd) pairs += 1
+    }
+  }
+  return pairs
+})
 
 function openCreate() {
   editingId.value = null
@@ -45,6 +83,14 @@ function openEdit(row: SelectionPeriod) {
 }
 
 async function save() {
+  if (!form.value.start_time || !form.value.end_time) {
+    ElMessage.warning('请填写开始时间和结束时间')
+    return
+  }
+  if (new Date(String(form.value.end_time)) <= new Date(String(form.value.start_time))) {
+    ElMessage.warning('结束时间必须晚于开始时间')
+    return
+  }
   saving.value = true
   try {
     if (editingId.value) {
@@ -116,6 +162,15 @@ onMounted(async () => {
         </div>
       </template>
 
+      <el-alert
+        v-if="overlappingActive"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="overlap-alert"
+        :title="`检测到 ${overlappingActive} 组 ACTIVE 窗口时间重叠；后端按“任一适用窗口开放即可”判断，建议合并重叠窗口。`"
+      />
+
       <!-- 桌面端：表格 -->
       <div class="table-wrap">
         <el-table :data="periods" stripe>
@@ -144,6 +199,13 @@ onMounted(async () => {
               </el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="实际状态" width="110" align="center">
+            <template #default="{ row }">
+              <el-tag :type="effectiveType(row) as any" size="small" effect="plain">
+                {{ effectiveLabel(row) }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="90" align="center" fixed="right">
             <template #default="{ row }">
               <el-button size="small" link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -166,9 +228,14 @@ onMounted(async () => {
               <span class="pcard__name">{{ row.name }}</span>
               <span class="muted pcard__sem">{{ row.semester }}</span>
             </div>
-            <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
-              {{ STATUS[row.status] }}
-            </el-tag>
+            <div class="pcard__tags">
+              <el-tag :type="STATUS_TYPE[row.status] as any" size="small">
+                {{ STATUS[row.status] }}
+              </el-tag>
+              <el-tag :type="effectiveType(row) as any" size="small" effect="plain">
+                {{ effectiveLabel(row) }}
+              </el-tag>
+            </div>
           </header>
 
           <span class="window window--block">
@@ -587,5 +654,15 @@ onMounted(async () => {
   .class-cards {
     display: flex;
   }
+}
+.overlap-alert {
+  margin-bottom: 12px;
+}
+
+.pcard__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
 }
 </style>

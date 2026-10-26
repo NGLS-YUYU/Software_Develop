@@ -308,7 +308,8 @@ POST /api/v1/auth/login
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
 | GET | `/course-selections/available?semester=...` | 可选教学班（学生，仅选修课 ELECTIVE） | 登录 |
-| GET | `/course-selections/mine` | 我的选课（`semester`、`include_dropped`，含 `course_type`、`source`/`source_label`） | 登录 |
+| GET | `/course-selections/mine` | 我的选课（`semester`、`include_dropped`，含 `course_type`、`source`/`source_label`、教学班状态） | 登录 |
+| GET | `/course-selections/window?semester=...` | 学生当前选课/退课窗口状态（FIX-003：`can_select`/`can_drop`/`reason_code`/`reason`/`window`/`open_windows`） | 登录（学生） |
 | POST | `/course-selections` | 选课（201，身份取自 JWT，不接受 `student_id`） | `selection:write` |
 | DELETE | `/course-selections/{selection_id}` | 退课（204） | `selection:write` |
 
@@ -323,7 +324,9 @@ POST /api/v1/auth/login
 7. 时间冲突（与已选课程比对排课）
 8. 先修课程（已审核且达最低分）
 
-退课限制：仅本人、需选课开放中、**必修课不可自主退选**、已有成绩记录（非草稿）时不允许退课。
+退课限制（FIX-003 与选课统一）：仅本人、**必修课不可自主退选**、教学班 ACTIVE/OPEN、学期 ACTIVE、窗口 ACTIVE 且当前时间在起止范围内、限定年级匹配、已有成绩记录（非草稿）时不允许退课。
+
+**统一窗口判断（FIX-003）**：`SelectionService.selection_window_status()` 同时用于选课、退课和学生端状态接口。多窗口重叠按并集处理：任一 ACTIVE、时间在范围内、年级适用的窗口开放即可；时间边界包含开始/结束时刻。状态与时间不一致时，以后端实际判断为准（例如 ACTIVE 但已过期 → 拒绝）。
 
 ### 7.2 必修课预安排（TASK-009 / FIX-002）
 
@@ -365,6 +368,13 @@ POST /api/v1/auth/login
 | GET | `/selection-periods` | 列表（`semester`） | 登录 |
 | POST | `/selection-periods` | 新增 | `selection:manage` |
 | PUT | `/selection-periods/{period_id}` | 修改 | `selection:manage` |
+
+**FIX-003 字段与校验**：
+
+- 响应新增 `time_state`（`OPEN`/`NOT_STARTED`/`EXPIRED`/`INACTIVE`）与 `is_effective`，由后端按当前时间计算；管理员“实际状态”列使用该字段。
+- `POST`/`PUT` 使用同一 `SelectionPeriodCreate` 校验：`end_time` 必须晚于 `start_time`，否则 422；`target_grade_year` 限制 1900–2200。
+- 同一学期多个 ACTIVE 窗口重叠时，后端选课/退课按**并集**判断（任一适用窗口开放即可），不强制合并；管理员端会提示重叠。
+- 状态不会随时间自动变化：`ACTIVE` 但时间已过时，`time_state=EXPIRED`，选课/退课仍会被拒绝。
 
 ---
 

@@ -4,13 +4,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { selectionApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
-import type { Selection, SelectionPeriod, TeachingClass } from '@/types'
+import type { Selection, SelectionWindowStatus, TeachingClass } from '@/types'
 
 const semester = ref(currentSemester())
 const keyword = ref('')
 const available = ref<TeachingClass[]>([])
 const mine = ref<Selection[]>([])
-const periods = ref<SelectionPeriod[]>([])
+const windowState = ref<SelectionWindowStatus | null>(null)
 const loading = ref(false)
 const tab = ref('available')
 
@@ -18,28 +18,45 @@ const totalCredits = computed(() =>
   mine.value.reduce((sum, s) => sum + Number(s.credits ?? 0), 0),
 )
 
-/** 选课是否开放：由后端时间窗口决定，这里只做提示。 */
-const openPeriod = computed(() => {
-  const now = Date.now()
-  return periods.value.find(
-    (p) =>
-      p.status === 'ACTIVE' &&
-      new Date(p.start_time).getTime() <= now &&
-      now <= new Date(p.end_time).getTime(),
-  )
-})
+/** 后端统一判断的选课/退课窗口状态（FIX-003）。 */
+const canSelect = computed(() => !!windowState.value?.can_select)
+const canDrop = computed(() => !!windowState.value?.can_drop)
+
+const REQUIRED_TYPES = ['REQUIRED', 'PUBLIC_REQUIRED', 'PRACTICE']
+
+function isRequiredCourse(s: Selection) {
+  return REQUIRED_TYPES.includes(s.course_type || '')
+}
+
+function selectBlockReason() {
+  if (canSelect.value) return ''
+  return windowState.value?.reason || '当前不在选课时间内'
+}
+
+function dropBlockReason(s: Selection) {
+  if (isRequiredCourse(s)) return '必修课由教务安排，不能自主退课'
+  if (s.status !== 'SELECTED') return '该选课记录已退课'
+  if (s.teaching_class_status && s.teaching_class_status !== 'ACTIVE') {
+    return '教学班已取消，无法退课'
+  }
+  if (s.selection_status && s.selection_status !== 'OPEN') {
+    return '教学班未开放选课，无法退课'
+  }
+  if (!canDrop.value) return windowState.value?.reason || '当前不在退课时间内'
+  return ''
+}
 
 async function load() {
   loading.value = true
   try {
-    const [a, m, p] = await Promise.allSettled([
+    const [a, m, w] = await Promise.allSettled([
       selectionApi.available(semester.value, keyword.value || undefined),
       selectionApi.mine(semester.value),
-      selectionApi.periods(semester.value),
+      selectionApi.windowStatus(semester.value),
     ])
     if (a.status === 'fulfilled') available.value = a.value
     if (m.status === 'fulfilled') mine.value = m.value
-    if (p.status === 'fulfilled') periods.value = p.value
+    if (w.status === 'fulfilled') windowState.value = w.value
   } finally {
     loading.value = false
   }
@@ -58,6 +75,10 @@ function scheduleText(tc: TeachingClass) {
 }
 
 async function doSelect(tc: TeachingClass) {
+  if (!canSelect.value) {
+    ElMessage.warning(selectBlockReason())
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `确认选择《${tc.course_name}》（${tc.code}）？\n${scheduleText(tc)}`,
@@ -74,6 +95,11 @@ async function doSelect(tc: TeachingClass) {
 }
 
 async function doDrop(s: Selection) {
+  const reason = dropBlockReason(s)
+  if (reason) {
+    ElMessage.warning(reason)
+    return
+  }
   try {
     await ElMessageBox.confirm(`确认退选《${s.course_name}》？`, '确认退课', {
       type: 'warning',
@@ -93,8 +119,8 @@ onMounted(load)
   <div v-loading="loading" class="selection">
     <!-- 选课窗口状态提示 -->
     <el-alert
-      v-if="openPeriod"
-      :title="`选课开放中：${openPeriod.name}（截止 ${openPeriod.end_time.slice(0, 16).replace('T', ' ')}）`"
+      v-if="canSelect && windowState?.window"
+      :title="`选课开放中：${windowState.window.name}（截止 ${windowState.window.end_time.slice(0, 16).replace('T', ' ')}）`"
       type="success"
       :closable="false"
       show-icon
@@ -102,7 +128,7 @@ onMounted(load)
     />
     <el-alert
       v-else
-      title="当前不在选课时间内，仅可查看"
+      :title="windowState?.reason || '当前不在选课时间内，仅可查看'"
       type="warning"
       :closable="false"
       show-icon
@@ -215,12 +241,14 @@ onMounted(load)
                 </div>
                 <el-button
                   type="primary"
-                  :disabled="c.remaining <= 0"
+                  :disabled="c.remaining <= 0 || !canSelect"
+                  :title="!canSelect ? selectBlockReason() : ''"
                   @click="doSelect(c)"
                 >
                   选课
                 </el-button>
               </footer>
+              <p v-if="!canSelect" class="block-hint">{{ selectBlockReason() }}</p>
             </article>
           </div>
         </el-tab-pane>
@@ -267,7 +295,20 @@ onMounted(load)
                     </span>
                   </div>
                 </div>
-                <el-button type="danger" plain @click="doDrop(s)">退课</el-button>
+                <div class="mine-item__actions">
+                  <el-button
+                    type="danger"
+                    plain
+                    :disabled="!!dropBlockReason(s)"
+                    :title="dropBlockReason(s)"
+                    @click="doDrop(s)"
+                  >
+                    退课
+                  </el-button>
+                  <span v-if="dropBlockReason(s)" class="block-hint">
+                    {{ dropBlockReason(s) }}
+                  </span>
+                </div>
               </li>
             </ul>
           </div>
@@ -287,6 +328,26 @@ onMounted(load)
 .selection__banner {
   border-radius: var(--uams-radius);
   overflow: hidden;
+}
+
+.block-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--uams-text-3);
+}
+
+.mine-item__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.mine-item__actions .block-hint {
+  max-width: 220px;
+  text-align: right;
 }
 
 /* ----------------------------------------------------------- 工具栏汇总 */

@@ -6,6 +6,7 @@
   - 唯一约束 uk_selection 作为最后一道防线
 """
 
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -26,7 +27,7 @@ from app.models.selection import (
     SelectionState,
 )
 from app.models.teaching import Schedule, TeachingClass
-from app.models.term import TermStatus
+from app.models.term import AcademicTerm, TermStatus
 from app.models.user import User
 from app.services.integrity import conflict_from_integrity_error
 from app.services.teaching import ConflictChecker
@@ -109,16 +110,140 @@ class SelectionService:
 
     # --- 校验 ---
 
-    def _check_period_open(self, student: Student, semester: str) -> None:
+    @staticmethod
+    def _window_payload(period: SelectionPeriod) -> dict:
+        return {
+            "id": period.id,
+            "name": period.name,
+            "start_time": period.start_time,
+            "end_time": period.end_time,
+            "target_grade_year": period.target_grade_year,
+            "status": period.status,
+        }
+
+    def _term_for_semester(self, semester: str) -> AcademicTerm | None:
+        match = re.match(r"^(\d{4}-\d{4})-([12])$", semester or "")
+        if match is None:
+            return None
+        return self.db.execute(
+            select(AcademicTerm).where(
+                AcademicTerm.academic_year == match.group(1),
+                AcademicTerm.semester == int(match.group(2)),
+            )
+        ).scalar_one_or_none()
+
+    def selection_window_status(
+        self,
+        student: Student,
+        semester: str,
+        *,
+        now: datetime | None = None,
+    ) -> dict:
+        """统一的选课/退课窗口判断（FIX-003）。
+
+        规则：
+          - 学期必须 ACTIVE；
+          - 至少一个 status=ACTIVE 且当前时间落在 [start_time, end_time] 内、
+            且对学生年级适用的窗口；
+          - 同一学期多个适用窗口重叠时按并集处理：任一窗口开放即可；
+          - 时间边界包含 start_time / end_time；
+          - 使用应用服务器本地时间与 MySQL DATETIME 直接比较，不做时区换算
+            （部署环境必须保持同一时区）。
+        """
+        now = now or datetime.now()
+        term = self._term_for_semester(semester)
         periods = list(
             self.db.execute(
-                select(SelectionPeriod).where(SelectionPeriod.semester == semester)
+                select(SelectionPeriod)
+                .where(SelectionPeriod.semester == semester)
+                .order_by(SelectionPeriod.start_time, SelectionPeriod.id)
             ).scalars()
         )
+        active = [p for p in periods if p.status == "ACTIVE"]
+        state = {
+            "semester": semester,
+            "term_status": term.status if term else None,
+            "can_select": False,
+            "can_drop": False,
+            "reason_code": None,
+            "reason": None,
+            "window": None,
+            "open_windows": [],
+        }
+        if term is None:
+            state.update(reason_code="TERM_NOT_FOUND", reason="该学期不存在")
+            return state
+        if term.status != TermStatus.ACTIVE:
+            state.update(
+                reason_code="TERM_NOT_ACTIVE",
+                reason=f"该学期状态为 {term.status}，未处于进行中",
+            )
+            return state
         if not periods:
-            raise Conflict("本学期尚未设置选课时间，无法选课")
-        if not any(p.is_open_now(student.enrollment_year) for p in periods):
-            raise Conflict("当前不在选课时间内")
+            state.update(reason_code="NO_PERIOD", reason="本学期尚未设置选课时间")
+            return state
+        if not active:
+            state.update(
+                reason_code="NO_ACTIVE_PERIOD",
+                reason="选课窗口未开放（没有进行中的窗口）",
+            )
+            return state
+
+        def grade_ok(p: SelectionPeriod) -> bool:
+            return (
+                p.target_grade_year is None
+                or p.target_grade_year == student.enrollment_year
+            )
+
+        open_windows = [
+            p
+            for p in active
+            if grade_ok(p) and p.start_time <= now <= p.end_time
+        ]
+        if open_windows:
+            # 并集语义：多个重叠窗口任一开放即可；展示开始时间最晚的窗口。
+            chosen = sorted(open_windows, key=lambda p: (p.start_time, p.id))[-1]
+            state.update(
+                can_select=True,
+                can_drop=True,
+                window=self._window_payload(chosen),
+                open_windows=[self._window_payload(p) for p in open_windows],
+            )
+            return state
+
+        eligible = [p for p in active if grade_ok(p)]
+        in_time_active = [
+            p for p in active if p.start_time <= now <= p.end_time
+        ]
+        if in_time_active and not eligible:
+            state.update(
+                reason_code="GRADE_MISMATCH",
+                reason="当前选课窗口不适用于你的年级",
+            )
+            return state
+        if eligible:
+            if now < min(p.start_time for p in eligible):
+                state.update(reason_code="NOT_STARTED", reason="选课尚未开始")
+            elif now > max(p.end_time for p in eligible):
+                state.update(reason_code="EXPIRED", reason="选课已结束")
+            else:
+                state.update(reason_code="NOT_OPEN", reason="当前不在选课时间内")
+        else:
+            if now < min(p.start_time for p in active):
+                state.update(reason_code="NOT_STARTED", reason="选课尚未开始")
+            elif now > max(p.end_time for p in active):
+                state.update(reason_code="EXPIRED", reason="选课已结束")
+            else:
+                state.update(
+                    reason_code="GRADE_MISMATCH",
+                    reason="当前选课窗口不适用于你的年级",
+                )
+        return state
+
+    def _check_selection_window(self, student: Student, semester: str) -> None:
+        state = self.selection_window_status(student, semester)
+        if not state["can_select"]:
+            raise Conflict(state["reason"] or "当前不在选课时间内")
 
     def _check_prerequisites(self, student_id: int, course_id: int) -> None:
         """先修课程校验（PRD §7.2）。"""
@@ -170,15 +295,12 @@ class SelectionService:
         if tc.selection_status != "OPEN":
             raise Conflict("该教学班未开放选课")
 
-        # 学期校验（TASK-011）：只有进行中的学期允许学生选课
-        if tc.term is None or tc.term.status != TermStatus.ACTIVE:
-            raise Conflict("当前学期未在进行中，无法选课")
-
         # 课程类型校验：必修课只能由教务处预排，学生不能自主选择（TASK-009）
         if not _is_elective(tc.course.course_type if tc.course else None):
             raise Conflict("该课程为必修课，不能自主选择")
 
-        self._check_period_open(student, tc.semester)
+        # 统一学期 + 选课窗口 + 限定年级校验（FIX-003）
+        self._check_selection_window(student, tc.semester)
 
         # 重复选课
         existing = self.db.execute(
@@ -272,12 +394,15 @@ class SelectionService:
             .options(selectinload(TeachingClass.term))
             .with_for_update()
         ).scalar_one_or_none()
-        if tc and tc.selection_status != "OPEN":
-            raise Conflict("当前不在选课时间内，无法退课")
+        if tc is None:
+            raise NotFound("教学班不存在")
+        if tc.status != "ACTIVE":
+            raise Conflict("该教学班已取消，无法退课")
+        if tc.selection_status != "OPEN":
+            raise Conflict("该教学班未开放选课，无法退课")
 
-        # 学期校验（TASK-011）：已结束的学期不能退课
-        if tc and tc.term and tc.term.status == TermStatus.ENDED:
-            raise Conflict("该学期已结束，无法退课")
+        # 学期 + 选课窗口 + 限定年级统一校验（FIX-003）
+        self._check_selection_window(student, tc.semester)
 
         # 已有成绩不允许退课
         g = self.db.execute(

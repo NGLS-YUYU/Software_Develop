@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Student
 from app.models.selection import SelectionPeriod
+from app.models.term import AcademicTerm
 from app.models.user import User, UserType
 from app.schemas.teaching import TeachingClassOut
 from app.services.person import StudentService
@@ -45,6 +46,8 @@ class SelectionOut(BaseModel):
     teacher_name: str | None = None
     semester: str
     status: str
+    teaching_class_status: str | None = None
+    selection_status: str | None = None
     source: str | None = None
     source_label: str | None = None
     selected_at: datetime | None = None
@@ -109,13 +112,79 @@ class SelectionPeriodCreate(BaseModel):
     name: str = Field(..., max_length=50)
     start_time: datetime
     end_time: datetime
-    target_grade_year: int | None = None
+    target_grade_year: int | None = Field(None, ge=1900, le=2200)
     status: str = Field("PENDING", pattern="^(PENDING|ACTIVE|CLOSED)$")
+
+    @model_validator(mode="after")
+    def check_window_times(self):
+        if self.end_time <= self.start_time:
+            raise ValueError("结束时间必须晚于开始时间")
+        return self
 
 
 class SelectionPeriodOut(SelectionPeriodCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    time_state: str = "INACTIVE"
+    term_status: str | None = None
+    is_effective: bool = False
+
+
+class SelectionWindowOut(BaseModel):
+    id: int
+    name: str
+    start_time: datetime
+    end_time: datetime
+    target_grade_year: int | None = None
+    status: str
+
+
+class SelectionWindowStatus(BaseModel):
+    semester: str
+    term_status: str | None = None
+    can_select: bool
+    can_drop: bool
+    reason_code: str | None = None
+    reason: str | None = None
+    window: SelectionWindowOut | None = None
+    open_windows: list[SelectionWindowOut] = []
+
+
+def _period_out(p, db: Session, now: datetime | None = None) -> SelectionPeriodOut:
+    d = SelectionPeriodOut.model_validate(p)
+    now = now or datetime.now()
+    if p.status != "ACTIVE":
+        state = "INACTIVE"
+    elif now < p.start_time:
+        state = "NOT_STARTED"
+    elif now > p.end_time:
+        state = "EXPIRED"
+    else:
+        state = "OPEN"
+    # 时间开放不等于实际生效：学期必须存在且 ACTIVE。
+    parts = (p.semester or "").rsplit("-", 1)
+    term = None
+    if len(parts) == 2 and parts[1] in ("1", "2"):
+        term = db.execute(
+            select(AcademicTerm).where(
+                AcademicTerm.academic_year == parts[0],
+                AcademicTerm.semester == int(parts[1]),
+            )
+        ).scalar_one_or_none()
+    d.time_state = state
+    d.term_status = term.status if term else None
+    d.is_effective = (
+        state == "OPEN"
+        and term is not None
+        and term.status == "ACTIVE"
+    )
+    return d
+
+
+def _window_out(data: dict | None) -> SelectionWindowOut | None:
+    if not data:
+        return None
+    return SelectionWindowOut.model_validate(data)
 
 
 def _sel_out(s) -> SelectionOut:
@@ -128,6 +197,8 @@ def _sel_out(s) -> SelectionOut:
         d.course_type = s.course.course_type
     if s.teaching_class:
         d.teaching_class_code = s.teaching_class.code
+        d.teaching_class_status = s.teaching_class.status
+        d.selection_status = s.teaching_class.selection_status
         t = s.teaching_class.teacher
         if t and t.user:
             d.teacher_name = t.user.real_name
@@ -177,6 +248,31 @@ def my_selections(
     stu = _current_student(db, current)
     rows = SelectionService(db).list_by_student(stu.id, semester, include_dropped)
     return [_sel_out(r) for r in rows]
+
+
+@sel.get(
+    "/window",
+    response_model=SelectionWindowStatus,
+    summary="当前选课窗口状态（学生）",
+)
+def window_status(
+    semester: str = Query(..., description="学期，如 2026-2027-1"),
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """统一返回学期/窗口/年级判断结果，供学生端显示与按钮状态使用。"""
+    stu = _current_student(db, current)
+    state = SelectionService(db).selection_window_status(stu, semester)
+    return SelectionWindowStatus(
+        semester=state["semester"],
+        term_status=state["term_status"],
+        can_select=state["can_select"],
+        can_drop=state["can_drop"],
+        reason_code=state["reason_code"],
+        reason=state["reason"],
+        window=_window_out(state["window"]),
+        open_windows=[SelectionWindowOut.model_validate(w) for w in state["open_windows"]],
+    )
 
 
 @sel.post(
@@ -346,9 +442,7 @@ def list_periods(
     stmt = select(SelectionPeriod)
     if semester:
         stmt = stmt.where(SelectionPeriod.semester == semester)
-    return [
-        SelectionPeriodOut.model_validate(p) for p in db.execute(stmt).scalars()
-    ]
+    return [_period_out(p, db) for p in db.execute(stmt).scalars()]
 
 
 @periods.post(
@@ -365,7 +459,7 @@ def create_period(
     p = SelectionPeriod(**payload.model_dump())
     db.add(p)
     db.commit()
-    return SelectionPeriodOut.model_validate(p)
+    return _period_out(p, db)
 
 
 @periods.put("/{period_id}", response_model=SelectionPeriodOut, summary="修改时间窗口")
@@ -383,7 +477,7 @@ def update_period(
     for k, v in payload.model_dump().items():
         setattr(p, k, v)
     db.commit()
-    return SelectionPeriodOut.model_validate(p)
+    return _period_out(p, db)
 
 
 router.include_router(sel)

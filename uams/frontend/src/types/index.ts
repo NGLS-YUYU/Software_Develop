@@ -246,10 +246,13 @@ export interface Selection {
   course_id: number
   course_code?: string | null
   course_name?: string | null
+  course_type?: string | null
   credits?: number | null
   teacher_name?: string | null
   semester: string
   status: string
+  teaching_class_status?: string | null
+  selection_status?: string | null
   source?: string | null
   source_label?: string | null
   selected_at?: string | null
@@ -312,6 +315,30 @@ export interface SelectionPeriod {
   end_time: string
   target_grade_year?: number | null
   status: string
+  /** 后端按当前时间计算：INACTIVE / NOT_STARTED / OPEN / EXPIRED */
+  time_state?: string
+  term_status?: string | null
+  is_effective?: boolean
+}
+
+export interface SelectionWindowInfo {
+  id: number
+  name: string
+  start_time: string
+  end_time: string
+  target_grade_year?: number | null
+  status: string
+}
+
+export interface SelectionWindowStatus {
+  semester: string
+  term_status?: string | null
+  can_select: boolean
+  can_drop: boolean
+  reason_code?: string | null
+  reason?: string | null
+  window?: SelectionWindowInfo | null
+  open_windows: SelectionWindowInfo[]
 }
 
 // --- 课表 ---

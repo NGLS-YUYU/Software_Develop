@@ -32,6 +32,7 @@ import type {
   ScheduleItem,
   Selection,
   SelectionPeriod,
+  SelectionWindowStatus,
   RequiredAssignResult,
   Student,
   StudentGradeOverview,
@@ -202,6 +203,9 @@ export const selectionApi = {
   drop: (id: number) => del(`/course-selections/${id}`),
 
   periods: (semester?: string) => get<SelectionPeriod[]>('/selection-periods', { semester }),
+  /** 当前选课/退课窗口状态（后端统一判断；FIX-003）。 */
+  windowStatus: (semester: string) =>
+    get<SelectionWindowStatus>('/course-selections/window', { semester }),
   createPeriod: (b: Record<string, unknown>) =>
     post<SelectionPeriod>('/selection-periods', b),
   updatePeriod: (id: number, b: Record<string, unknown>) =>
