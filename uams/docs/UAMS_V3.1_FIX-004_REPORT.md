@@ -16,7 +16,7 @@
 2. 新增 3 张表：`grade_change_logs`、`teaching_materials`、`schedule_adjustments`；均为 InnoDB + utf8mb4，含 downgrade。
 3. 新增/扩展接口：成绩撤销与更正、成绩变更历史、ACTIVE 学期、考试冲突检测、考场修改/删除、教学任务编辑、评价任务修改、操作日志查询、Excel 导出、教学资料、调停课、学生培养方案读取。
 4. 新增前端入口：成绩更正与历史、操作日志、教学评价管理、调停课（教师/教务）、教学资料（教师/学生）、学生培养方案、Excel 导出按钮。
-5. 隔离库自动化测试：**25 项通过，0 失败**（含原有 6 项回归 + 新增 19 项）。前端 `npm run build` 通过；后端 `compileall` 通过；`alembic check` 无漂移。
+5. 隔离库自动化测试：**30 项通过，0 失败**（含原有 6 项回归 + 新增 24 项）。前端 `npm run build` 通过；后端 `compileall` 通过；`alembic check` 无漂移。
 6. 验证过程中发现并修复 4 个实现缺陷（详见 §5），均已纳入提交。
 7. 正式库未执行迁移；部署时需按顺序应用 `c2d3e4f5a6b7 → d3e4f5a6b7c8 → e4f5a6b7c8d9`。
 
@@ -110,8 +110,8 @@
 | 范围 | 结果 |
 |---|---|
 | 原有核心回归（邮箱、成绩快照、考试时长、隔离库、选课窗口） | 6 通过 |
-| 本轮新增集成测试 | 19 通过 |
-| **合计** | **25 通过，0 失败** |
+| 本轮新增集成测试 | 24 通过 |
+| **合计** | **30 通过，0 失败** |
 
 新增测试覆盖：
 
@@ -157,6 +157,14 @@
 | 3 | `app/services/grade.py` | 实践课更正 `final_score` 后 `ScoreService.compute` 会用理论/实践平均分覆盖，接口返回 200 但数值未变 | 实践课拒绝合并字段并提示改用分项；非实践课拒绝拆分字段 |
 | 4 | `app/services/teaching.py` | `PUT /teaching-classes/{id}` 可直接写 `selection_status=OPEN`，绕过教师/排课前置校验（F-12） | 在 `update_class` 中复用开放选课前置条件 |
 | 5 | `app/services/exam.py` | 新建考试尚未 flush 时 `Exam.id is None`，`Exam.id != NULL` 在 SQL 中恒为 UNKNOWN，创建时的学生考试冲突检测实际失效 | id 为空时省略 `Exam.id !=` 条件；增加 transient 考试回归测试 |
+| 6 | `app/services/exam.py` | 排课冲突把“同教学班/同教室”写成 AND，任一条件不满足就漏检 | 改为 `or_(*conditions)` |
+| 7 | `app/api/v1/adjustments.py`、`app/services/teaching.py` | 补课申请未校验结束节次/周次不早于开始，批准时触发数据库约束 500 | Pydantic 校验 + `ScheduleService.create` 区间校验 |
+| 8 | `app/services/grade.py` | 成绩状态先提交、学分/GPA 后刷新，刷新失败会留下不一致；刷新未锁学生行 | 同一事务内 flush → 锁学生行刷新 → commit；捕获 GpaError |
+| 9 | `app/api/v1/misc.py` | 评价任务创建未校验起止时间，靠数据库约束导致 500；跨学期评价未拦截 | 创建时校验；提交评价校验教学班学期与任务一致 |
+| 10 | `app/api/v1/exam.py` | 考场更新丢弃显式 `invigilator_id=null`，无法取消监考 | 区分“未传”和“显式置空” |
+| 11 | `person/schedule/teaching/grade` | `user_type=ADMIN` 但无 ACADEMIC_ADMIN 角色的账号可绕过对象级校验 | 统一以 `is_admin_user` 判定管理员，否则拒绝 |
+| 12 | `app/api/v1/person.py` | 教师列表未按授课范围过滤，可枚举全校学生 | 教师列表限制为本人教学班学生 |
+| 13 | `app/api/v1/materials.py` | 上传先整文件读入内存；未限制标题/文件名长度；上传目录在源码树内且下载未做路径包含校验 | 限长读取/校验、目录移至 backend/uploads、resolve 包含性校验 |
 
 ---
 
@@ -177,7 +185,7 @@
 
 - 审计报告 F-01～F-22 已全部有明确实现或修复路径；F-03、F-05～F-22 本轮完成。
 - 主干闭环（课程 → 教学任务/教学班 → 排课 → 选课 → 课表 → 成绩 → 审核/更正 → 考试 → 评价）前后端入口与后端校验均已补齐。
-- 隔离库 25 项测试通过，构建通过，正式库未修改。
+- 隔离库 30 项测试通过，构建通过，正式库未修改。
 - 后续部署需：备份正式库 → 应用 3 个迁移 → 启动后端 → 逐角色浏览器回归。
 
 > 报告结束。
