@@ -8,8 +8,9 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { authApi } from '@/api'
+import { authApi, termApi } from '@/api'
 import { setForbiddenHandler, setUnauthorizedHandler } from '@/api/request'
+import { setActiveSemester } from '@/composables/useSemester'
 import type { UserInfo } from '@/types'
 
 const TOKEN_KEY = 'uams_token'
@@ -57,6 +58,16 @@ export const useAuthStore = defineStore('auth', () => {
     if (user.value) localStorage.setItem(USER_KEY, JSON.stringify(user.value))
   }
 
+  /** 登录/刷新后同步后端 ACTIVE 学期（F-05）。失败时回退浏览器推断。 */
+  async function syncActiveTerm() {
+    try {
+      const t = await termApi.active()
+      setActiveSemester(`${t.academic_year}-${t.semester}`)
+    } catch {
+      setActiveSemester(null)
+    }
+  }
+
   async function login(username: string, password: string) {
     const res = await authApi.login(username, password)
     token.value = res.access_token
@@ -65,6 +76,7 @@ export const useAuthStore = defineStore('auth', () => {
     permissions.value = res.permissions
     homeRoute.value = res.home_route
     persist()
+    await syncActiveTerm()
     return res
   }
 
@@ -76,6 +88,7 @@ export const useAuthStore = defineStore('auth', () => {
     roles.value = res.roles
     permissions.value = res.permissions
     persist()
+    await syncActiveTerm()
   }
 
   function clear() {

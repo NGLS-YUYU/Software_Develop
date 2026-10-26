@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import RequirePermissions, get_current_user
+from app.api.deps import RequirePermissions, get_current_user, is_admin_user
 from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Student
@@ -233,7 +233,11 @@ def available(
     from app.api.v1.teaching import _tc_out
 
     stu = _current_student(db, current)
-    rows = SelectionService(db).available_classes(stu, semester, keyword)
+    svc = SelectionService(db)
+    # F-06：窗口未开放/年级不符/学期非 ACTIVE 时不再展示“看得见却选不了”的课程。
+    if not svc.selection_window_status(stu, semester)["can_select"]:
+        return []
+    rows = svc.available_classes(stu, semester, keyword)
     counts = TeachingClassService(db).selection_counts([r.id for r in rows])
     return [_tc_out(r, counts.get(r.id, 0)) for r in rows]
 
@@ -314,7 +318,7 @@ def class_students(
 ):
     """教师只能查看本人授课教学班的名单（CLAUDE.md §9）。"""
     tc = TeachingClassService(db).get_or_404(class_id)
-    if current.user_type == UserType.TEACHER:
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
         from app.models.person import Teacher
 
         me = db.execute(

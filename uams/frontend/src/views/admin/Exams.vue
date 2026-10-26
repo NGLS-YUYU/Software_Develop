@@ -2,9 +2,9 @@
 import { onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { classroomApi, examApi, teachingApi } from '@/api'
+import { classroomApi, examApi, teacherApi, teachingApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
-import type { Classroom, Exam, TeachingClass } from '@/types'
+import type { Classroom, Exam, ExamRoom, Teacher, TeachingClass } from '@/types'
 
 const semester = ref(currentSemester())
 const exams = ref<Exam[]>([])
@@ -14,6 +14,7 @@ const loading = ref(false)
 
 const classes = ref<TeachingClass[]>([])
 const classrooms = ref<Classroom[]>([])
+const teachers = ref<Teacher[]>([])
 
 const dialog = ref(false)
 const form = ref<Record<string, unknown>>({})
@@ -21,7 +22,8 @@ const saving = ref(false)
 
 const roomDialog = ref(false)
 const currentExam = ref<Exam | null>(null)
-const roomForm = ref<{ classroom_id?: number; capacity: number }>({ capacity: 60 })
+const roomEditingId = ref<number | null>(null)
+const roomForm = ref<{ classroom_id?: number; capacity: number; invigilator_id?: number }>({ capacity: 60 })
 
 const TYPE: Record<string, string> = { FINAL: '期末', MAKEUP: '补考', RETAKE: '重修' }
 const STATUS: Record<string, string> = { DRAFT: '草稿', PUBLISHED: '已发布', FINISHED: '已结束' }
@@ -66,17 +68,45 @@ async function remove(row: Exam) {
 
 function openRooms(row: Exam) {
   currentExam.value = row
+  roomEditingId.value = null
   roomForm.value = { capacity: 60 }
   roomDialog.value = true
 }
 
-async function addRoom() {
+function editRoom(row: ExamRoom) {
+  roomEditingId.value = row.id
+  roomForm.value = {
+    classroom_id: row.classroom_id,
+    capacity: row.capacity,
+    invigilator_id: row.invigilator_id ?? undefined,
+  }
+}
+
+async function saveRoom() {
   if (!currentExam.value || !roomForm.value.classroom_id) {
     ElMessage.warning('请选择教室')
     return
   }
-  await examApi.addRoom(currentExam.value.id, { ...roomForm.value })
-  ElMessage.success('考场已添加')
+  if (roomEditingId.value) {
+    await examApi.updateRoom(currentExam.value.id, roomEditingId.value, { ...roomForm.value })
+    ElMessage.success('考场已更新')
+  } else {
+    await examApi.addRoom(currentExam.value.id, { ...roomForm.value })
+    ElMessage.success('考场已添加')
+  }
+  roomEditingId.value = null
+  roomForm.value = { capacity: 60 }
+  await load()
+  currentExam.value = exams.value.find((e) => e.id === currentExam.value?.id) ?? null
+}
+
+async function removeRoom(row: ExamRoom) {
+  if (!currentExam.value) return
+  try {
+    await ElMessageBox.confirm(`确认删除考场 ${row.classroom_code}？已分配考生时系统会拒绝。`, '删除考场', { type: 'warning' })
+  } catch { return }
+  await examApi.removeRoom(currentExam.value.id, row.id)
+  ElMessage.success('考场已删除')
   await load()
   currentExam.value = exams.value.find((e) => e.id === currentExam.value?.id) ?? null
 }
@@ -117,12 +147,14 @@ watch(semester, () => {
 })
 
 onMounted(async () => {
-  const [c, r] = await Promise.allSettled([
+  const [c, r, t] = await Promise.allSettled([
     teachingApi.classes({ semester: semester.value, page_size: 200 }),
     classroomApi.list({ page_size: 200 }),
+    teacherApi.list({ page_size: 200 }),
   ])
   if (c.status === 'fulfilled') classes.value = c.value.items
   if (r.status === 'fulfilled') classrooms.value = r.value.items
+  if (t.status === 'fulfilled') teachers.value = t.value.items
   await load()
 })
 </script>
@@ -309,7 +341,17 @@ onMounted(async () => {
         </el-select>
         <el-input-number v-model="roomForm.capacity" :min="1" :max="500"
           style="width: 130px" />
-        <el-button type="primary" @click="addRoom">添加考场</el-button>
+        <el-select v-model="roomForm.invigilator_id" placeholder="监考教师" clearable
+          filterable style="width: 160px">
+          <el-option v-for="t in teachers" :key="t.id"
+            :label="`${t.real_name}（${t.teacher_no}）`" :value="t.id" />
+        </el-select>
+        <el-button type="primary" @click="saveRoom">
+          {{ roomEditingId ? '保存考场' : '添加考场' }}
+        </el-button>
+        <el-button v-if="roomEditingId" @click="roomEditingId = null; roomForm = { capacity: 60 }">
+          取消编辑
+        </el-button>
       </div>
 
       <div class="table-wrap">
@@ -317,7 +359,14 @@ onMounted(async () => {
           <el-table-column prop="classroom_code" label="教室" width="120" />
           <el-table-column prop="building" label="楼栋" min-width="120" />
           <el-table-column prop="capacity" label="容量" width="90" align="center" />
-          <el-table-column prop="assigned_count" label="已排" width="90" align="center" />
+          <el-table-column prop="assigned_count" label="已排" width="80" align="center" />
+          <el-table-column prop="invigilator_name" label="监考教师" width="110" />
+          <el-table-column label="操作" width="110" align="center">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="editRoom(row)">编辑</el-button>
+              <el-button link type="danger" size="small" @click="removeRoom(row)">删除</el-button>
+            </template>
+          </el-table-column>
           <template #empty><el-empty description="尚未设置考场" :image-size="60" /></template>
         </el-table>
       </div>

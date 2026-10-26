@@ -109,6 +109,7 @@ class ExamRoom(Base, IdMixin, TimestampMixin):
 
     exam: Mapped["Exam"] = relationship(back_populates="rooms")
     classroom: Mapped["Classroom"] = relationship()
+    invigilator: Mapped["Teacher | None"] = relationship()
     students: Mapped[list["ExamStudent"]] = relationship(
         back_populates="room", cascade="all, delete-orphan"
     )

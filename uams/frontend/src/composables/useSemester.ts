@@ -4,7 +4,15 @@
  */
 import { ref } from 'vue'
 
+/** 由登录后拉取的后端 ACTIVE 学期覆盖；为空时回退到浏览器推断。 */
+let activeSemester: string | null = null
+
+export function setActiveSemester(value: string | null) {
+  activeSemester = value
+}
+
 export function currentSemester(): string {
+  if (activeSemester) return activeSemester
   const now = new Date()
   const y = now.getFullYear()
   const m = now.getMonth() + 1

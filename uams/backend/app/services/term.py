@@ -109,6 +109,25 @@ class AcademicTermService(BaseCrudService[AcademicTerm]):
         self._commit()
         return obj
 
+    def active(self) -> AcademicTerm:
+        """返回唯一 ACTIVE 学期；没有则 404，多于一个则 409（数据异常）。"""
+        from app.core.exceptions import Conflict, NotFound
+
+        rows = list(
+            self.db.execute(
+                select(AcademicTerm)
+                .where(AcademicTerm.status == TermStatus.ACTIVE)
+                .order_by(AcademicTerm.start_date.desc(), AcademicTerm.id.desc())
+            ).scalars()
+        )
+        if not rows:
+            raise NotFound("当前没有进行中的学期")
+        if len(rows) > 1:
+            raise Conflict(
+                f"存在 {len(rows)} 个 ACTIVE 学期，请先在学期管理中修正为唯一 ACTIVE"
+            )
+        return rows[0]
+
     # --- 辅助查询 ---
 
     def teaching_class_count(self, term_id: int) -> int:

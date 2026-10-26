@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import RequirePermissions, get_current_user
+from app.api.deps import RequirePermissions, get_current_user, is_admin_user
 from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Teacher
@@ -153,8 +153,17 @@ def list_classes(
     teacher_id: int | None = Query(None),
     selection_status: str | None = Query(None),
     db: Session = Depends(get_db),
-    _=_read,
+    current: User = Depends(get_current_user),
 ):
+    if current.user_type == UserType.STUDENT:
+        raise PermissionDenied("学生只能查询本人课程/可选课程")
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
+        me = db.execute(
+            select(Teacher).where(Teacher.user_id == current.id)
+        ).scalar_one_or_none()
+        if me is None:
+            raise PermissionDenied("教师档案不存在")
+        teacher_id = me.id
     items, total = TeachingClassService(db).paginate(
         params,
         semester=semester,
@@ -192,9 +201,21 @@ def my_classes(
 
 
 @classes.get("/{class_id}", response_model=TeachingClassOut, summary="教学班详情")
-def get_class(class_id: int, db: Session = Depends(get_db), _=_read):
+def get_class(
+    class_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
     svc = TeachingClassService(db)
     tc = svc.get_or_404(class_id)
+    if current.user_type == UserType.STUDENT:
+        raise PermissionDenied("学生只能查询本人课程/可选课程")
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
+        me = db.execute(
+            select(Teacher).where(Teacher.user_id == current.id)
+        ).scalar_one_or_none()
+        if me is None or tc.teacher_id != me.id:
+            raise PermissionDenied("只能查看本人授课教学班")
     return _tc_out(tc, svc.selection_count(class_id))
 
 
@@ -255,8 +276,20 @@ def toggle_selection(
 @classes.get(
     "/{class_id}/schedules", response_model=list[ScheduleOut], summary="教学班排课"
 )
-def list_schedules(class_id: int, db: Session = Depends(get_db), _=_read):
+def list_schedules(
+    class_id: int,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
     tc = TeachingClassService(db).get_or_404(class_id)
+    if current.user_type == UserType.STUDENT:
+        raise PermissionDenied("学生请使用本人课表接口")
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
+        me = db.execute(
+            select(Teacher).where(Teacher.user_id == current.id)
+        ).scalar_one_or_none()
+        if me is None or tc.teacher_id != me.id:
+            raise PermissionDenied("只能查看本人授课教学班的排课")
     return [_sched_out(s) for s in tc.schedules]
 
 

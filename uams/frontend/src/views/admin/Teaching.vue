@@ -81,8 +81,10 @@ const SEL_TYPE: Record<string, string> = {
 const taskDialog = ref(false)
 const taskForm = ref<Record<string, unknown>>({})
 const taskSaving = ref(false)
+const taskEditingId = ref<number | null>(null)
 
 function openTask() {
+  taskEditingId.value = null
   taskForm.value = {
     semester: semester.value,
     course_id: undefined,
@@ -93,11 +95,31 @@ function openTask() {
   taskDialog.value = true
 }
 
+function openTaskEdit(row: TeachingTask) {
+  taskEditingId.value = row.id
+  taskForm.value = {
+    semester: row.semester,
+    course_id: row.course_id,
+    college_id: row.college_id,
+    planned_classes: row.planned_classes,
+    status: row.status,
+  }
+  taskDialog.value = true
+}
+
 async function saveTask() {
   taskSaving.value = true
   try {
-    await teachingApi.createTask(taskForm.value)
-    ElMessage.success('教学任务已创建')
+    if (taskEditingId.value) {
+      await teachingApi.updateTask(taskEditingId.value, {
+        planned_classes: taskForm.value.planned_classes,
+        status: taskForm.value.status,
+      })
+      ElMessage.success('教学任务已更新')
+    } else {
+      await teachingApi.createTask(taskForm.value)
+      ElMessage.success('教学任务已创建')
+    }
     taskDialog.value = false
     await loadTasks()
   } catch {
@@ -560,8 +582,9 @@ onMounted(async () => {
                 <el-tag size="small">{{ TASK_STATUS[row.status] }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="90" align="center">
+            <el-table-column label="操作" width="140" align="center">
               <template #default="{ row }">
+                <el-button size="small" link type="primary" @click="openTaskEdit(row)">编辑</el-button>
                 <el-button size="small" link type="danger" @click="removeTask(row)">删除</el-button>
               </template>
             </el-table-column>
@@ -599,6 +622,7 @@ onMounted(async () => {
             </div>
 
             <div class="rcard__actions">
+              <el-button size="small" link type="primary" @click="openTaskEdit(row)">编辑</el-button>
               <el-button size="small" link type="danger" @click="removeTask(row)">删除</el-button>
             </div>
           </article>
@@ -612,26 +636,33 @@ onMounted(async () => {
     </el-tabs>
 
     <!-- 教学任务表单 -->
-    <el-dialog v-model="taskDialog" title="新增教学任务" width="480px">
+    <el-dialog v-model="taskDialog" :title="taskEditingId ? '编辑教学任务' : '新增教学任务'" width="480px">
       <el-form label-width="100px">
-        <el-form-item label="学期" required>
+        <el-form-item v-if="!taskEditingId" label="学期" required>
           <el-select v-model="taskForm.semester" style="width: 100%">
             <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
-        <el-form-item label="课程" required>
+        <el-form-item v-if="!taskEditingId" label="课程" required>
           <el-select v-model="taskForm.course_id" filterable style="width: 100%">
             <el-option v-for="c in courses" :key="c.id"
               :label="`${c.code} ${c.name}`" :value="c.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="承担学院" required>
+        <el-form-item v-if="!taskEditingId" label="承担学院" required>
           <el-select v-model="taskForm.college_id" style="width: 100%">
             <el-option v-for="c in colleges" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="计划开班数">
           <el-input-number v-model="taskForm.planned_classes" :min="1" :max="50" />
+        </el-form-item>
+        <el-form-item label="任务状态">
+          <el-select v-model="taskForm.status" style="width: 100%">
+            <el-option label="草稿" value="DRAFT" />
+            <el-option label="已确认" value="CONFIRMED" />
+            <el-option label="已取消" value="CANCELLED" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>

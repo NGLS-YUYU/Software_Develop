@@ -405,6 +405,16 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
                     f"容量不能小于已选人数（已选 {enrolled}）"
                 )
 
+        # F-12：编辑表单不能绕过 open_selection() 的前置条件。
+        if data.get("selection_status") == "OPEN":
+            if tc.status != "ACTIVE":
+                raise Conflict("教学班已取消，不能开放选课")
+            teacher_id = data.get("teacher_id", tc.teacher_id)
+            if not teacher_id:
+                raise Conflict("尚未分配授课教师，无法开放选课")
+            if not tc.schedules:
+                raise Conflict("尚未安排上课时间，无法开放选课")
+
         for k, v in data.items():
             setattr(tc, k, v)
         self._commit()
@@ -729,7 +739,7 @@ class ScheduleService:
                 f"该教师在该时段已有其他教学安排"
             )
 
-    def create(self, data: dict[str, Any]) -> Schedule:
+    def create(self, data: dict[str, Any], *, commit: bool = True) -> Schedule:
         tc = self.db.get(TeachingClass, data["teaching_class_id"])
         if tc is None:
             raise NotFound(f"教学班不存在（id={data['teaching_class_id']}）")
@@ -751,10 +761,13 @@ class ScheduleService:
             week_type=data.get("week_type", WeekType.ALL),
         )
         self.db.add(obj)
-        self.db.commit()
+        if commit:
+            self.db.commit()
+        else:
+            self.db.flush()
         return obj
 
-    def update(self, schedule_id: int, data: dict[str, Any]) -> Schedule:
+    def update(self, schedule_id: int, data: dict[str, Any], *, commit: bool = True) -> Schedule:
         s = self.get_or_404(schedule_id)
         tc = s.teaching_class
         self._term_guard(tc)
@@ -785,14 +798,20 @@ class ScheduleService:
 
         for k, v in merged.items():
             setattr(s, k, v)
-        self.db.commit()
+        if commit:
+            self.db.commit()
+        else:
+            self.db.flush()
         return s
 
-    def delete(self, schedule_id: int) -> None:
+    def delete(self, schedule_id: int, *, commit: bool = True) -> None:
         s = self.get_or_404(schedule_id)
         self._term_guard(s.teaching_class)
         self.db.delete(s)
-        self.db.commit()
+        if commit:
+            self.db.commit()
+        else:
+            self.db.flush()
 
     def list(
         self,

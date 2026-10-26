@@ -7,15 +7,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import RequirePermissions, get_current_user
+from app.api.deps import RequirePermissions, get_current_user, is_admin_user
 from app.core.exceptions import Conflict, NotFound, PermissionDenied
 from app.db.session import get_db
 from app.models.exam import Exam, ExamRoom, ExamStudent
 from app.models.organization import Classroom
-from app.models.person import Student
+from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
 from app.models.user import User, UserType
+from app.services.exam import ExamService
 from app.schemas.common import PageParams, PageResult
 
 router = APIRouter(prefix="/exams", tags=["考试"])
@@ -53,6 +54,8 @@ class ExamRoomOut(BaseModel):
     building: str | None = None
     capacity: int
     assigned_count: int
+    invigilator_id: int | None = None
+    invigilator_name: str | None = None
 
 
 class ExamOut(BaseModel):
@@ -79,6 +82,12 @@ class ExamRoomCreate(BaseModel):
     invigilator_id: int | None = None
 
 
+class ExamRoomUpdate(BaseModel):
+    classroom_id: int | None = None
+    capacity: int | None = Field(None, gt=0, le=500)
+    invigilator_id: int | None = None
+
+
 class MyExamOut(ExamOut):
     classroom_code: str | None = None
     seat_no: int | None = None
@@ -88,6 +97,12 @@ def _room_out(r) -> ExamRoomOut:
     d = ExamRoomOut.model_validate(r)
     if r.classroom:
         d.classroom_code, d.building = r.classroom.code, r.classroom.building
+    d.invigilator_id = r.invigilator_id
+    d.invigilator_name = (
+        r.invigilator.user.real_name
+        if r.invigilator and r.invigilator.user
+        else None
+    )
     return d
 
 
@@ -106,6 +121,7 @@ def _stmt():
         selectinload(Exam.course),
         selectinload(Exam.teaching_class),
         selectinload(Exam.rooms).selectinload(ExamRoom.classroom),
+        selectinload(Exam.rooms).selectinload(ExamRoom.invigilator),
     )
 
 
@@ -115,11 +131,30 @@ def list_exams(
     semester: str | None = Query(None),
     status_: str | None = Query(None, alias="status"),
     db: Session = Depends(get_db),
-    _=Depends(RequirePermissions("exam:read")),
+    current: User = Depends(RequirePermissions("exam:read")),
 ):
     from sqlalchemy import func
 
     stmt = _stmt()
+    if current.user_type == UserType.STUDENT:
+        stu = db.execute(
+            select(Student).where(Student.user_id == current.id)
+        ).scalar_one_or_none()
+        if stu is None:
+            raise PermissionDenied("学生档案不存在")
+        tc_ids = select(CourseSelection.teaching_class_id).where(
+            CourseSelection.student_id == stu.id,
+            CourseSelection.status == SelectionState.SELECTED,
+        )
+        stmt = stmt.where(Exam.teaching_class_id.in_(tc_ids), Exam.status == "PUBLISHED")
+    elif current.user_type == UserType.TEACHER and not is_admin_user(current):
+        me = db.execute(
+            select(Teacher).where(Teacher.user_id == current.id)
+        ).scalar_one_or_none()
+        if me is None:
+            raise PermissionDenied("教师档案不存在")
+        tc_ids = select(TeachingClass.id).where(TeachingClass.teacher_id == me.id)
+        stmt = stmt.where(Exam.teaching_class_id.in_(tc_ids))
     if semester:
         stmt = stmt.where(Exam.semester == semester)
     if status_:
@@ -200,6 +235,10 @@ def create_exam(
     e = Exam(
         **payload.model_dump(), course_id=tc.course_id, semester=tc.semester
     )
+    ExamService(db).validate_exam_window(
+        e, payload.exam_date, payload.start_time, payload.end_time,
+        payload.duration_minutes,
+    )
     db.add(e)
     db.commit()
     return _exam_out(db.execute(_stmt().where(Exam.id == e.id)).scalar_one())
@@ -215,9 +254,18 @@ def update_exam(
     e = db.get(Exam, exam_id)
     if e is None:
         raise NotFound("考试不存在")
-    for k, v in payload.model_dump(exclude_unset=True).items():
-        if v is not None:
-            setattr(e, k, v)
+    data = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    new_date = data.get("exam_date", e.exam_date)
+    new_start = data.get("start_time", e.start_time)
+    new_end = data.get("end_time", e.end_time)
+    new_duration = data.get("duration_minutes", e.duration_minutes)
+    if data.get("status") == "PUBLISHED" and not e.rooms:
+        raise Conflict("尚未设置考场，无法发布")
+    ExamService(db).validate_exam_window(
+        e, new_date, new_start, new_end, new_duration
+    )
+    for k, v in data.items():
+        setattr(e, k, v)
     db.commit()
     return _exam_out(db.execute(_stmt().where(Exam.id == exam_id)).scalar_one())
 
@@ -245,23 +293,69 @@ def add_room(
     e = db.get(Exam, exam_id)
     if e is None:
         raise NotFound("考试不存在")
-    room = db.get(Classroom, payload.classroom_id)
-    if room is None:
-        raise NotFound("教室不存在")
-    if payload.capacity > room.capacity:
-        raise Conflict(f"考场容量不能超过教室容量 {room.capacity}")
-    if db.execute(
-        select(ExamRoom).where(
-            ExamRoom.exam_id == exam_id, ExamRoom.classroom_id == payload.classroom_id
-        )
-    ).scalar_one_or_none():
-        raise Conflict("该教室已是本场考试的考场")
-
+    ExamService(db).validate_room(
+        e, payload.classroom_id, payload.capacity, payload.invigilator_id
+    )
     er = ExamRoom(exam_id=exam_id, **payload.model_dump())
     db.add(er)
     db.commit()
     db.refresh(er)
     return _room_out(er)
+
+
+@router.put(
+    "/{exam_id}/rooms/{room_id}",
+    response_model=ExamRoomOut,
+    summary="修改考场（容量/监考教师/教室）",
+)
+def update_room(
+    exam_id: int,
+    room_id: int,
+    payload: ExamRoomUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("exam:write")),
+):
+    e = db.get(Exam, exam_id)
+    if e is None:
+        raise NotFound("考试不存在")
+    room = db.get(ExamRoom, room_id)
+    if room is None or room.exam_id != exam_id:
+        raise NotFound("考场不存在")
+    data = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    classroom_id = data.get("classroom_id", room.classroom_id)
+    capacity = data.get("capacity", room.capacity)
+    invigilator_id = data.get("invigilator_id", room.invigilator_id)
+    ExamService(db).validate_room(
+        e, classroom_id, capacity, invigilator_id,
+        exclude_room_id=room.id, assigned_count=room.assigned_count,
+    )
+    room.classroom_id = classroom_id
+    room.capacity = capacity
+    room.invigilator_id = invigilator_id
+    db.commit()
+    db.refresh(room)
+    return _room_out(room)
+
+
+@router.delete(
+    "/{exam_id}/rooms/{room_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="删除考场（已分配考生时拒绝）",
+)
+def delete_room(
+    exam_id: int,
+    room_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("exam:write")),
+):
+    e = db.get(Exam, exam_id)
+    if e is None:
+        raise NotFound("考试不存在")
+    room = db.get(ExamRoom, room_id)
+    if room is None or room.exam_id != exam_id:
+        raise NotFound("考场不存在")
+    ExamService(db).delete_room(e, room)
+    db.commit()
 
 
 @router.post("/{exam_id}/assign", summary="自动分配考场座位")
@@ -281,6 +375,7 @@ def assign_seats(
     )
     if not rooms:
         raise Conflict("尚未设置考场")
+    ExamService(db).ensure_no_student_exam_conflict(e)
 
     students = list(
         db.execute(
@@ -330,6 +425,9 @@ def publish(
         raise NotFound("考试不存在")
     if not e.rooms:
         raise Conflict("尚未设置考场，无法发布")
+    ExamService(db).validate_exam_window(
+        e, e.exam_date, e.start_time, e.end_time, e.duration_minutes
+    )
     e.status = "PUBLISHED"
     db.commit()
     return _exam_out(db.execute(_stmt().where(Exam.id == exam_id)).scalar_one())

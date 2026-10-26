@@ -31,6 +31,16 @@ def list_terms(
     return PageResult.build([_term_out(t, svc) for t in items], total, params)
 
 
+@router.get("/active", response_model=TermOut, summary="当前进行中的学期")
+def active_term(
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("term:read")),
+):
+    """全系统统一读取 ACTIVE 学期，避免前端按浏览器日期推断。"""
+    svc = AcademicTermService(db)
+    return _term_out(svc.active(), svc)
+
+
 @router.get("/{term_id}", response_model=TermOut, summary="学期详情")
 def get_term(
     term_id: int,
