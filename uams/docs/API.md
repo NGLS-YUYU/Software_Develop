@@ -371,7 +371,7 @@ POST /api/v1/auth/login
 
 **FIX-003 字段与校验**：
 
-- 响应新增 `time_state`（`OPEN`/`NOT_STARTED`/`EXPIRED`/`INACTIVE`）与 `is_effective`，由后端按当前时间计算；管理员“实际状态”列使用该字段。
+- 响应新增 `time_state`（`OPEN`/`NOT_STARTED`/`EXPIRED`/`INACTIVE`）、`term_status` 与 `is_effective`；`is_effective` 同时要求时间开放且学期存在并 ACTIVE。管理员“实际状态”列使用该字段。
 - `POST`/`PUT` 使用同一 `SelectionPeriodCreate` 校验：`end_time` 必须晚于 `start_time`，否则 422；`target_grade_year` 限制 1900–2200。
 - 同一学期多个 ACTIVE 窗口重叠时，后端选课/退课按**并集**判断（任一适用窗口开放即可），不强制合并；管理员端会提示重叠。
 - 状态不会随时间自动变化：`ACTIVE` 但时间已过时，`time_state=EXPIRED`，选课/退课仍会被拒绝。
