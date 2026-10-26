@@ -5,6 +5,7 @@ import type {
   AdminAccount,
   Announcement,
   ClassInfo,
+  ClassRosterStudent,
   AuditLog,
   Classroom,
   College,
@@ -31,6 +32,7 @@ import type {
   ScheduleItem,
   Selection,
   SelectionPeriod,
+  RequiredAssignResult,
   Student,
   StudentGradeOverview,
   Teacher,
@@ -169,10 +171,24 @@ export const teachingApi = {
   removeSchedule: (id: number, sid: number) =>
     del(`/teaching-classes/${id}/schedules/${sid}`),
 
+  /** 教学班当前名单（含来源、安排时间；FIX-002）。 */
   students: (id: number) =>
-    get<{ student_id: number; student_no: string; real_name: string; class_name?: string }[]>(
-      `/teaching-classes/${id}/students`,
+    get<ClassRosterStudent[]>(`/teaching-classes/${id}/students`),
+  /** 必修课预安排：preview=true 只预览，false 正式提交（FIX-002）。 */
+  assignRequired: (id: number, body: Record<string, unknown>, preview = false) =>
+    post<RequiredAssignResult>(
+      `/teaching-classes/${id}/assign-required?preview=${preview}`,
+      body,
     ),
+  /** 教务手动添加学生（FIX-002）。 */
+  addStudent: (id: number, studentId: number) =>
+    post<{ selection_id: number; student_id: number; message: string }>(
+      `/teaching-classes/${id}/students`,
+      { student_id: studentId },
+    ),
+  /** 教务手动移除学生（FIX-002；已有成绩时后端 409）。 */
+  removeStudent: (id: number, studentId: number) =>
+    del(`/teaching-classes/${id}/students/${studentId}`),
 }
 
 // --- 选课 ---

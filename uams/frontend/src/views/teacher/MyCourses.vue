@@ -12,7 +12,7 @@ const classes = ref<TeachingClass[]>([])
 const loading = ref(false)
 
 const rosterVisible = ref(false)
-const roster = ref<{ student_id: number; student_no: string; real_name: string; class_name?: string }[]>([])
+const roster = ref<{ student_id: number; student_no: string; real_name: string; class_name?: string | null }[]>([])
 const rosterTitle = ref('')
 
 const DAY = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']

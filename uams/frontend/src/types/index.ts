@@ -250,7 +250,58 @@ export interface Selection {
   teacher_name?: string | null
   semester: string
   status: string
+  source?: string | null
+  source_label?: string | null
   selected_at?: string | null
+}
+
+/** 教学班名单（FIX-002：含来源与安排时间）。 */
+export interface ClassRosterStudent {
+  selection_id: number
+  student_id: number
+  student_no: string
+  real_name: string
+  major?: string | null
+  class_name?: string | null
+  status: string
+  source?: string | null
+  source_label?: string | null
+  selected_at?: string | null
+}
+
+export interface RequiredAssignItem {
+  student_id: number
+  student_no: string
+  student_name: string
+  class_name?: string | null
+  major_name?: string | null
+  action: 'ADD' | 'ALREADY' | 'SKIP'
+  reason_code?: string | null
+  reason?: string | null
+}
+
+export interface RequiredAssignResult {
+  teaching_class_id: number
+  teaching_class_code?: string | null
+  course_code?: string | null
+  course_name?: string | null
+  scope: Record<string, number>
+  matched: number
+  already_assigned: number
+  would_add: number
+  added: number
+  skipped: number
+  capacity: number
+  selected_count: number
+  selected_count_after: number
+  remaining: number
+  remaining_after: number
+  conflict_count: number
+  ineligible_count: number
+  reason_counts: Record<string, number>
+  preview: boolean
+  committed: boolean
+  items: RequiredAssignItem[]
 }
 
 export interface SelectionPeriod {

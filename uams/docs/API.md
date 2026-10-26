@@ -259,10 +259,10 @@ POST /api/v1/auth/login
 | POST | `/teaching-classes/{class_id}/schedules` | 添加排课（**冲突检测**） | `schedule:write` |
 | PUT | `/teaching-classes/{class_id}/schedules/{schedule_id}` | 修改排课（重新检测冲突） | `schedule:write` |
 | DELETE | `/teaching-classes/{class_id}/schedules/{schedule_id}` | 删除排课 | `schedule:write` |
-| GET | `/teaching-classes/{class_id}/students` | 教学班学生名单（含专业与行政班，教师仅限本人） | `selection:read` |
-| POST | `/teaching-classes/{class_id}/students` | 教务添加学生到教学班（仅建立归属关系，遵守容量约束） | `selection:manage` |
-| DELETE | `/teaching-classes/{class_id}/students/{student_id}` | 教务移除教学班学生 | `selection:manage` |
-| POST | `/teaching-classes/{class_id}/assign-required` | 必修课预安排（按行政班/专业/学院范围，优先级 class_id>major_id>college_id） | `selection:manage` |
+| GET | `/teaching-classes/{class_id}/students` | 教学班学生名单（含 `selection_id`、专业、行政班、`status`、`source`/`source_label`、`selected_at`；教师仅限本人） | `selection:read` |
+| POST | `/teaching-classes/{class_id}/students` | 教务手动添加学生（FIX-002：校验学期/学籍/容量/同课程/时间冲突，来源 `ADMIN_MANUAL`） | `selection:manage` |
+| DELETE | `/teaching-classes/{class_id}/students/{student_id}` | 教务移除学生（FIX-002：已有成绩记录时 409） | `selection:manage` |
+| POST | `/teaching-classes/{class_id}/assign-required?preview=true\|false` | 必修课预安排（FIX-002：`preview=true` 只预览不写库；按行政班/专业/学院，优先级 class_id>major_id>college_id） | `selection:manage` |
 | GET | `/teaching-classes/{class_id}/selection-stats` | 选课统计（含计数一致性检查） | `selection:read` |
 
 **教学班业务规则（TASK-012）**
@@ -308,7 +308,7 @@ POST /api/v1/auth/login
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
 | GET | `/course-selections/available?semester=...` | 可选教学班（学生，仅选修课 ELECTIVE） | 登录 |
-| GET | `/course-selections/mine` | 我的选课（`semester`、`include_dropped`，含 `course_type`） | 登录 |
+| GET | `/course-selections/mine` | 我的选课（`semester`、`include_dropped`，含 `course_type`、`source`/`source_label`） | 登录 |
 | POST | `/course-selections` | 选课（201，身份取自 JWT，不接受 `student_id`） | `selection:write` |
 | DELETE | `/course-selections/{selection_id}` | 退课（204） | `selection:write` |
 
@@ -325,9 +325,9 @@ POST /api/v1/auth/login
 
 退课限制：仅本人、需选课开放中、**必修课不可自主退选**、已有成绩记录（非草稿）时不允许退课。
 
-### 7.2 必修课预安排（TASK-009）
+### 7.2 必修课预安排（TASK-009 / FIX-002）
 
-`POST /api/v1/teaching-classes/{class_id}/assign-required`
+`POST /api/v1/teaching-classes/{class_id}/assign-required?preview=true|false`
 
 请求体（范围优先级 `class_id` > `major_id` > `college_id`，至少指定其一）：
 
@@ -337,8 +337,26 @@ POST /api/v1/auth/login
 
 - 仅 `ACADEMIC_ADMIN`（`selection:manage`）可调用；教师/学生返回 403。
 - 只允许为必修课（`REQUIRED`/`PUBLIC_REQUIRED`/`PRACTICE`）教学班预排，选修课返回 409。
-- 按范围筛选学生并批量建立 `CourseSelection`，幂等：已存在记录跳过、曾退课则复用，不产生重复。
-- 响应：`{ teaching_class_id, scope, matched, assigned, skipped }`。
+- 教学班必须 ACTIVE、学期 ACTIVE、已分配教师且至少一条排课；否则 409。
+- `preview=true`：只返回预览，不写库；`preview=false`：在单个事务内提交所有可新增记录。
+- 校验：容量、学籍（仅 ENROLLED）、同课程其他班、时间冲突；容量不足时按学生顺序部分新增，其余逐条报告 `CAPACITY_FULL`。
+- 幂等：已在本班返回 `ALREADY_ASSIGNED`；曾移除返回 `PREVIOUSLY_REMOVED`，不自动恢复。
+- 写库来源：`course_selections.source = ADMIN_REQUIRED`（历史行可为 NULL）。
+- 响应（FIX-002 扩展）：
+  ```json
+  {
+    "teaching_class_id": 1, "teaching_class_code": "...", "course_code": "...", "course_name": "...",
+    "scope": {"class_id": 3},
+    "matched": 10, "already_assigned": 2, "would_add": 6, "added": 0, "skipped": 2,
+    "capacity": 40, "selected_count": 3, "selected_count_after": 9,
+    "remaining": 37, "remaining_after": 31,
+    "conflict_count": 1, "ineligible_count": 1,
+    "reason_counts": {"INVALID_STATUS": 1, "TIME_CONFLICT": 1},
+    "preview": true, "committed": false,
+    "items": [{"student_id": 1, "student_no": "...", "student_name": "...", "class_name": "...", "major_name": "...", "action": "ADD", "reason_code": null, "reason": null}]
+  }
+  ```
+- **数据库迁移**：FIX-002 新增 `course_selections.source`（可空 `VARCHAR(20)`，`ck_selection_source`）；历史数据不回填。正式环境执行迁移前需按变更流程确认。
 
 ### 7.3 选课时间窗口 `/api/v1/selection-periods`
 

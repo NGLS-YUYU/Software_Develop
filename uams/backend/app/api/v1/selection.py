@@ -15,7 +15,7 @@ from app.models.selection import SelectionPeriod
 from app.models.user import User, UserType
 from app.schemas.teaching import TeachingClassOut
 from app.services.person import StudentService
-from app.services.selection import SelectionService
+from app.services.selection import SelectionService, selection_source_label
 from app.services.teaching import TeachingClassService
 
 router = APIRouter(tags=["选课"])
@@ -45,6 +45,8 @@ class SelectionOut(BaseModel):
     teacher_name: str | None = None
     semester: str
     status: str
+    source: str | None = None
+    source_label: str | None = None
     selected_at: datetime | None = None
 
 
@@ -55,11 +57,51 @@ class RequiredAssign(BaseModel):
 
 
 class StudentBrief(BaseModel):
+    selection_id: int
     student_id: int
     student_no: str
     real_name: str
     major: str | None = None
     class_name: str | None = None
+    status: str
+    source: str | None = None
+    source_label: str | None = None
+    selected_at: datetime | None = None
+
+
+class RequiredAssignItem(BaseModel):
+    student_id: int
+    student_no: str
+    student_name: str
+    class_name: str | None = None
+    major_name: str | None = None
+    action: str = Field(..., pattern="^(ADD|ALREADY|SKIP)$")
+    reason_code: str | None = None
+    reason: str | None = None
+
+
+class RequiredAssignResult(BaseModel):
+    teaching_class_id: int
+    teaching_class_code: str | None = None
+    course_code: str | None = None
+    course_name: str | None = None
+    scope: dict[str, int]
+    matched: int
+    already_assigned: int
+    would_add: int
+    added: int
+    skipped: int
+    capacity: int
+    selected_count: int
+    selected_count_after: int
+    remaining: int
+    remaining_after: int
+    conflict_count: int
+    ineligible_count: int
+    reason_counts: dict[str, int] = {}
+    preview: bool
+    committed: bool
+    items: list[RequiredAssignItem] = []
 
 
 class SelectionPeriodCreate(BaseModel):
@@ -78,6 +120,8 @@ class SelectionPeriodOut(SelectionPeriodCreate):
 
 def _sel_out(s) -> SelectionOut:
     d = SelectionOut.model_validate(s)
+    d.source = s.source
+    d.source_label = selection_source_label(s.source)
     if s.course:
         d.course_code, d.course_name = s.course.code, s.course.name
         d.credits = float(s.course.credits)
@@ -190,11 +234,16 @@ def class_students(
         stu = s.student
         out.append(
             StudentBrief(
+                selection_id=s.id,
                 student_id=stu.id,
                 student_no=stu.student_no,
                 real_name=stu.user.real_name if stu.user else "",
                 major=stu.major.name if stu.major else None,
                 class_name=stu.klass.name if stu.klass else None,
+                status=s.status,
+                source=s.source,
+                source_label=selection_source_label(s.source),
+                selected_at=s.selected_at,
             )
         )
     return out
@@ -218,13 +267,21 @@ def add_student_to_class(
     class_id: int,
     payload: ClassStudentAdd,
     db: Session = Depends(get_db),
-    _=Depends(RequirePermissions("selection:manage")),
+    current: User = Depends(RequirePermissions("selection:manage")),
 ):
-    """教务处将学生加入教学班（TASK-008），仅建立归属关系，不做选课校验。"""
-    TeachingClassService(db).add_student(class_id, payload.student_id)
+    """教务处手动将学生加入教学班（FIX-002）。
+
+    与批量预排共用容量、学期、学籍、同课程、时间冲突校验；来源记为 ADMIN_MANUAL。
+    """
+    sel = TeachingClassService(db).add_student(
+        class_id, payload.student_id, operator=current
+    )
     return {
+        "selection_id": sel.id,
         "student_id": payload.student_id,
         "teaching_class_id": class_id,
+        "source": sel.source,
+        "source_label": selection_source_label(sel.source),
         "message": "已加入教学班",
     }
 
@@ -238,28 +295,41 @@ def remove_student_from_class(
     class_id: int,
     student_id: int,
     db: Session = Depends(get_db),
-    _=Depends(RequirePermissions("selection:manage")),
+    current: User = Depends(RequirePermissions("selection:manage")),
 ):
-    """教务处将学生从教学班移除（TASK-008）。"""
-    TeachingClassService(db).remove_student(class_id, student_id)
+    """教务处将学生从教学班移除（FIX-002）；已有成绩记录时拒绝。"""
+    TeachingClassService(db).remove_student(
+        class_id, student_id, operator=current
+    )
 
 
 @mgmt.post(
     "/{class_id}/assign-required",
-    summary="必修课预安排（按学院/专业/行政班）",
+    response_model=RequiredAssignResult,
+    summary="必修课预安排（按学院/专业/行政班，支持预览）",
 )
 def assign_required(
     class_id: int,
     payload: RequiredAssign,
+    preview: bool = Query(
+        False, description="true=只预览不写库；false=正式提交"
+    ),
     db: Session = Depends(get_db),
-    _=Depends(RequirePermissions("selection:manage")),
+    current: User = Depends(RequirePermissions("selection:manage")),
 ):
-    """教务处将必修课程按范围（class_id > major_id > college_id）安排给学生（TASK-009）。"""
+    """教务处将必修课程按范围（class_id > major_id > college_id）安排给学生。
+
+    - ``preview=true``：返回匹配/新增/跳过/容量/冲突明细，不写库；
+    - ``preview=false``：在单事务内写入可新增记录，逐条返回跳过原因；
+    - 已在本班的学生返回 ALREADY；曾被移除的学生返回 PREVIOUSLY_REMOVED。
+    """
     return SelectionService(db).assign_required(
         class_id,
         college_id=payload.college_id,
         major_id=payload.major_id,
         class_id=payload.class_id,
+        preview=preview,
+        operator=current,
     )
 
 

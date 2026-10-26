@@ -4,6 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { classroomApi, collegeApi, courseApi, scheduleApi, teacherApi, teachingApi, termApi } from '@/api'
+import ClassEnrollmentDialog from '@/components/ClassEnrollmentDialog.vue'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
 import type {
   Classroom,
@@ -51,6 +52,19 @@ const classes = ref<TeachingClass[]>([])
 const classesTotal = ref(0)
 const classPage = ref(1)
 const loading = ref(false)
+
+/** FIX-002：教学班学生安排/名单弹窗 */
+const enrollVisible = ref(false)
+const enrollClass = ref<TeachingClass | null>(null)
+
+function openEnrollment(row: TeachingClass) {
+  enrollClass.value = row
+  enrollVisible.value = true
+}
+
+async function onEnrollmentChanged() {
+  await loadClasses()
+}
 
 const DAY = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日']
 const TASK_STATUS: Record<string, string> = {
@@ -436,10 +450,13 @@ onMounted(async () => {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="230" align="center" fixed="right">
+            <el-table-column label="操作" width="320" align="center" fixed="right">
               <template #default="{ row }">
                 <el-button size="small" link type="primary" @click="openSchedule(row)">
                   排课
+                </el-button>
+                <el-button size="small" link type="primary" @click="openEnrollment(row)">
+                  安排学生
                 </el-button>
                 <el-button size="small" link type="primary" @click="toggleSelection(row)">
                   {{ row.selection_status === 'OPEN' ? '关闭选课' : '开放选课' }}
@@ -502,6 +519,9 @@ onMounted(async () => {
             <div class="rcard__actions">
               <el-button size="small" link type="primary" @click="openSchedule(row)">
                 排课
+              </el-button>
+              <el-button size="small" link type="primary" @click="openEnrollment(row)">
+                安排学生
               </el-button>
               <el-button size="small" link type="primary" @click="toggleSelection(row)">
                 {{ row.selection_status === 'OPEN' ? '关闭选课' : '开放选课' }}
@@ -793,6 +813,13 @@ onMounted(async () => {
         </article>
       </div>
     </el-dialog>
+
+    <!-- FIX-002：批量安排 + 教学班名单管理 -->
+    <ClassEnrollmentDialog
+      v-model="enrollVisible"
+      :teaching-class="enrollClass"
+      @changed="onEnrollmentChanged"
+    />
   </el-card>
 </template>
 

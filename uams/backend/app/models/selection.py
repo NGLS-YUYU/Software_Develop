@@ -35,12 +35,26 @@ class SelectionState:
     DROPPED = "DROPPED"
 
 
+class SelectionSource:
+    """选课/安排来源（FIX-002）。"""
+
+    STUDENT = "STUDENT"                  # 学生自主选课
+    ADMIN_REQUIRED = "ADMIN_REQUIRED"    # 教务必修课批量预安排
+    ADMIN_MANUAL = "ADMIN_MANUAL"        # 教务手动添加
+    ALL = (STUDENT, ADMIN_REQUIRED, ADMIN_MANUAL)
+
+
 class CourseSelection(Base, IdMixin, TimestampMixin):
     __tablename__ = "course_selections"
     __table_args__ = (
         # 防重复选课的最后一道防线：并发下应用层判断可能失效（PRD §15）
         UniqueConstraint("student_id", "teaching_class_id", name="uk_selection"),
         CheckConstraint("status IN ('SELECTED','DROPPED')", name="ck_selection_status"),
+        CheckConstraint(
+            "source IS NULL OR source IN "
+            "('STUDENT','ADMIN_REQUIRED','ADMIN_MANUAL')",
+            name="ck_selection_source",
+        ),
         Index("idx_selection_student_sem", "student_id", "semester"),
         Index("idx_selection_tc", "teaching_class_id", "status"),
         {**_KW, "comment": "选课记录"},
@@ -62,6 +76,11 @@ class CourseSelection(Base, IdMixin, TimestampMixin):
         nullable=False,
     )
     semester: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="来源：STUDENT/ADMIN_REQUIRED/ADMIN_MANUAL；NULL 为历史未标记",
+    )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=SelectionState.SELECTED,
         server_default=SelectionState.SELECTED,

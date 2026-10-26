@@ -9,18 +9,47 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import Conflict, NotFound, PermissionDenied, TeachingClassFull
 from app.models.course import Course, CoursePrerequisite, CourseType
 from app.models.grade import Grade, GradeStatus
+from app.models.misc import OperationLog
+from app.models.organization import Class, College, Major
 from app.models.person import Student, Teacher
-from app.models.selection import CourseSelection, SelectionPeriod, SelectionState
+from app.models.selection import (
+    CourseSelection,
+    SelectionPeriod,
+    SelectionSource,
+    SelectionState,
+)
 from app.models.teaching import Schedule, TeachingClass
 from app.models.term import TermStatus
+from app.models.user import User
+from app.services.integrity import conflict_from_integrity_error
 from app.services.teaching import ConflictChecker
+
+SOURCE_LABELS = {
+    SelectionSource.STUDENT: "学生自主选课",
+    SelectionSource.ADMIN_REQUIRED: "教务批量预安排",
+    SelectionSource.ADMIN_MANUAL: "教务手动添加",
+}
+REASON_LABELS = {
+    "ALREADY_ASSIGNED": "已安排",
+    "PREVIOUSLY_REMOVED": "曾从本教学班移除",
+    "SAME_COURSE_OTHER_CLASS": "已选同课程其他教学班",
+    "TIME_CONFLICT": "课表时间冲突",
+    "CAPACITY_FULL": "教学班容量不足",
+    "INVALID_STATUS": "学籍状态无效",
+}
+
+
+def selection_source_label(source: str | None) -> str:
+    if not source:
+        return "历史记录（未标记来源）"
+    return SOURCE_LABELS.get(source, source)
 
 # 必修 / 选修分类（TASK-009）：复用 CourseType 枚举，不修改课程类型体系。
 # 必修课只能由教务处预排；选修课可由学生自主选择。
@@ -206,6 +235,7 @@ class SelectionService:
                 existing.status = SelectionState.SELECTED
                 existing.selected_at = datetime.now()
                 existing.dropped_at = None
+                existing.source = SelectionSource.STUDENT
                 sel = existing
             else:
                 sel = CourseSelection(
@@ -213,6 +243,7 @@ class SelectionService:
                     teaching_class_id=tc.id,
                     course_id=tc.course_id,
                     semester=tc.semester,
+                    source=SelectionSource.STUDENT,
                 )
                 self.db.add(sel)
             self.db.commit()
@@ -264,84 +295,351 @@ class SelectionService:
 
     # --- 必修课预排 ---
 
+    def _validate_arrangement_class(
+        self, teaching_class_id: int, *, lock: bool
+    ) -> TeachingClass:
+        """校验教学班可用于必修课预安排，并返回带 course/term 的对象。"""
+        stmt = (
+            select(TeachingClass)
+            .where(TeachingClass.id == teaching_class_id)
+            .options(
+                selectinload(TeachingClass.course),
+                selectinload(TeachingClass.term),
+                selectinload(TeachingClass.schedules),
+            )
+        )
+        if lock:
+            stmt = stmt.with_for_update()
+        tc = self.db.execute(stmt).scalar_one_or_none()
+        if tc is None:
+            raise NotFound(f"教学班不存在（id={teaching_class_id}）")
+        if tc.status != "ACTIVE":
+            raise Conflict("该教学班已取消，无法安排学生")
+        if tc.course is None:
+            raise NotFound("教学班关联课程不存在")
+        if not _is_required(tc.course.course_type):
+            raise Conflict("该课程不是必修/实践课程，不能使用必修课预安排")
+        if tc.term is None or tc.term.status != TermStatus.ACTIVE:
+            raise Conflict("当前学期未在进行中，无法安排必修课")
+        if tc.teacher_id is None:
+            raise Conflict("尚未分配授课教师，无法安排学生")
+        if not tc.schedules:
+            raise Conflict("尚未安排上课时间，无法安排学生")
+        return tc
+
+    def _scope_students(
+        self,
+        college_id: int | None,
+        major_id: int | None,
+        class_id: int | None,
+    ) -> tuple[list[Student], dict[str, int]]:
+        """按行政班 > 专业 > 学院的范围返回学生及范围描述。"""
+        if class_id is not None:
+            if self.db.get(Class, class_id) is None:
+                raise NotFound(f"行政班不存在（id={class_id}）")
+            cond = Student.class_id == class_id
+            scope = {"class_id": class_id}
+        elif major_id is not None:
+            if self.db.get(Major, major_id) is None:
+                raise NotFound(f"专业不存在（id={major_id}）")
+            cond = Student.major_id == major_id
+            scope = {"major_id": major_id}
+        elif college_id is not None:
+            if self.db.get(College, college_id) is None:
+                raise NotFound(f"学院不存在（id={college_id}）")
+            cond = Student.college_id == college_id
+            scope = {"college_id": college_id}
+        else:
+            raise Conflict("必须指定预排范围：行政班、专业或学院")
+
+        students = list(
+            self.db.execute(
+                select(Student)
+                .options(
+                    selectinload(Student.user),
+                    selectinload(Student.klass),
+                    selectinload(Student.major),
+                )
+                .where(cond)
+                .order_by(Student.student_no)
+            ).scalars()
+        )
+        return students, scope
+
+    def _selected_count(self, teaching_class_id: int, *, lock: bool) -> int:
+        stmt = select(CourseSelection.id).where(
+            CourseSelection.teaching_class_id == teaching_class_id,
+            CourseSelection.status == SelectionState.SELECTED,
+        )
+        if lock:
+            stmt = stmt.with_for_update()
+        return len(self.db.execute(stmt).scalars().all())
+
+    def _existing_rows(
+        self,
+        student_ids: list[int],
+        tc: TeachingClass,
+        *,
+        lock: bool,
+    ) -> list[CourseSelection]:
+        if not student_ids:
+            return []
+        stmt = select(CourseSelection).where(
+            CourseSelection.student_id.in_(student_ids),
+            CourseSelection.semester == tc.semester,
+            or_(
+                CourseSelection.teaching_class_id == tc.id,
+                CourseSelection.course_id == tc.course_id,
+            ),
+        )
+        if lock:
+            stmt = stmt.with_for_update()
+        return list(self.db.execute(stmt).scalars())
+
+    def _plan_arrangement(
+        self,
+        tc: TeachingClass,
+        students: list[Student],
+        existing_rows: list[CourseSelection],
+        selected_count: int,
+        *,
+        preview: bool,
+    ) -> dict:
+        """计算预安排结果；preview=True 时不做任何写入。
+
+        原子性策略：应用层支持“部分成功 + 逐条原因”，但所有新增记录
+        仍在同一个数据库事务中提交；提交失败则整批回滚。
+        """
+        same_class: dict[int, CourseSelection] = {}
+        same_course_other: dict[int, CourseSelection] = {}
+        for row in existing_rows:
+            if row.teaching_class_id == tc.id:
+                same_class[row.student_id] = row
+            elif (
+                row.status == SelectionState.SELECTED
+                and row.course_id == tc.course_id
+            ):
+                same_course_other[row.student_id] = row
+
+        remaining = max(0, tc.capacity - selected_count)
+        items: list[dict] = []
+        reason_counts: dict[str, int] = {}
+        already = would_add = skipped = 0
+        conflict_count = ineligible_count = 0
+        checker = ConflictChecker(self.db)
+
+        for stu in students:
+            item = {
+                "student_id": stu.id,
+                "student_no": stu.student_no,
+                "student_name": stu.user.real_name if stu.user else "",
+                "class_name": stu.klass.name if stu.klass else None,
+                "major_name": stu.major.name if stu.major else None,
+                "action": "ADD",
+                "reason_code": None,
+                "reason": None,
+            }
+            same = same_class.get(stu.id)
+            if same is not None and same.status == SelectionState.SELECTED:
+                item.update(
+                    action="ALREADY",
+                    reason_code="ALREADY_ASSIGNED",
+                    reason="已在本教学班",
+                )
+                already += 1
+            elif same is not None and same.status == SelectionState.DROPPED:
+                item.update(
+                    action="SKIP",
+                    reason_code="PREVIOUSLY_REMOVED",
+                    reason="曾从本教学班移除，批量预排不自动恢复",
+                )
+                skipped += 1
+                ineligible_count += 1
+            elif stu.academic_status != "ENROLLED":
+                item.update(
+                    action="SKIP",
+                    reason_code="INVALID_STATUS",
+                    reason=f"学籍状态为 {stu.academic_status}",
+                )
+                skipped += 1
+                ineligible_count += 1
+            elif stu.id in same_course_other:
+                item.update(
+                    action="SKIP",
+                    reason_code="SAME_COURSE_OTHER_CLASS",
+                    reason="已选同课程其他教学班",
+                )
+                skipped += 1
+                ineligible_count += 1
+            else:
+                hit = checker.student_conflict(stu.id, tc.id, tc.semester)
+                if hit is not None:
+                    other = self.db.get(TeachingClass, hit.teaching_class_id)
+                    item.update(
+                        action="SKIP",
+                        reason_code="TIME_CONFLICT",
+                        reason=f"与 {other.code if other else '已选课程'} 时间冲突",
+                    )
+                    skipped += 1
+                    conflict_count += 1
+                elif would_add >= remaining:
+                    item.update(
+                        action="SKIP",
+                        reason_code="CAPACITY_FULL",
+                        reason=f"教学班剩余容量不足（剩余 {remaining}）",
+                    )
+                    skipped += 1
+                else:
+                    would_add += 1
+
+            if item["reason_code"]:
+                code = item["reason_code"]
+                reason_counts[code] = reason_counts.get(code, 0) + 1
+            items.append(item)
+
+        selected_after = selected_count + would_add
+        return {
+            "teaching_class_id": tc.id,
+            "teaching_class_code": tc.code,
+            "course_code": tc.course.code if tc.course else None,
+            "course_name": tc.course.name if tc.course else None,
+            "scope": {},  # 由 assign_required 填入
+            "matched": len(students),
+            "already_assigned": already,
+            "would_add": would_add,
+            "added": 0,
+            "skipped": skipped,
+            "capacity": tc.capacity,
+            "selected_count": selected_count,
+            "selected_count_after": selected_after,
+            "remaining": remaining,
+            "remaining_after": max(0, tc.capacity - selected_after),
+            "conflict_count": conflict_count,
+            "ineligible_count": ineligible_count,
+            "reason_counts": reason_counts,
+            "preview": preview,
+            "committed": False,
+            "items": items,
+        }
+
+    def _log_operation(
+        self,
+        operator: User | None,
+        *,
+        action: str,
+        resource_type: str,
+        resource_id: int,
+        detail: str,
+    ) -> None:
+        self.db.add(
+            OperationLog(
+                user_id=operator.id if operator else None,
+                username=operator.username if operator else None,
+                action=action,
+                module="selection",
+                resource_type=resource_type,
+                resource_id=resource_id,
+                detail=detail[:500],
+                result="SUCCESS",
+            )
+        )
+
+    @staticmethod
+    def _assign_detail(tc: TeachingClass, scope: dict[str, int], result: dict) -> str:
+        scope_text = ", ".join(f"{k}={v}" for k, v in scope.items())
+        reason_text = ", ".join(
+            f"{REASON_LABELS.get(k, k)} {v}"
+            for k, v in result["reason_counts"].items()
+        ) or "无"
+        return (
+            f"必修课预安排：教学班 {tc.code}，范围 {scope_text}，"
+            f"匹配 {result['matched']} 人，已安排 {result['already_assigned']} 人，"
+            f"新增 {result['added']} 人，跳过 {result['skipped']} 人；原因：{reason_text}"
+        )
+
+    def _commit(self) -> None:
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            conflict = conflict_from_integrity_error(exc, "选课记录")
+            if conflict is not None:
+                raise conflict from exc
+            raise
+
     def assign_required(
         self,
         teaching_class_id: int,
         college_id: int | None = None,
         major_id: int | None = None,
         class_id: int | None = None,
+        *,
+        preview: bool = False,
+        operator: User | None = None,
     ) -> dict:
-        """必修课预安排：教务处按范围（行政班 > 专业 > 学院）把学生安排进教学班。
+        """必修课预安排：按行政班/专业/学院批量安排学生。
 
-        范围优先级：class_id > major_id > college_id。
-        幂等：同一学生同一教学班已有记录时不重复创建，曾退课则复用该行。
+        - ``preview=True``：只计算并返回预览，不写库；
+        - ``preview=False``：在一个事务内写入所有可新增记录；
+          应用层跳过不符合条件的学生，逐条返回原因；提交失败整批回滚。
+        - 重复执行幂等：已在本班的学生返回 ALREADY，不重复创建。
+        - 曾被移除（DROPPED）的学生不自动恢复，需教务手动添加。
         """
-        tc = self.db.execute(
-            select(TeachingClass)
-            .where(TeachingClass.id == teaching_class_id)
-            .options(selectinload(TeachingClass.course))
-        ).scalar_one_or_none()
-        if tc is None:
-            raise NotFound(f"教学班不存在（id={teaching_class_id}）")
+        tc = self._validate_arrangement_class(teaching_class_id, lock=not preview)
+        students, scope = self._scope_students(
+            college_id=college_id, major_id=major_id, class_id=class_id
+        )
+        student_ids = [s.id for s in students]
 
-        # 只允许必修课通过预排接口安排（TASK-009）
-        if not _is_required(tc.course.course_type if tc.course else None):
-            raise Conflict("该课程为选修课，不能通过必修课预排接口安排")
+        if preview:
+            selected_count = self._selected_count(tc.id, lock=False)
+            existing = self._existing_rows(student_ids, tc, lock=False)
+            result = self._plan_arrangement(
+                tc, students, existing, selected_count, preview=True
+            )
+            result["scope"] = scope
+            return result
 
-        if class_id is None and major_id is None and college_id is None:
-            raise Conflict("必须指定预排范围：行政班、专业或学院")
+        selected_count = self._selected_count(tc.id, lock=True)
+        existing = self._existing_rows(student_ids, tc, lock=True)
+        result = self._plan_arrangement(
+            tc, students, existing, selected_count, preview=False
+        )
+        result["scope"] = scope
 
-        if class_id is not None:
-            cond = (Student.class_id == class_id,)
-            scope = {"class_id": class_id}
-        elif major_id is not None:
-            cond = (Student.major_id == major_id,)
-            scope = {"major_id": major_id}
-        else:
-            cond = (Student.college_id == college_id,)
-            scope = {"college_id": college_id}
-
-        student_ids = [
-            row[0] for row in self.db.execute(select(Student.id).where(*cond)).all()
-        ]
-
-        assigned = 0
-        skipped = 0
-        for sid in student_ids:
-            sel = self.db.execute(
-                select(CourseSelection).where(
-                    CourseSelection.student_id == sid,
-                    CourseSelection.teaching_class_id == tc.id,
-                )
-            ).scalar_one_or_none()
-            if sel is not None and sel.status == SelectionState.SELECTED:
-                skipped += 1
-                continue
-            if sel is not None:  # 曾退课，复用该行
-                sel.status = SelectionState.SELECTED
-                sel.selected_at = datetime.now()
-                sel.dropped_at = None
-            else:
-                sel = CourseSelection(
-                    student_id=sid,
-                    teaching_class_id=tc.id,
-                    course_id=tc.course_id,
-                    semester=tc.semester,
-                )
-                self.db.add(sel)
-            assigned += 1
+        now = datetime.now()
+        add_ids = [i["student_id"] for i in result["items"] if i["action"] == "ADD"]
         try:
-            self.db.commit()
-        except IntegrityError as e:
+            for sid in add_ids:
+                self.db.add(
+                    CourseSelection(
+                        student_id=sid,
+                        teaching_class_id=tc.id,
+                        course_id=tc.course_id,
+                        semester=tc.semester,
+                        status=SelectionState.SELECTED,
+                        source=SelectionSource.ADMIN_REQUIRED,
+                        selected_at=now,
+                    )
+                )
+            result["added"] = len(add_ids)
+            result["selected_count_after"] = selected_count + len(add_ids)
+            result["remaining_after"] = max(
+                0, tc.capacity - result["selected_count_after"]
+            )
+            self._log_operation(
+                operator,
+                action="REQUIRED_ASSIGN",
+                resource_type="teaching_class",
+                resource_id=tc.id,
+                detail=self._assign_detail(tc, scope, result),
+            )
+            self._commit()
+            result["committed"] = True
+        except Exception:
             self.db.rollback()
-            raise Conflict("预排失败：存在重复选课记录") from e
-        return {
-            "teaching_class_id": tc.id,
-            "scope": scope,
-            "matched": len(student_ids),
-            "assigned": assigned,
-            "skipped": skipped,
-        }
+            raise
+        return result
 
     # --- 可选课程 ---
 

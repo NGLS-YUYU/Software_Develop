@@ -28,12 +28,13 @@ from app.core.exceptions import (
 )
 from app.models.course import Course
 from app.models.grade import Grade, GradeStatus
+from app.models.misc import OperationLog
 from app.models.organization import Classroom, College
 from app.models.person import Student, Teacher
-from app.models.selection import CourseSelection, SelectionState
+from app.models.selection import CourseSelection, SelectionSource, SelectionState
 from app.models.teaching import Schedule, TeachingClass, TeachingTask, WeekType
 from app.models.term import AcademicTerm, TermStatus
-from app.models.user import UserType
+from app.models.user import User, UserType
 from app.services.base import BaseCrudService
 
 
@@ -475,9 +476,39 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
 
     # --- 学生归属管理（TASK-008，仅教务处） ---
 
-    def add_student(self, class_id: int, student_id: int) -> CourseSelection:
-        """教务处将学生加入教学班。仅建立归属关系，但遵守容量约束（TASK-012）。"""
-        # 行级锁：与选课一致，防止并发下超容（CLAUDE.md §20）
+    def _log_selection_action(
+        self,
+        operator: User | None,
+        action: str,
+        tc: TeachingClass,
+        student: Student,
+        detail: str,
+    ) -> None:
+        self.db.add(
+            OperationLog(
+                user_id=operator.id if operator else None,
+                username=operator.username if operator else None,
+                action=action,
+                module="selection",
+                resource_type="teaching_class",
+                resource_id=tc.id,
+                detail=detail[:500],
+                result="SUCCESS",
+            )
+        )
+
+    def add_student(
+        self,
+        class_id: int,
+        student_id: int,
+        operator: User | None = None,
+    ) -> CourseSelection:
+        """教务手动将学生加入教学班（FIX-002）。
+
+        管理员手动添加也必须经过容量、学期、学籍、同课程与时间冲突校验，
+        不能因为拥有 selection:manage 权限而绕过业务规则。
+        """
+        # 行级锁：与选课/批量预排一致，防止并发下超容。
         tc = self.db.execute(
             select(TeachingClass).where(TeachingClass.id == class_id).with_for_update()
         ).scalar_one_or_none()
@@ -485,8 +516,20 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
             raise NotFound(f"教学班不存在（id={class_id}）")
         if tc.status != "ACTIVE":
             raise Conflict("该教学班已取消，无法添加学生")
-        if self.db.get(Student, student_id) is None:
+        if tc.term is None or tc.term.status != TermStatus.ACTIVE:
+            raise Conflict("当前学期未在进行中，无法添加学生")
+        if tc.teacher_id is None:
+            raise Conflict("尚未分配授课教师，无法添加学生")
+        if not tc.schedules:
+            raise Conflict("尚未安排上课时间，无法添加学生")
+
+        student = self.db.get(Student, student_id)
+        if student is None:
             raise NotFound(f"学生不存在（id={student_id}）")
+        if student.academic_status != "ENROLLED":
+            raise Conflict(
+                f"学生学籍状态为 {student.academic_status}，无法加入教学班"
+            )
 
         sel = self.db.execute(
             select(CourseSelection).where(
@@ -497,29 +540,81 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         if sel is not None and sel.status == SelectionState.SELECTED:
             raise Conflict("该学生已在此教学班中")
 
-        # 容量约束（TASK-012/013）：已选人数由 CourseSelection 动态统计，不得超容
+        same_course = self.db.execute(
+            select(CourseSelection).where(
+                CourseSelection.student_id == student_id,
+                CourseSelection.course_id == tc.course_id,
+                CourseSelection.semester == tc.semester,
+                CourseSelection.status == SelectionState.SELECTED,
+                CourseSelection.teaching_class_id != tc.id,
+            ).limit(1)
+        ).scalar_one_or_none()
+        if same_course is not None:
+            raise Conflict("该学生已选同一课程的其他教学班，不能重复添加")
+
+        hit = ConflictChecker(self.db).student_conflict(
+            student_id, class_id, tc.semester
+        )
+        if hit is not None:
+            other = self.db.get(TeachingClass, hit.teaching_class_id)
+            raise Conflict(
+                f"时间冲突：与 {other.code if other else '已选课程'} 的排课冲突"
+            )
+
+        # 容量约束（TASK-012/013）：已选人数由 CourseSelection 动态统计，不得超容。
         enrolled = self.locked_selection_count(class_id)
         if enrolled >= tc.capacity:
             raise TeachingClassFull(f"该教学班已满（{enrolled}/{tc.capacity}）")
 
-        if sel is not None:  # 曾退课，复用该行
+        now = datetime.now()
+        if sel is not None:  # 曾退课，手动添加复用该行
             sel.status = SelectionState.SELECTED
-            sel.selected_at = datetime.now()
+            sel.selected_at = now
             sel.dropped_at = None
+            sel.source = SelectionSource.ADMIN_MANUAL
         else:
             sel = CourseSelection(
                 student_id=student_id,
                 teaching_class_id=class_id,
                 course_id=tc.course_id,
                 semester=tc.semester,
+                status=SelectionState.SELECTED,
+                source=SelectionSource.ADMIN_MANUAL,
+                selected_at=now,
             )
             self.db.add(sel)
+
+        self._log_selection_action(
+            operator,
+            "ADMIN_ADD_STUDENT",
+            tc,
+            student,
+            f"教务手动添加学生 {student.student_no} 到教学班 {tc.code}",
+        )
         self._commit()
         return sel
 
-    def remove_student(self, class_id: int, student_id: int) -> None:
-        """教务处将学生从教学班移除。"""
-        tc = self.get_or_404(class_id)
+    def remove_student(
+        self,
+        class_id: int,
+        student_id: int,
+        operator: User | None = None,
+    ) -> None:
+        """教务手动将学生从教学班移除（FIX-002）。
+
+        已有成绩记录时拒绝移除，避免留下没有选课归属的成绩。
+        """
+        tc = self.db.execute(
+            select(TeachingClass).where(TeachingClass.id == class_id).with_for_update()
+        ).scalar_one_or_none()
+        if tc is None:
+            raise NotFound(f"教学班不存在（id={class_id}）")
+        if tc.term is None or tc.term.status != TermStatus.ACTIVE:
+            raise Conflict("当前学期未在进行中，无法移除学生")
+
+        student = self.db.get(Student, student_id)
+        if student is None:
+            raise NotFound(f"学生不存在（id={student_id}）")
         sel = self.db.execute(
             select(CourseSelection).where(
                 CourseSelection.student_id == student_id,
@@ -528,8 +623,27 @@ class TeachingClassService(BaseCrudService[TeachingClass]):
         ).scalar_one_or_none()
         if sel is None or sel.status != SelectionState.SELECTED:
             raise NotFound("该学生不在此教学班中")
+
+        grade = self.db.execute(
+            select(Grade.id)
+            .where(
+                Grade.student_id == student_id,
+                Grade.teaching_class_id == class_id,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if grade is not None:
+            raise Conflict("该学生已有成绩记录，无法移除；如确需调整请先处理成绩")
+
         sel.status = SelectionState.DROPPED
         sel.dropped_at = datetime.now()
+        self._log_selection_action(
+            operator,
+            "ADMIN_REMOVE_STUDENT",
+            tc,
+            student,
+            f"教务从教学班 {tc.code} 移除学生 {student.student_no}",
+        )
         self._commit()
 
 

@@ -19,7 +19,7 @@ const editingId = ref<number | null>(null)
 const saving = ref(false)
 
 const rosterVisible = ref(false)
-const roster = ref<{ student_no: string; real_name: string; class_name?: string }[]>([])
+const roster = ref<{ student_no: string; real_name: string; class_name?: string | null }[]>([])
 const rosterTitle = ref('')
 
 const STATUS: Record<string, string> = { PENDING: '未开始', ACTIVE: '进行中', CLOSED: '已结束' }
