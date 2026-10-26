@@ -8,7 +8,9 @@ from sqlalchemy import text
 
 from app.api.v1 import api_router
 from app.core.config import settings
-from app.db.session import engine
+from app.core.security import decode_access_token
+from app.db.session import SessionLocal, engine
+from app.services.audit import write_log
 
 app = FastAPI(
     title="UAMS 高校教务教学管理系统",
@@ -57,6 +59,46 @@ def validation_exception_handler(
 
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+
+@app.middleware("http")
+async def audit_mutation_middleware(request: Request, call_next):
+    """记录已认证用户的写操作（POST/PUT/PATCH/DELETE），不读取请求体/密码（F-09）。"""
+    path = request.url.path
+    method = request.method.upper()
+    should_log = (
+        path.startswith(settings.API_V1_PREFIX + "/")
+        and method in {"POST", "PUT", "PATCH", "DELETE"}
+        and not path.startswith(settings.API_V1_PREFIX + "/auth/login")
+    )
+    response = await call_next(request)
+    if should_log:
+        try:
+            token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+            payload = decode_access_token(token) if token else None
+            user_id = int(payload["sub"]) if payload and payload.get("sub") else None
+            username = payload.get("username") if payload else None
+            parts = [p for p in path.split("/") if p]
+            module = parts[2] if len(parts) > 2 else "api"
+            resource_id = next((int(p) for p in parts[::-1] if p.isdigit()), None)
+            resource_type = module
+            with SessionLocal() as audb:
+                write_log(
+                    audb,
+                    action=f"{method} {parts[-1] if parts else ''}",
+                    module=module,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    detail=f"{method} {path} -> {response.status_code}",
+                    result="SUCCESS" if response.status_code < 400 else "FAILURE",
+                    user_id=user_id,
+                    username=username,
+                    request=request,
+                )
+        except Exception:
+            # 审计失败不影响主业务
+            pass
+    return response
 
 
 @app.get("/health", tags=["系统"])

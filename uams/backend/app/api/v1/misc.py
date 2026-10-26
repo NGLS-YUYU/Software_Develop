@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import RequirePermissions, get_current_user
+from app.api.deps import RequirePermissions, get_current_user, is_admin_user
 from app.core.exceptions import Conflict, NotFound, PermissionDenied
 from app.db.session import get_db
 from app.models.course import Course
@@ -48,6 +48,14 @@ class EvalTaskCreate(BaseModel):
 class EvalTaskOut(EvalTaskCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
+
+
+class EvalTaskUpdate(BaseModel):
+    name: str | None = Field(None, max_length=100)
+    semester: str | None = Field(None, pattern=r"^\d{4}-\d{4}-[1-3]$")
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    status: str | None = Field(None, pattern="^(PENDING|ACTIVE|CLOSED)$")
 
 
 class EvalSubmit(BaseModel):
@@ -92,6 +100,31 @@ def create_task(
 ):
     t = EvaluationTask(**payload.model_dump())
     db.add(t)
+    db.commit()
+    return EvalTaskOut.model_validate(t)
+
+
+@evals.put(
+    "/tasks/{task_id}",
+    response_model=EvalTaskOut,
+    summary="修改评价任务（F-10）",
+)
+def update_task(
+    task_id: int,
+    payload: EvalTaskUpdate,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("evaluation:manage")),
+):
+    t = db.get(EvaluationTask, task_id)
+    if t is None:
+        raise NotFound("评价任务不存在")
+    data = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    start = data.get("start_time", t.start_time)
+    end = data.get("end_time", t.end_time)
+    if end <= start:
+        raise Conflict("评价结束时间必须晚于开始时间")
+    for k, v in data.items():
+        setattr(t, k, v)
     db.commit()
     return EvalTaskOut.model_validate(t)
 
@@ -210,8 +243,8 @@ def eval_statistics(
     if teaching_class_id:
         stmt = stmt.where(Evaluation.teaching_class_id == teaching_class_id)
 
-    # 教师只能看自己的评价
-    if current.user_type == UserType.TEACHER:
+    # 教师只能看自己的评价；教师兼任管理员按管理员口径看全校
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
         me = db.execute(
             select(Teacher).where(Teacher.user_id == current.id)
         ).scalar_one_or_none()
@@ -292,8 +325,8 @@ def list_anns(
     current: User = Depends(get_current_user),
 ):
     stmt = select(Announcement).options(selectinload(Announcement.publisher))
-    # 非教务只能看到已发布、且面向自己角色的公告
-    if current.user_type != UserType.ADMIN:
+    # 非管理员（按角色判定）只能看到已发布、且面向自己角色的公告
+    if not is_admin_user(current):
         target = "STUDENT" if current.user_type == UserType.STUDENT else "TEACHER"
         stmt = stmt.where(
             Announcement.status == "PUBLISHED",

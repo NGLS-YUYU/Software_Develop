@@ -13,6 +13,7 @@ from app.schemas.auth import (
     LoginResponse,
     UserInfo,
 )
+from app.services.audit import write_log
 from app.services.auth import AuthService
 
 router = APIRouter(prefix="/auth", tags=["认证"])
@@ -25,7 +26,34 @@ def login(
     db: Session = Depends(get_db),
 ) -> LoginResponse:
     service = AuthService(db)
-    user = service.authenticate(payload.username, payload.password)
+    try:
+        user = service.authenticate(payload.username, payload.password)
+    except Exception as exc:
+        try:
+            write_log(
+                db,
+                action="LOGIN",
+                module="auth",
+                resource_type="auth",
+                detail=f"{payload.username} 登录失败：{getattr(exc, 'message', type(exc).__name__)}",
+                result="FAILURE",
+                username=payload.username,
+                request=request,
+            )
+        except Exception:
+            pass
+        raise
+    write_log(
+        db,
+        action="LOGIN",
+        module="auth",
+        resource_type="auth",
+        detail=f"{payload.username} 登录成功",
+        result="SUCCESS",
+        user_id=user.id,
+        username=user.username,
+        request=request,
+    )
     token, expires_in = service.issue_token(user)
 
     return LoginResponse(

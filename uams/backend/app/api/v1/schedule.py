@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_admin_user
 from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Student, Teacher
@@ -143,6 +143,24 @@ def student_schedule(
         raise PermissionDenied("学生不存在")
     if current.user_type == UserType.STUDENT and stu.user_id != current.id:
         raise PermissionDenied("只能查看本人课表")
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
+        me = db.execute(
+            select(Teacher).where(Teacher.user_id == current.id)
+        ).scalar_one_or_none()
+        if me is None:
+            raise PermissionDenied("教师档案不存在")
+        owns = db.execute(
+            select(CourseSelection.id)
+            .join(TeachingClass, CourseSelection.teaching_class_id == TeachingClass.id)
+            .where(
+                CourseSelection.student_id == student_id,
+                CourseSelection.status == SelectionState.SELECTED,
+                TeachingClass.teacher_id == me.id,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if owns is None:
+            raise PermissionDenied("只能查看本人授课教学班的学生课表")
 
     tc_ids = select(CourseSelection.teaching_class_id).where(
         CourseSelection.student_id == stu.id,

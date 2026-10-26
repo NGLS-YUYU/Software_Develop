@@ -7,13 +7,16 @@
 """
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import RequirePermissions, get_current_user
+from app.api.deps import RequirePermissions, get_current_user, is_admin_user
 from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Student, Teacher
 from app.models.user import User, UserType
+from app.models.selection import CourseSelection, SelectionState
+from app.models.teaching import TeachingClass
 from app.schemas.common import PageParams, PageResult
 from app.schemas.person import (
     StudentCreate,
@@ -48,10 +51,28 @@ def _teacher_out(t: Teacher) -> TeacherOut:
     return d
 
 
-def _assert_can_view_student(current: User, stu: Student) -> None:
+def _assert_can_view_student(db: Session, current: User, stu: Student) -> None:
     """对象级权限校验（PRD §4.3：不能只依赖角色级菜单控制）。"""
     if current.user_type == UserType.STUDENT and stu.user_id != current.id:
         raise PermissionDenied("只能查看本人信息")
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
+        me = db.execute(
+            select(Teacher).where(Teacher.user_id == current.id)
+        ).scalar_one_or_none()
+        if me is None:
+            raise PermissionDenied("教师档案不存在")
+        owns = db.execute(
+            select(CourseSelection.id)
+            .join(TeachingClass, CourseSelection.teaching_class_id == TeachingClass.id)
+            .where(
+                CourseSelection.student_id == stu.id,
+                CourseSelection.status == SelectionState.SELECTED,
+                TeachingClass.teacher_id == me.id,
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        if owns is None:
+            raise PermissionDenied("只能查看本人授课教学班的学生")
 
 
 # =========================== 学生 ===========================
@@ -103,7 +124,7 @@ def get_student(
     current: User = Depends(get_current_user),
 ):
     stu = StudentService(db).get_or_404(student_id)
-    _assert_can_view_student(current, stu)
+    _assert_can_view_student(db, current, stu)
     return _student_out(stu)
 
 
