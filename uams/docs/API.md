@@ -28,6 +28,8 @@
 | `PERM_DENIED` | 403 | 权限不足或越权访问 |
 | `RESOURCE_NOT_FOUND` | 404 | 资源不存在 |
 | `RESOURCE_CONFLICT` | 409 | 冲突（唯一约束、引用保护、业务规则） |
+| `INVALID_EMAIL` | 400 | 邮箱格式不合法（Service 层；Schema 层通常先返回 422） |
+| `EMAIL_ALREADY_EXISTS` | 409 | 邮箱已被其他账号占用（FIX-001） |
 | `VALIDATION_ERROR` | 422 | 请求参数校验失败 |
 | `TEACHING_CLASS_FULL` | 409 | 教学班容量已满（TASK-012） |
 | `TEACHING_CLASS_HAS_DATA` | 409 | 教学班存在选课或成绩数据，无法删除（TASK-012） |
@@ -40,6 +42,8 @@
 | `TEACHING_SCHEDULE_TEACHER_CONFLICT` | 409 | 教师在该时段已有其他教学安排（TASK-013） |
 | `TEACHING_SCHEDULE_CLASSROOM_CONFLICT` | 409 | 教室在该时段已被占用（TASK-013） |
 | `TEACHING_SCHEDULE_CLASS_CONFLICT` | 409 | 教学班在该时段已有其他安排（TASK-013） |
+
+> **邮箱字段（FIX-001）**：学生/教师/用户新增、编辑时，`email` 可省略；`null`、空字符串、纯空格统一保存为 `NULL`。非空邮箱必须符合格式且全局唯一（跨学生/教师/管理员共用 `users.email` 唯一约束）。重复返回 `EMAIL_ALREADY_EXISTS`（409），格式非法在请求模型层返回 422，Service 层直接调用返回 `INVALID_EMAIL`（400）。
 
 ---
 

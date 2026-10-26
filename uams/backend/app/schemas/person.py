@@ -4,6 +4,8 @@ from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.email import EmailField
+
 GENDER = "^(MALE|FEMALE|UNKNOWN)$"
 
 
@@ -15,7 +17,7 @@ class StudentCreate(BaseModel):
     gender: str = Field("UNKNOWN", pattern=GENDER)
     birth_date: date | None = None
     enrollment_year: int = Field(..., ge=1900, le=2200)
-    email: str | None = Field(None, max_length=100)
+    email: EmailField = Field(None, max_length=100)
     phone: str | None = Field(None, max_length=20)
     password: str | None = Field(
         None, min_length=6, max_length=128, description="不填则默认为学号"
@@ -30,7 +32,7 @@ class StudentUpdate(BaseModel):
     academic_status: str | None = Field(
         None, pattern="^(ENROLLED|SUSPENDED|GRADUATED|WITHDRAWN)$"
     )
-    email: str | None = Field(None, max_length=100)
+    email: EmailField = Field(None, max_length=100)
     phone: str | None = Field(None, max_length=20)
 
 
@@ -66,7 +68,7 @@ class TeacherCreate(BaseModel):
     )
     gender: str = Field("UNKNOWN", pattern=GENDER)
     hire_date: date | None = None
-    email: str | None = Field(None, max_length=100)
+    email: EmailField = Field(None, max_length=100)
     phone: str | None = Field(None, max_length=20)
     password: str | None = Field(None, min_length=6, max_length=128)
 
@@ -80,7 +82,7 @@ class TeacherUpdate(BaseModel):
     gender: str | None = Field(None, pattern=GENDER)
     hire_date: date | None = None
     status: str | None = Field(None, pattern="^(ACTIVE|LEAVE|RETIRED)$")
-    email: str | None = Field(None, max_length=100)
+    email: EmailField = Field(None, max_length=100)
     phone: str | None = Field(None, max_length=20)
 
 

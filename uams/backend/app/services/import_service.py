@@ -585,6 +585,8 @@ class ImportService:
                     "class_id": klass.id,
                     # 入学年份与行政班 grade_year 保持一致
                     "enrollment_year": klass.grade_year,
+                    # FIX-001：导入模板不含邮箱列，显式按“未填写”处理为 NULL
+                    "email": None,
                 }
             )
             success += 1
@@ -680,6 +682,8 @@ class ImportService:
                     "title": title,
                     "gender": gender,
                     "phone": row["phone"] or None,
+                    # FIX-001：导入模板不含邮箱列，显式按“未填写”处理为 NULL
+                    "email": None,
                 }
             )
             success += 1

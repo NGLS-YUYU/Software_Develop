@@ -4,6 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.email import EmailField
+
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=1, max_length=50, description="登录名")
@@ -13,7 +15,7 @@ class UserCreate(BaseModel):
     role_codes: list[str] = Field(
         default_factory=list, description="角色代码；为空则按 user_type 分配默认角色"
     )
-    email: str | None = Field(None, max_length=100)
+    email: EmailField = Field(None, max_length=100)
     phone: str | None = Field(None, max_length=20)
 
 

@@ -23,6 +23,8 @@ from app.models.misc import OperationLog
 from app.models.role import Role, RoleCode, UserRole
 from app.models.user import User, UserStatus, UserType
 from app.services.base import BaseCrudService
+from app.services.email import ensure_email_available, normalize_email_or_error
+from app.services.integrity import flush_or_conflict
 
 # user_type -> 默认角色（与 seed_rbac 保持一致）
 _TYPE_ROLE = {
@@ -57,26 +59,35 @@ class UserService(BaseCrudService[User]):
             default = _TYPE_ROLE.get(data["user_type"])
             role_codes = [default] if default else []
 
+        # FIX-001：管理员创建账号与学生/教师走同一套邮箱规范化与唯一性检查。
+        email = normalize_email_or_error(data.get("email"))
+        ensure_email_available(self.db, email)
+
         user = User(
             username=username,
             password_hash=hash_password(data["password"]),
             real_name=data["real_name"],
             user_type=data["user_type"],
-            email=data.get("email"),
+            email=email,
             phone=data.get("phone"),
         )
-        self.db.add(user)
-        self.db.flush()
+        try:
+            self.db.add(user)
+            flush_or_conflict(self.db, self.entity_name)
 
-        for code in role_codes:
-            role = self.db.execute(
-                select(Role).where(Role.code == code)
-            ).scalar_one_or_none()
-            if role is None:
-                raise NotFound(f"角色不存在：{code}（请先执行 seed 脚本）")
-            self.db.add(UserRole(user_id=user.id, role_id=role.id))
+            for code in role_codes:
+                role = self.db.execute(
+                    select(Role).where(Role.code == code)
+                ).scalar_one_or_none()
+                if role is None:
+                    raise NotFound(f"角色不存在：{code}（请先执行 seed 脚本）")
+                self.db.add(UserRole(user_id=user.id, role_id=role.id))
 
-        self._commit()
+            self._commit()
+        except Exception:
+            # 任何异常（含 flush/commit 的唯一约束冲突）都回滚，避免孤立账号。
+            self.db.rollback()
+            raise
         return user
 
     def reset_password(self, user_id: int, new_password: str) -> None:

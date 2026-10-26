@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 
 import { classApi, collegeApi, majorApi, studentApi } from '@/api'
 import { useCrudTable } from '@/composables/useCrudTable'
 import type { ClassInfo, College, Major, Student } from '@/types'
+import { isValidEmail, normalizeEmailInput } from '@/utils/email'
 
 const colleges = ref<College[]>([])
 const majors = ref<Major[]>([])
@@ -33,14 +35,28 @@ const STATUS_TYPE: Record<string, string> = {
 }
 
 /** 新增时不传空密码，让后端用「默认密码=学号」的规则。 */
-function payload() {
+function payload(): Record<string, unknown> | null {
   const f = { ...t.form.value }
+
+  // FIX-001：空白邮箱统一为 null；非空邮箱先做一次前端格式提示。
+  const email = normalizeEmailInput(f.email)
+  if (email && !isValidEmail(email)) {
+    ElMessage.warning('邮箱格式不正确')
+    return null
+  }
+  f.email = email
+
   if (!f.password) delete f.password
   if (t.dialogMode.value === 'edit') {
     delete f.student_no
     delete f.password
   }
   return f
+}
+
+function save() {
+  const body = payload()
+  if (body) t.save(body)
 }
 
 onMounted(async () => {
@@ -248,7 +264,7 @@ onMounted(async () => {
       </el-form>
       <template #footer>
         <el-button @click="t.dialogVisible.value = false">取消</el-button>
-        <el-button type="primary" :loading="t.saving.value" @click="t.save(payload())">
+        <el-button type="primary" :loading="t.saving.value" @click="save">
           确定
         </el-button>
       </template>

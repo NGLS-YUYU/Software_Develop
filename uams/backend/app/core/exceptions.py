@@ -69,6 +69,21 @@ class Conflict(BizError):
     message = "资源冲突"
 
 
+class InvalidEmail(BizError):
+    """邮箱格式不合法（FIX-001；Schema 层通常先返回 422）。"""
+
+    code = "INVALID_EMAIL"
+    http_status = status.HTTP_400_BAD_REQUEST
+    message = "邮箱格式不正确"
+
+
+class EmailAlreadyExists(Conflict):
+    """邮箱已被其他账号占用（FIX-001）。"""
+
+    code = "EMAIL_ALREADY_EXISTS"
+    message = "邮箱已存在，请更换邮箱"
+
+
 class CourseHoursMismatch(BizError):
     """课程理论 + 实践学时 ≠ 总学时（FIX-009 §五）。"""
 

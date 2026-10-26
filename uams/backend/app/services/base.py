@@ -128,11 +128,10 @@ class BaseCrudService(Generic[ModelT]):
             self.db.commit()
         except IntegrityError as e:
             self.db.rollback()
-            msg = str(e.orig) if e.orig else str(e)
-            if "foreign key" in msg.lower():
-                raise Conflict(
-                    f"操作被拒绝：{self.entity_name}存在关联数据或引用的数据不存在"
-                ) from e
-            if "duplicate" in msg.lower():
-                raise Conflict(f"{self.entity_name}已存在重复数据") from e
+            # FIX-001：区分邮箱/登录名/学号/工号等唯一约束，未知错误继续抛出。
+            from app.services.integrity import conflict_from_integrity_error
+
+            conflict = conflict_from_integrity_error(e, self.entity_name)
+            if conflict is not None:
+                raise conflict from e
             raise

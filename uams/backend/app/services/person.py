@@ -15,6 +15,8 @@ from app.models.person import Student, Teacher
 from app.models.role import Role, RoleCode, UserRole
 from app.models.user import User, UserType
 from app.services.base import BaseCrudService
+from app.services.email import ensure_email_available, normalize_email_or_error
+from app.services.integrity import flush_or_conflict
 
 
 def _link_role(db: Session, user: User, role_code: str) -> None:
@@ -60,6 +62,10 @@ class StudentService(BaseCrudService[Student]):
         ).scalar_one_or_none():
             raise Conflict(f"登录名已被占用：{username}")
 
+        # FIX-001：在写库前统一规范化并检查邮箱；空/纯空格 -> None。
+        email = normalize_email_or_error(data.get("email"))
+        ensure_email_available(self.db, email)
+
         klass = self.db.get(Class, data["class_id"])
         if klass is None:
             raise NotFound(f"班级不存在（id={data['class_id']}）")
@@ -73,32 +79,46 @@ class StudentService(BaseCrudService[Student]):
             password_hash=hash_password(data.get("password") or no),
             real_name=data["real_name"],
             user_type=UserType.STUDENT,
-            email=data.get("email"),
+            email=email,
             phone=data.get("phone"),
         )
-        self.db.add(user)
-        self.db.flush()
-        _link_role(self.db, user, RoleCode.STUDENT)
+        try:
+            self.db.add(user)
+            # flush 阶段的唯一约束冲突（含并发下的邮箱冲突）在这里回滚。
+            flush_or_conflict(self.db, self.entity_name)
+            _link_role(self.db, user, RoleCode.STUDENT)
 
-        student = Student(
-            user_id=user.id,
-            student_no=no,
-            class_id=klass.id,
-            # major_id / college_id 为冗余字段，此处由 Service 保证与 class 一致
-            major_id=major.id,
-            college_id=major.college_id,
-            gender=data.get("gender", "UNKNOWN"),
-            birth_date=data.get("birth_date"),
-            enrollment_year=data["enrollment_year"],
-        )
-        self.db.add(student)
-        klass.student_count = (klass.student_count or 0) + 1
-        self._commit()
+            student = Student(
+                user_id=user.id,
+                student_no=no,
+                class_id=klass.id,
+                # major_id / college_id 为冗余字段，此处由 Service 保证与 class 一致
+                major_id=major.id,
+                college_id=major.college_id,
+                gender=data.get("gender", "UNKNOWN"),
+                birth_date=data.get("birth_date"),
+                enrollment_year=data["enrollment_year"],
+            )
+            self.db.add(student)
+            klass.student_count = (klass.student_count or 0) + 1
+            self._commit()
+        except Exception:
+            # 任何后续异常都回滚，避免留下孤立 users/user_roles 记录。
+            self.db.rollback()
+            raise
         return student
 
     def update_student(self, student_id: int, data: dict[str, Any]) -> Student:
         stu = self.get_or_404(student_id)
+
+        # FIX-001：email 是“可显式清空”的字段，不能像普通可选字段一样过滤 None。
+        email_provided = "email" in data
+        email = normalize_email_or_error(data.pop("email")) if email_provided else None
         data = {k: v for k, v in data.items() if v is not None}
+
+        if email_provided and stu.user:
+            ensure_email_available(self.db, email, exclude_user_id=stu.user.id)
+            stu.user.email = email
 
         if "class_id" in data and data["class_id"] != stu.class_id:
             new_cls = self.db.get(Class, data["class_id"])
@@ -115,7 +135,7 @@ class StudentService(BaseCrudService[Student]):
         for f in ("gender", "birth_date", "academic_status"):
             if f in data:
                 setattr(stu, f, data[f])
-        for f in ("real_name", "email", "phone"):
+        for f in ("real_name", "phone"):
             if f in data and stu.user:
                 setattr(stu.user, f, data[f])
 
@@ -176,39 +196,56 @@ class TeacherService(BaseCrudService[Teacher]):
         if not self.db.get(College, data["college_id"]):
             raise NotFound(f"学院不存在（id={data['college_id']}）")
 
+        # FIX-001：与学生共用同一套邮箱规范化/唯一性检查。
+        email = normalize_email_or_error(data.get("email"))
+        ensure_email_available(self.db, email)
+
         user = User(
             username=no,
             password_hash=hash_password(data.get("password") or no),
             real_name=data["real_name"],
             user_type=UserType.TEACHER,
-            email=data.get("email"),
+            email=email,
             phone=data.get("phone"),
         )
-        self.db.add(user)
-        self.db.flush()
-        _link_role(self.db, user, RoleCode.TEACHER)
+        try:
+            self.db.add(user)
+            flush_or_conflict(self.db, self.entity_name)
+            _link_role(self.db, user, RoleCode.TEACHER)
 
-        teacher = Teacher(
-            user_id=user.id,
-            teacher_no=no,
-            college_id=data["college_id"],
-            title=data.get("title"),
-            gender=data.get("gender", "UNKNOWN"),
-            hire_date=data.get("hire_date"),
-        )
-        self.db.add(teacher)
-        self._commit()
+            teacher = Teacher(
+                user_id=user.id,
+                teacher_no=no,
+                college_id=data["college_id"],
+                title=data.get("title"),
+                gender=data.get("gender", "UNKNOWN"),
+                hire_date=data.get("hire_date"),
+            )
+            self.db.add(teacher)
+            self._commit()
+        except Exception:
+            self.db.rollback()
+            raise
         return teacher
 
     def update_teacher(self, teacher_id: int, data: dict[str, Any]) -> Teacher:
         t = self.get_or_404(teacher_id)
+
+        # FIX-001：email 允许显式清空为 NULL，不能按普通 None 字段过滤。
+        email_provided = "email" in data
+        email = normalize_email_or_error(data.pop("email")) if email_provided else None
         data = {k: v for k, v in data.items() if v is not None}
+
+        if email_provided and t.user:
+            ensure_email_available(self.db, email, exclude_user_id=t.user.id)
+            t.user.email = email
+
         if "college_id" in data and not self.db.get(College, data["college_id"]):
             raise NotFound(f"学院不存在（id={data['college_id']}）")
         for f in ("college_id", "title", "gender", "hire_date", "status"):
             if f in data:
                 setattr(t, f, data[f])
-        for f in ("real_name", "email", "phone"):
+        for f in ("real_name", "phone"):
             if f in data and t.user:
                 setattr(t.user, f, data[f])
         self._commit()
