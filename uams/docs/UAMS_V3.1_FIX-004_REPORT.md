@@ -156,6 +156,7 @@
 | 2 | `app/api/v1/materials.py` | `MaterialOut.created_at` 声明为 `str`，Pydantic 无法校验 `datetime`，上传成功但响应 500 | 改为 `datetime | None`，由 FastAPI 统一序列化 |
 | 3 | `app/services/grade.py` | 实践课更正 `final_score` 后 `ScoreService.compute` 会用理论/实践平均分覆盖，接口返回 200 但数值未变 | 实践课拒绝合并字段并提示改用分项；非实践课拒绝拆分字段 |
 | 4 | `app/services/teaching.py` | `PUT /teaching-classes/{id}` 可直接写 `selection_status=OPEN`，绕过教师/排课前置校验（F-12） | 在 `update_class` 中复用开放选课前置条件 |
+| 5 | `app/services/exam.py` | 新建考试尚未 flush 时 `Exam.id is None`，`Exam.id != NULL` 在 SQL 中恒为 UNKNOWN，创建时的学生考试冲突检测实际失效 | id 为空时省略 `Exam.id !=` 条件；增加 transient 考试回归测试 |
 
 ---
 

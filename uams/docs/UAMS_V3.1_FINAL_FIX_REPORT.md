@@ -118,6 +118,7 @@ FIX-004 测试全部在 `uams_test` 中运行；`conftest.py` 强制覆盖数据
 2. `MaterialOut.created_at` 类型为 `str` 但模型返回 `datetime`，上传响应 500。
 3. 实践课成绩更正直接写 `final_score` 会被统一计算服务覆盖，接口“成功但未生效”。
 4. 编辑教学班可直接把 `selection_status` 改为 `OPEN`，绕过教师/排课前置校验（F-12）。
+5. 新建考试尚未 flush 时 `Exam.id is None`，学生考试冲突查询恒不命中，创建时漏检冲突（F-07）。
 
 ---
 
