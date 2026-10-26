@@ -206,7 +206,16 @@ async function toggleSelection(row: TeachingClass) {
   const open = row.selection_status !== 'OPEN'
   try {
     await teachingApi.toggleSelection(row.id, open)
-    ElMessage.success(open ? '已开放选课' : '已关闭选课')
+    const elective =
+      row.course_type === 'ELECTIVE' || row.course_type === 'PUBLIC_ELECTIVE'
+    if (open && !elective) {
+      // 必修/实践课由教务预安排，不进入学生自主选课列表（既有规则）
+      ElMessage.warning(
+        '已开放，但该课程为必修/实践课，学生端不会出现在自主选课列表中；必修课请使用预安排。',
+      )
+    } else {
+      ElMessage.success(open ? '已开放选课' : '已关闭选课')
+    }
     await loadClasses()
   } catch {
     // 开放条件不满足等业务拒绝由拦截器提示

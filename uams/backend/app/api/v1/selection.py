@@ -76,6 +76,21 @@ class SelectionPeriodOut(SelectionPeriodCreate):
     id: int
 
 
+class SelectableSummaryOut(BaseModel):
+    """教务端选课配置诊断（只读统计）。"""
+
+    semester: str
+    term_id: int | None = None
+    term_status: str | None = None
+    period_open: bool
+    total_classes: int
+    open_classes: int
+    elective_classes: int
+    elective_open_classes: int
+    selectable_classes: int
+    required_open_classes: int
+
+
 def _sel_out(s) -> SelectionOut:
     d = SelectionOut.model_validate(s)
     if s.course:
@@ -121,6 +136,23 @@ def available(
     rows = SelectionService(db).available_classes(stu, semester, keyword)
     counts = TeachingClassService(db).selection_counts([r.id for r in rows])
     return [_tc_out(r, counts.get(r.id, 0)) for r in rows]
+
+
+@sel.get(
+    "/selectable-summary",
+    response_model=SelectableSummaryOut,
+    summary="可选教学班诊断（教务端）",
+)
+def selectable_summary(
+    semester: str = Query(..., description="学期，如 2026-2027-1"),
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("selection:manage")),
+):
+    """教务端诊断：选课窗口是否开放、是否存在学生可自主选择的选修教学班。
+
+    仅教务管理员可调用；结果只用于界面提示，不改变任何选课校验。
+    """
+    return SelectionService(db).selectable_summary(semester)
 
 
 @sel.get("/mine", response_model=list[SelectionOut], summary="我的选课")

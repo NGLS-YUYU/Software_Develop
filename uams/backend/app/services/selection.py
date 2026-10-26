@@ -19,7 +19,7 @@ from app.models.grade import Grade, GradeStatus
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionPeriod, SelectionState
 from app.models.teaching import Schedule, TeachingClass
-from app.models.term import TermStatus
+from app.models.term import AcademicTerm, TermStatus
 from app.services.teaching import ConflictChecker
 
 # 必修 / 选修分类（TASK-009）：复用 CourseType 枚举，不修改课程类型体系。
@@ -345,6 +345,21 @@ class SelectionService:
 
     # --- 可选课程 ---
 
+    @staticmethod
+    def _selectable_conditions(semester: str) -> tuple:
+        """学生可自主选择的选修教学班条件。
+
+        必须与 ``select_course`` 的校验保持一致：学期进行中、教学班有效且已开放、
+        课程为选修。必修课只走教务预排，不进入学生自主选课列表（TASK-009）。
+        """
+        return (
+            TeachingClass.semester == semester,
+            TeachingClass.selection_status == "OPEN",
+            TeachingClass.status == "ACTIVE",
+            TeachingClass.term.has(AcademicTerm.status == TermStatus.ACTIVE),
+            TeachingClass.course.has(Course.course_type.in_(_ELECTIVE_TYPES)),
+        )
+
     def available_classes(
         self, student: Student, semester: str, keyword: str | None = None
     ) -> list[TeachingClass]:
@@ -368,12 +383,7 @@ class SelectionService:
                 selectinload(TeachingClass.teacher).selectinload(Teacher.user),
                 selectinload(TeachingClass.schedules).selectinload(Schedule.classroom),
             )
-            .where(
-                TeachingClass.semester == semester,
-                TeachingClass.selection_status == "OPEN",
-                TeachingClass.status == "ACTIVE",
-                TeachingClass.course.has(Course.course_type.in_(_ELECTIVE_TYPES)),
-            )
+            .where(*self._selectable_conditions(semester))
         )
         if selected_tc_ids:
             stmt = stmt.where(TeachingClass.id.not_in(selected_tc_ids))
@@ -388,6 +398,83 @@ class SelectionService:
                 if r.course and (k in r.course.name.lower() or k in r.course.code.lower())
             ]
         return rows
+
+    def _term_for_semester(self, semester: str) -> AcademicTerm | None:
+        """把 ``2026-2027-1`` 映射到 AcademicTerm（academic_year + semester）。"""
+        try:
+            academic_year, semester_no = semester.rsplit("-", 1)
+            semester_int = int(semester_no)
+        except (AttributeError, ValueError):
+            return None
+        return self.db.execute(
+            select(AcademicTerm).where(
+                AcademicTerm.academic_year == academic_year,
+                AcademicTerm.semester == semester_int,
+            )
+        ).scalar_one_or_none()
+
+    def selectable_summary(self, semester: str) -> dict:
+        """教务端诊断：本学期为什么有/没有学生可自主选择的选修教学班。
+
+        只读统计，不参与选课判定；学生端最终仍由 ``select_course`` 校验。
+        """
+        term = self._term_for_semester(semester)
+        now = datetime.now()
+        periods = list(
+            self.db.execute(
+                select(SelectionPeriod).where(SelectionPeriod.semester == semester)
+            ).scalars()
+        )
+        period_open = any(
+            p.status == "ACTIVE" and p.start_time <= now <= p.end_time for p in periods
+        )
+
+        def count(*conditions) -> int:
+            return (
+                self.db.execute(
+                    select(func.count())
+                    .select_from(TeachingClass)
+                    .where(*conditions)
+                ).scalar()
+                or 0
+            )
+
+        total_classes = count(TeachingClass.semester == semester)
+        open_classes = count(
+            TeachingClass.semester == semester,
+            TeachingClass.status == "ACTIVE",
+            TeachingClass.selection_status == "OPEN",
+        )
+        elective_classes = count(
+            TeachingClass.semester == semester,
+            TeachingClass.status == "ACTIVE",
+            TeachingClass.course.has(Course.course_type.in_(_ELECTIVE_TYPES)),
+        )
+        elective_open_classes = count(
+            TeachingClass.semester == semester,
+            TeachingClass.status == "ACTIVE",
+            TeachingClass.selection_status == "OPEN",
+            TeachingClass.course.has(Course.course_type.in_(_ELECTIVE_TYPES)),
+        )
+        required_open_classes = count(
+            TeachingClass.semester == semester,
+            TeachingClass.status == "ACTIVE",
+            TeachingClass.selection_status == "OPEN",
+            TeachingClass.course.has(Course.course_type.in_(_REQUIRED_TYPES)),
+        )
+        selectable_classes = count(*self._selectable_conditions(semester))
+        return {
+            "semester": semester,
+            "term_id": term.id if term else None,
+            "term_status": term.status if term else None,
+            "period_open": period_open,
+            "total_classes": total_classes,
+            "open_classes": open_classes,
+            "elective_classes": elective_classes,
+            "elective_open_classes": elective_open_classes,
+            "selectable_classes": selectable_classes,
+            "required_open_classes": required_open_classes,
+        }
 
     def stats_by_class(self, teaching_class_id: int) -> dict:
         total = (

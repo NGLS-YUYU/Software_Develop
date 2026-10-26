@@ -90,6 +90,7 @@ class TeachingClassOut(BaseModel):
     course_id: int
     course_code: str | None = None
     course_name: str | None = None
+    course_type: str | None = None
     credits: float | None = None
     total_hours: int | None = None
     theory_hours: int | None = None

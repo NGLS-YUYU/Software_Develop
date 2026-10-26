@@ -269,6 +269,7 @@ POST /api/v1/auth/login
 - 容量：`capacity` 不得小于已选人数（`CAPACITY_BELOW_ENROLLED`）；学生选课与教务添加学生满员时 409 `TEACHING_CLASS_FULL`（`SELECT ... FOR UPDATE` 防超卖）。
 - 删除仅限空教学班（无 `CourseSelection` 且无 `Grade`）；`ENDED` 学期不可增删改（`TEACHING_CLASS_TERM_ENDED`）。
 - `GET /teaching-classes` 的 `term_id` / `course_id` / `teacher_id` 过滤在数据库查询层完成。
+- 教学班响应包含 `course_type`（取自课程），教务端据此区分必修/选修并提示“开放了必修班但学生端无可选课程”。
 
 **排课冲突判定**（`services/teaching.py`）：同学期 + 同星期 + 节次区间重叠 + 周次区间重叠 + 单双周相容。检测**三类**冲突——教学班自身、教室、教师——分别返回 `TEACHING_SCHEDULE_CLASS_CONFLICT` / `TEACHING_SCHEDULE_CLASSROOM_CONFLICT` / `TEACHING_SCHEDULE_TEACHER_CONFLICT`。开放选课要求已分配教师且已排课。
 
@@ -303,10 +304,15 @@ POST /api/v1/auth/login
 
 | 方法 | 路径 | 说明 | 权限 |
 |---|---|---|---|
-| GET | `/course-selections/available?semester=...` | 可选教学班（学生，仅选修课 ELECTIVE） | 登录 |
+| GET | `/course-selections/available?semester=...` | 可选教学班（学生；仅 `ELECTIVE`/`PUBLIC_ELECTIVE`，且教学班 `ACTIVE`+`OPEN`、所属学期 `ACTIVE`；已选课程/教学班排除） | 登录 |
+| GET | `/course-selections/selectable-summary?semester=...` | 教务端选课配置诊断：窗口是否开放、学期状态、教学班/选修/已开放/可选数量 | `selection:manage` |
 | GET | `/course-selections/mine` | 我的选课（`semester`、`include_dropped`，含 `course_type`） | 登录 |
 | POST | `/course-selections` | 选课（201，身份取自 JWT，不接受 `student_id`） | `selection:write` |
 | DELETE | `/course-selections/{selection_id}` | 退课（204） | `selection:write` |
+
+**可选教学班可见性**：学生端列表与 `POST /course-selections` 使用同一组条件（学期 `ACTIVE`、教学班 `ACTIVE` 且 `selection_status=OPEN`、课程为选修）。必修/实践课由教务预安排，不进入自主选课列表。选课窗口未开放时仍可查看列表，但提交会被拒绝。
+
+**教务端诊断**（`selectable-summary`）：返回 `term_status`、`period_open`、`total_classes`、`open_classes`、`elective_classes`、`elective_open_classes`、`selectable_classes`、`required_open_classes`。教务端据此在“窗口已开放但学生端为空”时提示缺少的具体配置（学期未激活 / 无教学班 / 全是必修 / 选修班未开放）。该接口只读，不改变任何选课校验。
 
 **选课校验链**（`services/selection.py`，全部在单个事务内完成）：
 

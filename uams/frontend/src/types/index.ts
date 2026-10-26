@@ -219,6 +219,8 @@ export interface TeachingClass {
   course_id: number
   course_code?: string | null
   course_name?: string | null
+  /** 课程性质：REQUIRED / ELECTIVE / PUBLIC_REQUIRED / PUBLIC_ELECTIVE / PRACTICE */
+  course_type?: string | null
   credits?: number | null
   total_hours?: number | null
   theory_hours?: number | null
@@ -261,6 +263,20 @@ export interface SelectionPeriod {
   end_time: string
   target_grade_year?: number | null
   status: string
+}
+
+/** 教务端选课配置诊断（后端 `/course-selections/selectable-summary`）。 */
+export interface SelectableSummary {
+  semester: string
+  term_id?: number | null
+  term_status?: TermStatusValue | null
+  period_open: boolean
+  total_classes: number
+  open_classes: number
+  elective_classes: number
+  elective_open_classes: number
+  selectable_classes: number
+  required_open_classes: number
 }
 
 // --- 课表 ---

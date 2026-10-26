@@ -29,6 +29,15 @@ const openPeriod = computed(() => {
   )
 })
 
+/** 空列表原因：区分“不在选课时间”和“选课已开放但没有可选课程”。
+ *  不在这里断言“教务未配置”，因为“已选完所有选修课”也会得到空列表；
+ *  配置诊断由教务端完成（/course-selections/selectable-summary）。 */
+const emptyHint = computed(() =>
+  openPeriod.value
+    ? '当前没有可自主选择的选修教学班：可能本学期未开设已开放选课的选修教学班，或你已选完所有可选课程。必修课由教务处统一预安排，可在「我的课表」查看。'
+    : '当前不在选课时间内。选课开放后，已开放选课的选修教学班会显示在这里。',
+)
+
 async function load() {
   loading.value = true
   try {
@@ -108,6 +117,16 @@ onMounted(load)
       show-icon
       class="selection__banner"
     />
+    <el-alert
+      v-if="openPeriod && !available.length && !loading"
+      title="选课开放中，但当前没有可自主选择的选修教学班"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="selection__banner"
+    >
+      可能是本学期未开设已开放选课的选修教学班，或你已选完所有可选课程。必修课由教务处统一预安排，可在「我的课表」查看。
+    </el-alert>
 
     <el-card shadow="never" class="page-card">
       <!-- 筛选区 + 选课汇总 -->
@@ -142,7 +161,7 @@ onMounted(load)
             </span>
           </template>
 
-          <el-empty v-if="!available.length" description="暂无可选课程" />
+          <el-empty v-if="!available.length" :description="emptyHint" />
           <div v-else class="course-grid">
             <article
               v-for="c in available"

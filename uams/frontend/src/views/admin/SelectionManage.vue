@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { selectionApi, teachingApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
-import type { SelectionPeriod, TeachingClass } from '@/types'
+import type { SelectableSummary, SelectionPeriod, TeachingClass } from '@/types'
 
 const semester = ref(currentSemester())
 const periods = ref<SelectionPeriod[]>([])
 const classes = ref<TeachingClass[]>([])
+const summary = ref<SelectableSummary | null>(null)
 const total = ref(0)
 const page = ref(1)
 const loading = ref(false)
@@ -24,6 +25,57 @@ const rosterTitle = ref('')
 
 const STATUS: Record<string, string> = { PENDING: '未开始', ACTIVE: '进行中', CLOSED: '已结束' }
 const STATUS_TYPE: Record<string, string> = { PENDING: 'info', ACTIVE: 'success', CLOSED: 'warning' }
+const COURSE_TYPE: Record<string, string> = {
+  REQUIRED: '专业必修',
+  ELECTIVE: '专业选修',
+  PUBLIC_REQUIRED: '公共必修',
+  PUBLIC_ELECTIVE: '公共选修',
+  PRACTICE: '实践',
+}
+const TERM_STATUS: Record<string, string> = { PLANNED: '未开始', ACTIVE: '进行中', ENDED: '已结束' }
+
+const isElective = (courseType?: string | null) =>
+  courseType === 'ELECTIVE' || courseType === 'PUBLIC_ELECTIVE'
+
+/** 选课窗口已开放但没有学生可选教学班时，给出可操作的诊断。 */
+const diagnosis = computed(() => {
+  const s = summary.value
+  if (!s) return []
+  const lines: string[] = []
+  if (s.term_status !== 'ACTIVE') {
+    lines.push(
+      s.term_id
+        ? `学期状态为「${TERM_STATUS[s.term_status ?? ''] ?? s.term_status}」，只有「进行中」的学期允许学生选课。请先在「学期管理」激活该学期。`
+        : '未找到与该学期匹配的学期记录，请先在「学期管理」创建并激活学期。',
+    )
+  }
+  if (s.total_classes === 0) {
+    lines.push('该学期没有任何教学班，请先在「开课排课」创建教学任务与教学班。')
+  } else if (s.elective_classes === 0) {
+    lines.push(
+      `该学期 ${s.total_classes} 个教学班中均无可自主选择的选修教学班（必修/实践课由教务预安排，已取消的教学班不可选）。请为选修课程创建教学任务与教学班并开放选课。`,
+    )
+  } else if (s.elective_open_classes === 0) {
+    lines.push(
+      `该学期有 ${s.elective_classes} 个选修教学班，但都未开放选课。请在本页下方对相应教学班点击「开放」。`,
+    )
+  }
+  if (
+    s.term_status === 'ACTIVE' &&
+    s.elective_open_classes > 0 &&
+    s.selectable_classes === 0
+  ) {
+    lines.push(
+      '存在已开放选课的选修教学班，但其绑定学期不是「进行中」或学期记录与 semester 不一致。请在「开课排课」检查教学班所属学期。',
+    )
+  }
+  if (s.required_open_classes > 0) {
+    lines.push(
+      `注意：已开放的 ${s.required_open_classes} 个必修/实践教学班不会出现在学生自主选课列表中，这是既有规则。`,
+    )
+  }
+  return lines
+})
 
 function openCreate() {
   editingId.value = null
@@ -56,6 +108,7 @@ async function save() {
     }
     dialog.value = false
     await loadPeriods()
+    await loadSummary()
   } finally {
     saving.value = false
   }
@@ -64,8 +117,15 @@ async function save() {
 async function toggle(row: TeachingClass) {
   const open = row.selection_status !== 'OPEN'
   await teachingApi.toggleSelection(row.id, open)
-  ElMessage.success(open ? '已开放选课' : '已关闭选课')
-  await loadClasses()
+  if (open && !isElective(row.course_type)) {
+    // 必修/实践课由教务预安排，不进入学生自主选课列表（既有规则）
+    ElMessage.warning(
+      '已开放，但该课程为必修/实践课，学生端不会出现在自主选课列表中；必修课请使用预安排。',
+    )
+  } else {
+    ElMessage.success(open ? '已开放选课' : '已关闭选课')
+  }
+  await Promise.all([loadClasses(), loadSummary()])
 }
 
 async function showRoster(row: TeachingClass) {
@@ -76,6 +136,15 @@ async function showRoster(row: TeachingClass) {
 
 async function loadPeriods() {
   periods.value = await selectionApi.periods(semester.value)
+}
+
+async function loadSummary() {
+  try {
+    summary.value = await selectionApi.selectableSummary(semester.value)
+  } catch {
+    // 诊断接口失败不应影响选课管理主流程
+    summary.value = null
+  }
 }
 
 async function loadClasses() {
@@ -95,11 +164,11 @@ watch(semester, () => {
   page.value = 1
   loadPeriods()
   loadClasses()
+  loadSummary()
 })
 
 onMounted(async () => {
-  await loadPeriods()
-  await loadClasses()
+  await Promise.all([loadPeriods(), loadClasses(), loadSummary()])
 })
 </script>
 
@@ -196,12 +265,46 @@ onMounted(async () => {
 
     <!-- ==================== 教学班选课情况 ==================== -->
     <el-card shadow="never" class="page-card">
+      <!-- 配置诊断：窗口开放但学生端仍为空时，明确指出缺哪一步 -->
+      <el-alert
+        v-if="summary && summary.period_open && summary.selectable_classes === 0"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="selection-hint"
+        title="选课窗口已开放，但当前学期没有学生可自主选择的选修教学班"
+      >
+        <ul class="selection-hint__list">
+          <li v-for="line in diagnosis" :key="line">{{ line }}</li>
+        </ul>
+      </el-alert>
+      <el-alert
+        v-else-if="summary && !summary.period_open"
+        type="info"
+        :closable="false"
+        show-icon
+        class="selection-hint"
+        title="当前学期没有进行中的选课时间窗口，学生暂时无法选课"
+      >
+        请在上方「选课时间窗口」新增或编辑窗口，并把状态设为「进行中」且当前时间落在起止时间内。
+      </el-alert>
+      <el-alert
+        v-else-if="summary && summary.period_open && summary.selectable_classes > 0"
+        type="success"
+        :closable="false"
+        show-icon
+        class="selection-hint"
+        :title="`选课已开放：当前学期有 ${summary.selectable_classes} 个学生可自主选择的选修教学班`"
+      />
+
       <div class="toolbar">
         <el-select v-model="semester" style="width: 180px">
           <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
         </el-select>
         <div class="spacer" />
-        <el-text size="small" type="info">选课需同时满足：时间窗口开放 + 教学班开放</el-text>
+        <el-text size="small" type="info">
+          选课需同时满足：时间窗口开放 + 教学班开放 + 课程为选修课
+        </el-text>
       </div>
 
       <!-- 桌面端：表格 -->
@@ -211,7 +314,16 @@ onMounted(async () => {
           <el-table-column label="课程" min-width="170">
             <template #default="{ row }">
               <div class="cell-course">
-                <span class="cell-course__name">{{ row.course_name || '—' }}</span>
+                <span class="cell-course__name">
+                  {{ row.course_name || '—' }}
+                  <el-tag
+                    size="small"
+                    effect="plain"
+                    :type="isElective(row.course_type) ? 'success' : 'info'"
+                  >
+                    {{ COURSE_TYPE[row.course_type ?? ''] ?? '—' }}
+                  </el-tag>
+                </span>
                 <span v-if="row.course_code" class="cell-course__meta">{{ row.course_code }}</span>
               </div>
             </template>
@@ -265,7 +377,16 @@ onMounted(async () => {
         <article v-for="row in classes" :key="row.id" class="ccard">
           <header class="ccard__head">
             <div class="ccard__title">
-              <span class="ccard__name">{{ row.course_name || '—' }}</span>
+              <span class="ccard__name">
+                {{ row.course_name || '—' }}
+                <el-tag
+                  size="small"
+                  effect="plain"
+                  :type="isElective(row.course_type) ? 'success' : 'info'"
+                >
+                  {{ COURSE_TYPE[row.course_type ?? ''] ?? '—' }}
+                </el-tag>
+              </span>
               <span class="muted ccard__code">
                 {{ row.code }}<template v-if="row.course_code"> · {{ row.course_code }}</template>
               </span>
@@ -371,6 +492,18 @@ onMounted(async () => {
   display: block;
 }
 
+/* 选课配置诊断提示 */
+.selection-hint {
+  margin-bottom: 14px;
+  border-radius: var(--uams-radius-sm);
+
+  &__list {
+    margin: 4px 0 0;
+    padding-left: 18px;
+    line-height: 1.7;
+  }
+}
+
 /* -------------------------------------------------------------- 卡片头 */
 .card-head {
   display: flex;
@@ -417,6 +550,9 @@ onMounted(async () => {
   line-height: 1.35;
 
   &__name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-weight: 600;
     color: var(--uams-text);
     overflow: hidden;
@@ -546,6 +682,9 @@ onMounted(async () => {
   }
 
   &__name {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-weight: 600;
     color: var(--uams-text);
   }

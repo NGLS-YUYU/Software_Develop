@@ -64,6 +64,7 @@ def _tc_out(tc, selected_count: int = 0) -> TeachingClassOut:
     d = TeachingClassOut.model_validate(tc)
     if tc.course:
         d.course_code, d.course_name = tc.course.code, tc.course.name
+        d.course_type = tc.course.course_type
         d.credits = float(tc.course.credits)
         d.total_hours = tc.course.total_hours
         d.theory_hours = tc.course.theory_hours

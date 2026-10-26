@@ -29,6 +29,7 @@ import type {
   Prerequisite,
   Schedule,
   ScheduleItem,
+  SelectableSummary,
   Selection,
   SelectionPeriod,
   Student,
@@ -184,6 +185,10 @@ export const selectionApi = {
   select: (teaching_class_id: number) =>
     post<Selection>('/course-selections', { teaching_class_id }),
   drop: (id: number) => del(`/course-selections/${id}`),
+
+  /** 教务端诊断：选课窗口开放但没有可选选修教学班时给出可操作提示。 */
+  selectableSummary: (semester: string) =>
+    get<SelectableSummary>('/course-selections/selectable-summary', { semester }),
 
   periods: (semester?: string) => get<SelectionPeriod[]>('/selection-periods', { semester }),
   createPeriod: (b: Record<string, unknown>) =>
