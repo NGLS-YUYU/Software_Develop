@@ -147,7 +147,12 @@ def list_adjustments(
 
 
 def _pending(db: Session, adjustment_id: int) -> ScheduleAdjustment:
-    a = db.get(ScheduleAdjustment, adjustment_id)
+    # 行级锁：防止并发审批同一申请导致排课被重复应用。
+    a = db.execute(
+        select(ScheduleAdjustment)
+        .where(ScheduleAdjustment.id == adjustment_id)
+        .with_for_update()
+    ).scalar_one_or_none()
     if a is None:
         raise NotFound("调停课申请不存在")
     if a.status != AdjustmentStatus.PENDING:

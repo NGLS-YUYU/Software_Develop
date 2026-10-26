@@ -138,6 +138,13 @@ async def upload_material(
     if not _can_view(db, current, tc):
         raise PermissionDenied("只能上传本人授课教学班的资料")
     name = Path(file.filename or "material").name
+    if len(name) > 255:
+        raise Conflict("文件名不能超过 255 个字符")
+    title = title.strip()
+    if not title:
+        raise Conflict("资料标题不能为空")
+    if len(title) > 200:
+        raise Conflict("资料标题不能超过 200 个字符")
     suffix = Path(name).suffix.lower()
     if suffix not in ALLOWED:
         raise Conflict("不支持的文件类型（仅 pdf/doc/ppt/xls/txt/zip/图片）")
@@ -149,11 +156,11 @@ async def upload_material(
     stored.write_bytes(content)
     m = TeachingMaterial(
         teaching_class_id=tc.id,
-        title=title.strip() or name,
+        title=title,
         file_name=name,
         file_path=str(stored),
         file_size=len(content),
-        content_type=file.content_type,
+        content_type=(file.content_type or "")[:100] or None,
         uploaded_by=current.id,
     )
     try:
