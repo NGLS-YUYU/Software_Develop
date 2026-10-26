@@ -16,9 +16,12 @@ from app.models.exam import Exam, ExamRoom, ExamStudent, ExamType
 from app.models.grade import (
     GRADE_POINT_TABLE,
     Grade,
+    GradeChangeLog,
     GradeStatus,
     score_to_point,
 )
+from app.models.adjustment import ScheduleAdjustment
+from app.models.material import TeachingMaterial
 from app.models.misc import (
     Announcement,
     Evaluation,
@@ -37,6 +40,7 @@ from app.models.role import (
 from app.models.selection import (
     CourseSelection,
     SelectionPeriod,
+    SelectionSource,
     SelectionState,
 )
 from app.models.teaching import (
@@ -66,11 +70,11 @@ __all__ = [
     # 学期
     "AcademicTerm", "TermStatus",
     # 选课
-    "CourseSelection", "SelectionPeriod", "SelectionState",
+    "CourseSelection", "SelectionPeriod", "SelectionSource", "SelectionState",
     # 成绩
-    "Grade", "GradeStatus", "score_to_point", "GRADE_POINT_TABLE",
+    "Grade", "GradeChangeLog", "GradeStatus", "score_to_point", "GRADE_POINT_TABLE",
     # 考试
     "Exam", "ExamRoom", "ExamStudent", "ExamType",
     # 其他
-    "EvaluationTask", "Evaluation", "Announcement", "OperationLog",
+    "EvaluationTask", "Evaluation", "Announcement", "OperationLog", "TeachingMaterial", "ScheduleAdjustment",
 ]

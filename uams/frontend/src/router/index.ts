@@ -42,6 +42,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '我的课表', desc: '本人已选课程课表', icon: 'Calendar' },
       },
       {
+        path: 'curriculum',
+        name: 'student-curriculum',
+        component: () => import('@/views/student/Curriculum.vue'),
+        meta: { title: '培养方案', desc: '本人专业的培养方案与课程设置', icon: 'Document' },
+      },
+      {
+        path: 'materials',
+        name: 'student-materials',
+        component: () => import('@/views/student/Materials.vue'),
+        meta: { title: '教学资料', desc: '本人已选课程的教学资料', icon: 'Folder' },
+      },
+      {
         path: 'selection',
         name: 'student-selection',
         component: () => import('@/views/student/Selection.vue'),
@@ -94,6 +106,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '我的课程', desc: '本人授课的教学班与学生', icon: 'Reading' },
       },
       {
+        path: 'materials',
+        name: 'teacher-materials',
+        component: () => import('@/views/teacher/Materials.vue'),
+        meta: { title: '教学资料', desc: '本人授课教学班的资料上传与下载', icon: 'Folder' },
+      },
+      {
         path: 'schedule',
         name: 'teacher-schedule',
         component: () => import('@/views/teacher/Schedule.vue'),
@@ -104,6 +122,12 @@ const routes: RouteRecordRaw[] = [
         name: 'teacher-grades',
         component: () => import('@/views/teacher/GradeEntry.vue'),
         meta: { title: '成绩录入', desc: '成绩录入、保存草稿与提交审核', icon: 'EditPen' },
+      },
+      {
+        path: 'adjustments',
+        name: 'teacher-adjustments',
+        component: () => import('@/views/teacher/Adjustments.vue'),
+        meta: { title: '调停课申请', desc: '调课、停课与补课申请', icon: 'Refresh' },
       },
       {
         path: 'evaluation',
@@ -171,6 +195,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '开课排课', desc: '教学任务、教学班与排课安排', icon: 'Grid' },
       },
       {
+        path: 'adjustments',
+        name: 'admin-adjustments',
+        component: () => import('@/views/admin/Adjustments.vue'),
+        meta: { title: '调停课审核', desc: '教师调课/停课/补课申请的审核', icon: 'Refresh' },
+      },
+      {
         path: 'selection',
         name: 'admin-selection',
         component: () => import('@/views/admin/SelectionManage.vue'),
@@ -189,6 +219,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '学期管理', desc: '学期建立、激活与结束', icon: 'Calendar' },
       },
       {
+        path: 'audit-logs',
+        name: 'admin-audit-logs',
+        component: () => import('@/views/admin/AuditLogs.vue'),
+        meta: { title: '操作日志', desc: '关键业务操作审计查询', icon: 'Document' },
+      },
+      {
         path: 'imports',
         name: 'admin-imports',
         component: () => import('@/views/admin/ImportCenter.vue'),
@@ -199,6 +235,12 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-grades',
         component: () => import('@/views/admin/GradeApproval.vue'),
         meta: { title: '成绩审核', desc: '教师提交成绩的审核与发布', icon: 'Stamp' },
+      },
+      {
+        path: 'evaluations',
+        name: 'admin-evaluations',
+        component: () => import('@/views/admin/Evaluations.vue'),
+        meta: { title: '教学评价', desc: '评价任务的创建与开放', icon: 'Star' },
       },
       {
         path: 'exams',

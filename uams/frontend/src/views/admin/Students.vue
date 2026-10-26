@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { classApi, collegeApi, majorApi, studentApi } from '@/api'
+import { classApi, collegeApi, exportApi, majorApi, studentApi } from '@/api'
 import { useCrudTable } from '@/composables/useCrudTable'
 import type { ClassInfo, College, Major, Student } from '@/types'
 import { isValidEmail, normalizeEmailInput } from '@/utils/email'
@@ -97,6 +97,7 @@ onMounted(async () => {
       </el-select>
       <el-button type="primary" @click="t.search">查询</el-button>
       <div class="spacer" />
+      <el-button @click="exportApi.students()">导出 Excel</el-button>
       <el-button type="primary" :icon="'Plus'" @click="t.openCreate">新增学生</el-button>
     </div>
 

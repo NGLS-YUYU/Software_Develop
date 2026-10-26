@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { selectionApi, teachingApi } from '@/api'
+import { exportApi, selectionApi, teachingApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
 import type { SelectionPeriod, TeachingClass } from '@/types'
 
@@ -268,6 +268,7 @@ onMounted(async () => {
           <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
         </el-select>
         <div class="spacer" />
+        <el-button size="small" @click="exportApi.selections(semester)">导出选课结果</el-button>
         <el-text size="small" type="info">选课需同时满足：时间窗口开放 + 教学班开放</el-text>
       </div>
 

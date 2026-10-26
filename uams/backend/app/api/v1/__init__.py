@@ -3,11 +3,14 @@
 from fastapi import APIRouter
 
 from app.api.v1 import (
+    adjustments,
     auth,
     course,
     exam,
     grade,
+    exports,
     imports,
+    materials,
     misc,
     organization,
     person,
@@ -31,9 +34,12 @@ for _m in (
     schedule,
     teaching_schedule,
     terms,
+    adjustments,
     grade,
     exam,
     imports,
+    exports,
+    materials,
     misc,
 ):
     api_router.include_router(_m.router)
