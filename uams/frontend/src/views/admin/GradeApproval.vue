@@ -2,19 +2,36 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { gradeApi } from '@/api'
+import { exportApi, gradeApi } from '@/api'
 import { semesterOptions } from '@/composables/useSemester'
-import type { Grade } from '@/types'
+import type { Grade, GradeChangeLog } from '@/types'
 
 const semester = ref<string | undefined>(undefined)
+const mode = ref<'pending' | 'approved'>('pending')
 const rows = ref<Grade[]>([])
+const approvedRows = ref<Grade[]>([])
 const selected = ref<Grade[]>([])
 const loading = ref(false)
 
+const correctVisible = ref(false)
+const correctSaving = ref(false)
+const correctTarget = ref<Grade | null>(null)
+const correctForm = ref<Record<string, number | string | undefined>>({})
+const historyVisible = ref(false)
+const historyRows = ref<GradeChangeLog[]>([])
+const historyTarget = ref<Grade | null>(null)
+
+const SCORE_FIELDS = [
+  'regular_score', 'mid_score', 'mid_theory_score', 'mid_practice_score',
+  'final_score', 'final_theory_score', 'final_practice_score',
+  'theory_makeup_score', 'practice_makeup_score',
+] as const
+
 /** 按教学班分组，教务通常整班审核。 */
 const grouped = computed(() => {
+  const source = mode.value === 'pending' ? rows.value : approvedRows.value
   const map = new Map<number, Grade[]>()
-  for (const g of rows.value) {
+  for (const g of source) {
     const arr = map.get(g.teaching_class_id) ?? []
     arr.push(g)
     map.set(g.teaching_class_id, arr)
@@ -25,10 +42,108 @@ const grouped = computed(() => {
 async function load() {
   loading.value = true
   try {
-    rows.value = await gradeApi.pending(semester.value)
-    selected.value = []
+    if (mode.value === 'pending') {
+      rows.value = await gradeApi.pending(semester.value)
+      selected.value = []
+    } else {
+      approvedRows.value = await gradeApi.approved(semester.value)
+      selected.value = []
+    }
   } finally {
     loading.value = false
+  }
+}
+
+function switchMode(value: 'pending' | 'approved') {
+  mode.value = value
+  load()
+}
+
+const FIELD_LABELS: Record<string, string> = {
+  regular_score: '平时成绩',
+  mid_score: '期中成绩',
+  mid_theory_score: '期中理论',
+  mid_practice_score: '期中实践',
+  final_score: '期末成绩',
+  final_theory_score: '期末理论',
+  final_practice_score: '期末实践',
+  theory_makeup_score: '理论补考',
+  practice_makeup_score: '实践补考',
+}
+
+/** 按课程考核结构禁用无效字段：实践课不直接改合并分，非实践课不改拆分分。 */
+function fieldDisabled(f: string): boolean {
+  const t = correctTarget.value
+  if (!t) return false
+  if (!t.has_midterm && f.startsWith('mid')) return true
+  if (t.has_practice) return f === 'mid_score' || f === 'final_score'
+  if (f === 'practice_makeup_score') return true
+  return f.endsWith('_theory_score') || f.endsWith('_practice_score')
+}
+
+function openCorrect(row: Grade) {
+  correctTarget.value = row
+  correctForm.value = { reason: '' }
+  for (const f of SCORE_FIELDS) correctForm.value[f] = undefined
+  correctVisible.value = true
+}
+
+async function submitCorrect() {
+  if (!correctTarget.value) return
+  const reason = String(correctForm.value.reason || '').trim()
+  if (!reason) {
+    ElMessage.warning('请填写更正原因')
+    return
+  }
+  const updates: Record<string, number> = {}
+  for (const f of SCORE_FIELDS) {
+    const v = correctForm.value[f]
+    if (v !== undefined && v !== null && v !== '') updates[f] = Number(v)
+  }
+  if (!Object.keys(updates).length) {
+    ElMessage.warning('至少填写一项需要更正的分数')
+    return
+  }
+  correctSaving.value = true
+  try {
+    await gradeApi.correct(correctTarget.value.id, { reason, ...updates })
+    ElMessage.success('成绩已更正，历史记录已保存')
+    correctVisible.value = false
+    await load()
+  } finally {
+    correctSaving.value = false
+  }
+}
+
+async function unapprove(row: Grade) {
+  let reason = ''
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '撤销审核后教师可重新修改并提交；请填写原因。',
+      '撤销审核',
+      { inputPlaceholder: '如：教务复核发现录入错误', inputValidator: (v) => (v && v.trim() ? true : '原因不能为空') },
+    )
+    reason = value
+  } catch {
+    return
+  }
+  await gradeApi.unapprove(row.id, reason)
+  ElMessage.success('已撤销审核，教师可重新修改')
+  await load()
+}
+
+async function openHistory(row: Grade) {
+  historyTarget.value = row
+  historyRows.value = await gradeApi.history(row.id)
+  historyVisible.value = true
+}
+
+function snapshotValue(raw: string, key: string) {
+  try {
+    const obj = JSON.parse(raw)
+    return obj[key] ?? '—'
+  } catch {
+    return '—'
   }
 }
 
@@ -90,11 +205,21 @@ onMounted(load)
           <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
         </el-select>
         <el-button type="primary" @click="load">刷新</el-button>
+        <el-button @click="exportApi.grades(semester)">导出已通过成绩</el-button>
+        <el-button
+          :type="mode === 'pending' ? 'primary' : 'default'"
+          @click="switchMode('pending')"
+        >待审核</el-button>
+        <el-button
+          :type="mode === 'approved' ? 'primary' : 'default'"
+          @click="switchMode('approved')"
+        >已通过</el-button>
         <div class="spacer" />
-        <el-tag class="pending-tag" type="warning" effect="light">
-          待审核 {{ rows.length }} 条
+        <el-tag class="pending-tag" :type="mode === 'pending' ? 'warning' : 'success'" effect="light">
+          {{ mode === 'pending' ? '待审核' : '已通过' }}
+          {{ (mode === 'pending' ? rows : approvedRows).length }} 条
         </el-tag>
-        <span class="hide-on-mobile batch-actions">
+        <span v-if="mode === 'pending'" class="hide-on-mobile batch-actions">
           <el-button
             class="batch-approve"
             type="success"
@@ -117,11 +242,17 @@ onMounted(load)
     </el-card>
 
     <!-- 空状态 -->
-    <el-card v-if="!rows.length" shadow="never" class="page-card">
-      <el-empty description="暂无待审核的成绩">
+    <el-card v-if="!grouped.length" shadow="never" class="page-card">
+      <el-empty :description="mode === 'pending' ? '暂无待审核的成绩' : '暂无已通过的成绩'">
         <template #description>
-          <p class="empty-title">当前没有待审核的成绩</p>
-          <p class="empty-hint muted">教师提交成绩后会出现在这里，可切换学期或点击「刷新」查看。</p>
+          <p class="empty-title">
+            {{ mode === 'pending' ? '当前没有待审核的成绩' : '当前没有已通过的成绩' }}
+          </p>
+          <p class="empty-hint muted">
+            {{ mode === 'pending'
+              ? '教师提交成绩后会出现在这里，可切换学期或点击「刷新」查看。'
+              : '教务审核通过后会出现在这里，可在此更正或撤销审核。' }}
+          </p>
         </template>
       </el-empty>
     </el-card>
@@ -156,7 +287,7 @@ onMounted(load)
       <div class="table-wrap">
         <el-table :data="group" size="small" stripe
           @selection-change="(v: Grade[]) => selected = v">
-          <el-table-column type="selection" width="45" />
+          <el-table-column v-if="mode === 'pending'" type="selection" width="45" />
           <el-table-column prop="student_no" label="学号" width="130" />
           <el-table-column prop="student_name" label="姓名" width="100" />
           <el-table-column label="平时" width="80" align="center">
@@ -190,12 +321,22 @@ onMounted(load)
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="128" align="center" fixed="right">
+          <el-table-column label="操作" :width="mode === 'pending' ? 128 : 220" align="center" fixed="right">
             <template #default="{ row }">
-              <el-button link type="success" size="small"
-                @click="approve([row.id])">通过</el-button>
-              <el-button link type="danger" size="small"
-                @click="reject([row.id])">驳回</el-button>
+              <template v-if="mode === 'pending'">
+                <el-button link type="success" size="small"
+                  @click="approve([row.id])">通过</el-button>
+                <el-button link type="danger" size="small"
+                  @click="reject([row.id])">驳回</el-button>
+              </template>
+              <template v-else>
+                <el-button link type="primary" size="small"
+                  @click="openCorrect(row)">更正</el-button>
+                <el-button link type="warning" size="small"
+                  @click="unapprove(row)">撤销审核</el-button>
+                <el-button link type="info" size="small"
+                  @click="openHistory(row)">历史</el-button>
+              </template>
             </template>
           </el-table-column>
         </el-table>
@@ -236,13 +377,86 @@ onMounted(load)
           </dl>
 
           <div class="scard__foot">
-            <el-button type="success" size="small" @click="approve([row.id])">通过</el-button>
-            <el-button type="danger" plain size="small" @click="reject([row.id])">驳回</el-button>
+            <template v-if="mode === 'pending'">
+              <el-button type="success" size="small" @click="approve([row.id])">通过</el-button>
+              <el-button type="danger" plain size="small" @click="reject([row.id])">驳回</el-button>
+            </template>
+            <template v-else>
+              <el-button type="primary" plain size="small" @click="openCorrect(row)">更正</el-button>
+              <el-button type="warning" plain size="small" @click="unapprove(row)">撤销审核</el-button>
+              <el-button type="info" plain size="small" @click="openHistory(row)">历史</el-button>
+            </template>
           </div>
         </article>
       </div>
       </el-card>
     </template>
+    <!-- 成绩更正 -->
+    <el-dialog v-model="correctVisible" title="更正已审核成绩" width="560px">
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="更正会写入成绩变更历史（操作人、时间、原因、改前/改后完整快照），不会无痕覆盖。"
+        style="margin-bottom: 12px"
+      />
+      <el-form label-width="100px">
+        <el-form-item label="更正原因" required>
+          <el-input v-model="correctForm.reason as string" type="textarea" :rows="2" maxlength="500" show-word-limit />
+        </el-form-item>
+        <el-form-item
+          v-for="f in SCORE_FIELDS"
+          :key="f"
+          :label="FIELD_LABELS[f] || f"
+        >
+          <el-input-number
+            v-model="correctForm[f] as number | undefined"
+            :min="0"
+            :max="100"
+            :precision="2"
+            :disabled="fieldDisabled(f)"
+            :placeholder="fieldDisabled(f) ? '本课程不适用' : '不修改'"
+            style="width: 180px"
+          />
+          <span class="muted" style="margin-left: 8px">
+            当前：{{ (correctTarget as Grade | null)?.[f] ?? '—' }}
+          </span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="correctVisible = false">取消</el-button>
+        <el-button type="primary" :loading="correctSaving" @click="submitCorrect">确认更正</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 成绩变更历史 -->
+    <el-dialog v-model="historyVisible" title="成绩变更历史" width="820px">
+      <div class="muted" style="margin-bottom: 10px">
+        {{ historyTarget?.student_no }} {{ historyTarget?.student_name }} · {{ historyTarget?.course_name }}
+      </div>
+      <el-table :data="historyRows" size="small" stripe max-height="420">
+        <el-table-column prop="action" label="动作" width="120" />
+        <el-table-column prop="reason" label="原因" min-width="160" />
+        <el-table-column label="改前总评" width="100" align="center">
+          <template #default="{ row }">{{ snapshotValue(row.before_snapshot, 'total_score') }}</template>
+        </el-table-column>
+        <el-table-column label="改后总评" width="100" align="center">
+          <template #default="{ row }">{{ snapshotValue(row.after_snapshot, 'total_score') }}</template>
+        </el-table-column>
+        <el-table-column label="改前状态" width="100" align="center">
+          <template #default="{ row }">{{ snapshotValue(row.before_snapshot, 'status') }}</template>
+        </el-table-column>
+        <el-table-column label="改后状态" width="100" align="center">
+          <template #default="{ row }">{{ snapshotValue(row.after_snapshot, 'status') }}</template>
+        </el-table-column>
+        <el-table-column prop="operated_by" label="操作人ID" width="90" align="center" />
+        <el-table-column label="时间" width="150">
+          <template #default="{ row }">{{ row.operated_at?.slice(0, 16).replace('T', ' ') }}</template>
+        </el-table-column>
+        <template #empty><el-empty description="暂无变更历史" :image-size="60" /></template>
+      </el-table>
+      <template #footer><el-button @click="historyVisible = false">关闭</el-button></template>
+    </el-dialog>
   </div>
 </template>
 

@@ -141,4 +141,10 @@ export async function upload<T>(url: string, file: File) {
   return data
 }
 
+/** 带额外字段的表单上传（教学资料等）。 */
+export async function uploadForm<T>(url: string, form: FormData) {
+  const { data } = await http.post<T>(url, form)
+  return data
+}
+
 export default http

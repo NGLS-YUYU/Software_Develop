@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import AccountDisabled, InvalidToken, PermissionDenied
 from app.core.security import decode_access_token
 from app.db.session import get_db
+from app.models.role import RoleCode
 from app.models.user import User, UserStatus
 from app.repositories.user import UserRepository
 from app.services.auth import AuthService
@@ -85,3 +86,8 @@ class RequirePermissions:
             missing = self.permission_codes - owned
             raise PermissionDenied(f"缺少权限: {', '.join(sorted(missing))}")
         return user
+
+
+def is_admin_user(user: User) -> bool:
+    """管理员身份以 ACADEMIC_ADMIN 角色为准，而不是 user_type（F-11/F-13）。"""
+    return any(r.code == RoleCode.ACADEMIC_ADMIN for r in user.roles)

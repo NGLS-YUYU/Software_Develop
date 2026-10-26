@@ -1,7 +1,8 @@
 /** 按业务模块组织的 API 调用。 */
 
-import { del, download, get, post, put, upload } from './request'
+import { del, download, get, post, put, upload, uploadForm } from './request'
 import type {
+  Adjustment,
   AdminAccount,
   Announcement,
   ClassInfo,
@@ -17,12 +18,14 @@ import type {
   Exam,
   ExamRoom,
   Grade,
+  GradeChangeLog,
   GradeStatistics,
   GradeSummary,
   ImportKind,
   ImportResult,
   LoginResponse,
   Major,
+  Material,
   Overview,
   PageQuery,
   PageResult,
@@ -275,6 +278,12 @@ export const gradeApi = {
       `/grades/teaching-classes/${classId}/submit`,
     ),
   pending: (semester?: string) => get<Grade[]>('/grades/pending', { semester }),
+  approved: (semester?: string) => get<Grade[]>('/grades/approved', { semester }),
+  history: (gradeId: number) => get<GradeChangeLog[]>(`/grades/${gradeId}/history`),
+  correct: (gradeId: number, body: Record<string, unknown>) =>
+    post<Grade>(`/grades/${gradeId}/correct`, body),
+  unapprove: (gradeId: number, reason: string) =>
+    post<Grade>(`/grades/${gradeId}/unapprove`, { reason }),
   approve: (grade_ids: number[]) =>
     post<{ approved: number; message: string }>('/grades/approve', { grade_ids }),
   reject: (grade_ids: number[], reason: string) =>
@@ -291,6 +300,8 @@ export const gradeApi = {
 export const termApi = {
   list: (q?: PageQuery & { academic_year?: string; status?: string }) =>
     get<PageResult<Term>>('/terms', q),
+  /** 当前 ACTIVE 学期（F-05：不再依赖浏览器日期推断）。 */
+  active: () => get<Term>('/terms/active'),
   get: (id: number) => get<Term>(`/terms/${id}`),
   create: (b: Record<string, unknown>) => post<Term>('/terms', b),
   update: (id: number, b: Record<string, unknown>) => put<Term>(`/terms/${id}`, b),
@@ -327,6 +338,10 @@ export const examApi = {
   remove: (id: number) => del(`/exams/${id}`),
   addRoom: (id: number, b: Record<string, unknown>) =>
     post<ExamRoom>(`/exams/${id}/rooms`, b),
+  updateRoom: (id: number, roomId: number, b: Record<string, unknown>) =>
+    put<ExamRoom>(`/exams/${id}/rooms/${roomId}`, b),
+  removeRoom: (id: number, roomId: number) =>
+    del(`/exams/${id}/rooms/${roomId}`),
   assign: (id: number) => post<{ assigned: number }>(`/exams/${id}/assign`),
   publish: (id: number) => post<Exam>(`/exams/${id}/publish`),
 }
@@ -336,6 +351,8 @@ export const evaluationApi = {
   tasks: (semester?: string) => get<EvaluationTask[]>('/evaluations/tasks', { semester }),
   createTask: (b: Record<string, unknown>) =>
     post<EvaluationTask>('/evaluations/tasks', b),
+  updateTask: (id: number, b: Record<string, unknown>) =>
+    put<EvaluationTask>(`/evaluations/tasks/${id}`, b),
   pending: (task_id: number) =>
     get<PendingEvaluation[]>('/evaluations/pending', { task_id }),
   submit: (b: Record<string, unknown>) => post<{ message: string }>('/evaluations', b),
@@ -362,4 +379,41 @@ export const statsApi = {
       semester,
       limit,
     }),
+}
+// --- Excel 导出（F-17）---
+export const exportApi = {
+  students: () => download('/exports/students', undefined, 'students.xlsx'),
+  courses: () => download('/exports/courses', undefined, 'courses.xlsx'),
+  grades: (semester?: string) =>
+    download('/exports/grades', semester ? { semester } : undefined, 'grades.xlsx'),
+  selections: (semester?: string) =>
+    download('/exports/selections', semester ? { semester } : undefined, 'selections.xlsx'),
+}
+// --- 教学资料（F-21）---
+export const materialApi = {
+  list: (teachingClassId: number) =>
+    get<Material[]>('/materials', { teaching_class_id: teachingClassId }),
+  my: () => get<Material[]>('/materials/my'),
+  upload: (teachingClassId: number, title: string, file: File) => {
+    const form = new FormData()
+    form.append('teaching_class_id', String(teachingClassId))
+    form.append('title', title)
+    form.append('file', file)
+    return uploadForm<Material>('/materials', form)
+  },
+  remove: (id: number) => del(`/materials/${id}`),
+  download: (id: number, fileName: string) =>
+    download(`/materials/${id}/download`, undefined, fileName),
+}
+// --- 调停课（F-22）---
+export const adjustmentApi = {
+  mine: () => get<Adjustment[]>('/schedule-adjustments/mine'),
+  list: (status?: string) =>
+    get<Adjustment[]>('/schedule-adjustments', status ? { status } : undefined),
+  create: (b: Record<string, unknown>) =>
+    post<Adjustment>('/schedule-adjustments', b),
+  approve: (id: number) =>
+    post<Adjustment>(`/schedule-adjustments/${id}/approve`),
+  reject: (id: number, reason: string) =>
+    post<Adjustment>(`/schedule-adjustments/${id}/reject`, { reason }),
 }

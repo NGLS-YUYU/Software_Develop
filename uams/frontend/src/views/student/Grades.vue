@@ -3,11 +3,15 @@ import { computed, onMounted, ref } from 'vue'
 
 import { gradeApi } from '@/api'
 import { semesterOptions } from '@/composables/useSemester'
-import type { Grade, GradeSummary } from '@/types'
+import type { Grade, GradeSummary, StudentGradeOverview } from '@/types'
 
 const semester = ref<string | undefined>(undefined)
 const grades = ref<Grade[]>([])
 const summary = ref<GradeSummary | null>(null)
+const ranks = ref<Pick<StudentGradeOverview, 'class_rank' | 'major_rank'>>({
+  class_rank: null,
+  major_rank: null,
+})
 const loading = ref(false)
 
 /** 按学期分组展示，便于查看每学期表现。 */
@@ -35,8 +39,17 @@ function scoreType(g: Grade) {
 async function load() {
   loading.value = true
   try {
-    grades.value = await gradeApi.mine(semester.value)
-    summary.value = await gradeApi.mySummary()
+    const [mine, sum, overview] = await Promise.all([
+      gradeApi.mine(semester.value),
+      gradeApi.mySummary(),
+      gradeApi.my(),
+    ])
+    grades.value = mine
+    summary.value = sum
+    ranks.value = {
+      class_rank: overview.class_rank,
+      major_rank: overview.major_rank,
+    }
   } finally {
     loading.value = false
   }
@@ -61,11 +74,11 @@ onMounted(load)
           <span class="ov__label">已修学分</span>
         </div>
         <div class="ov">
-          <span class="ov__value">—</span>
+          <span class="ov__value">{{ ranks.class_rank ?? '—' }}</span>
           <span class="ov__label">班级排名</span>
         </div>
         <div class="ov">
-          <span class="ov__value">—</span>
+          <span class="ov__value">{{ ranks.major_rank ?? '—' }}</span>
           <span class="ov__label">专业排名</span>
         </div>
       </div>

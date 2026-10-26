@@ -399,6 +399,20 @@ export interface Grade {
   approved_at?: string | null
 }
 
+export interface GradeChangeLog {
+  id: number
+  grade_id: number
+  student_id: number
+  teaching_class_id: number
+  course_id: number
+  action: string
+  reason: string
+  before_snapshot: string
+  after_snapshot: string
+  operated_by?: number | null
+  operated_at: string
+}
+
 export interface GradeSummary {
   total_courses: number
   passed_courses: number
@@ -425,6 +439,8 @@ export interface ExamRoom {
   building?: string | null
   capacity: number
   assigned_count: number
+  invigilator_id?: number | null
+  invigilator_name?: string | null
 }
 
 export interface Exam {
@@ -568,4 +584,41 @@ export interface ImportResult {
   success: number
   failed: number
   errors: ImportRowError[]
+}
+
+// --- 教学资料（F-21）---
+export interface Material {
+  id: number
+  teaching_class_id: number
+  teaching_class_code?: string | null
+  title: string
+  file_name: string
+  file_size: number
+  content_type?: string | null
+  uploader_name?: string | null
+  created_at?: string | null
+}
+
+// --- 调停课（F-22）---
+export interface Adjustment {
+  id: number
+  teaching_class_id: number
+  teaching_class_code?: string | null
+  course_name?: string | null
+  schedule_id?: number | null
+  request_type: 'CHANGE' | 'CANCEL' | 'ADD'
+  reason: string
+  new_day_of_week?: number | null
+  new_start_period?: number | null
+  new_end_period?: number | null
+  new_start_week?: number | null
+  new_end_week?: number | null
+  new_week_type?: string | null
+  new_classroom_id?: number | null
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  requested_by?: number | null
+  requester_name?: string | null
+  reviewed_by?: number | null
+  review_reason?: string | null
+  created_at?: string | null
 }

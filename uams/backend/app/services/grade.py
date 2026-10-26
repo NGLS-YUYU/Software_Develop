@@ -10,6 +10,7 @@
   - 总评由后端按课程权重统一计算，不接受前端传入
 """
 
+import json
 from datetime import datetime
 from decimal import Decimal
 
@@ -18,10 +19,11 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import Conflict, NotFound, PermissionDenied
 from app.models.course import Course
-from app.models.grade import Grade, GradeStatus
+from app.models.grade import Grade, GradeChangeLog, GradeStatus
 from app.models.person import Student, Teacher
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
+from app.services.assessment import profile_for
 from app.services.gpa_service import GpaService, NoGradesError
 from app.services.ranking_service import RankingService
 from app.services.score_service import ScoreService
@@ -45,6 +47,74 @@ class GradeService:
         if g is None:
             raise NotFound(f"成绩记录不存在（id={grade_id}）")
         return g
+
+    _SCORE_FIELDS = (
+        "regular_score", "mid_score", "mid_theory_score", "mid_practice_score",
+        "final_score", "final_theory_score", "final_practice_score",
+        "theory_makeup_score", "practice_makeup_score",
+    )
+
+    @staticmethod
+    def _snapshot(g: Grade) -> dict:
+        return {
+            "id": g.id,
+            "student_id": g.student_id,
+            "teaching_class_id": g.teaching_class_id,
+            "course_id": g.course_id,
+            "semester": g.semester,
+            **{f: getattr(g, f) for f in GradeService._SCORE_FIELDS},
+            "theory_total_score": g.theory_total_score,
+            "practice_total_score": g.practice_total_score,
+            "total_score": g.total_score,
+            "grade_point": g.grade_point,
+            "credits": g.credits,
+            "is_passed": g.is_passed,
+            "status": g.status,
+            "submitted_by": g.submitted_by,
+            "submitted_at": g.submitted_at,
+            "approved_by": g.approved_by,
+            "approved_at": g.approved_at,
+            "reject_reason": g.reject_reason,
+        }
+
+    def _log_change(
+        self,
+        g: Grade,
+        action: str,
+        reason: str,
+        operator_id: int | None,
+        before: dict,
+        after: dict,
+    ) -> None:
+        self.db.add(
+            GradeChangeLog(
+                grade_id=g.id,
+                student_id=g.student_id,
+                teaching_class_id=g.teaching_class_id,
+                course_id=g.course_id,
+                action=action,
+                reason=reason[:500],
+                before_snapshot=json.dumps(before, ensure_ascii=False, default=str),
+                after_snapshot=json.dumps(after, ensure_ascii=False, default=str),
+                operated_by=operator_id,
+            )
+        )
+
+    def history(self, grade_id: int) -> list[GradeChangeLog]:
+        self.get_or_404(grade_id)
+        return list(
+            self.db.execute(
+                select(GradeChangeLog)
+                .where(GradeChangeLog.grade_id == grade_id)
+                .order_by(GradeChangeLog.operated_at.desc(), GradeChangeLog.id.desc())
+            ).scalars()
+        )
+
+    def list_approved(self, semester: str | None = None) -> list[Grade]:
+        stmt = self.base_stmt().where(Grade.status == GradeStatus.APPROVED)
+        if semester:
+            stmt = stmt.where(Grade.semester == semester)
+        return list(self.db.execute(stmt.order_by(Grade.semester.desc(), Grade.id)).scalars())
 
     # --- 教师侧 ---
 
@@ -177,6 +247,7 @@ class GradeService:
                 raise Conflict("成绩已审核通过，教师不可直接修改")
             if g.status == GradeStatus.SUBMITTED:
                 raise Conflict("成绩已提交待审核，请先由教务驳回后再修改")
+            before = self._snapshot(g) if g.status == GradeStatus.REJECTED else None
             if "regular_score" in item:
                 g.regular_score = item["regular_score"]
             if "mid_score" in item:
@@ -199,6 +270,11 @@ class GradeService:
             # 草稿保存允许成绩不完整：此时总评置空，提交时再拦截。
             ScoreService.compute_for_draft(course, g)
             g.status = GradeStatus.DRAFT
+            if before is not None:
+                self._log_change(
+                    g, "TEACHER_EDIT", "教师修改已驳回成绩",
+                    teacher.user_id, before, self._snapshot(g),
+                )
         self.db.commit()
         return self.list_by_class(teaching_class_id)
 
@@ -283,10 +359,14 @@ class GradeService:
 
         now = datetime.now()
         for r in rows:
+            before = self._snapshot(r)
             r.status = GradeStatus.SUBMITTED
             r.submitted_by = teacher.id
             r.submitted_at = now
             r.reject_reason = None
+            self._log_change(
+                r, "SUBMIT", "教师提交成绩", teacher.user_id, before, self._snapshot(r)
+            )
         self.db.commit()
         return len(rows)
 
@@ -304,9 +384,13 @@ class GradeService:
 
         now = datetime.now()
         for r in rows:
+            before = self._snapshot(r)
             r.status = GradeStatus.APPROVED
             r.approved_by = approver_id
             r.approved_at = now
+            self._log_change(
+                r, "APPROVE", "教务审核通过", approver_id, before, self._snapshot(r)
+            )
         self.db.commit()
         self._refresh_student_credits({r.student_id for r in rows})
         return len(rows)
@@ -321,12 +405,104 @@ class GradeService:
         if bad:
             raise Conflict(f"只有已提交的成绩可以驳回，问题记录：{bad[:5]}")
         for r in rows:
+            before = self._snapshot(r)
             r.status = GradeStatus.REJECTED
             r.approved_by = approver_id
             r.approved_at = datetime.now()
             r.reject_reason = reason
+            self._log_change(
+                r, "REJECT", reason, approver_id, before, self._snapshot(r)
+            )
         self.db.commit()
         return len(rows)
+
+    def unapprove(self, operator_id: int, grade_id: int, reason: str) -> Grade:
+        """撤销已审核成绩（F-03），允许教师重新修改并提交。"""
+        g = self.db.execute(
+            select(Grade).where(Grade.id == grade_id).with_for_update()
+        ).scalar_one_or_none()
+        if g is None:
+            raise NotFound(f"成绩记录不存在（id={grade_id}）")
+        if g.status != GradeStatus.APPROVED:
+            raise Conflict("只有已审核通过的成绩可以撤销审核")
+        before = self._snapshot(g)
+        g.status = GradeStatus.REJECTED
+        g.reject_reason = reason
+        g.approved_by = None
+        g.approved_at = None
+        self._log_change(
+            g, "UN_APPROVE", reason, operator_id, before, self._snapshot(g)
+        )
+        self.db.commit()
+        self._refresh_student_credits({g.student_id})
+        return g
+
+    def correct(
+        self,
+        operator_id: int,
+        grade_id: int,
+        updates: dict,
+        reason: str,
+    ) -> Grade:
+        """教务直接更正已审核成绩（F-03），保留完整前后快照。"""
+        g = self.db.execute(
+            select(Grade).where(Grade.id == grade_id).with_for_update()
+        ).scalar_one_or_none()
+        if g is None:
+            raise NotFound(f"成绩记录不存在（id={grade_id}）")
+        if g.status != GradeStatus.APPROVED:
+            raise Conflict("只有已审核通过的成绩可以直接更正")
+        course = self.db.get(Course, g.course_id)
+        if course is None:
+            raise NotFound("课程不存在")
+
+        score_updates = {
+            k: v for k, v in updates.items() if k in self._SCORE_FIELDS
+        }
+        if not score_updates:
+            raise Conflict("至少需要修改一项成绩字段")
+
+        # 合并字段（mid_score/final_score）在实践课中只是计算结果回显，
+        # 直接写入会被 ScoreService.compute 覆盖成理论/实践平均分，造成“更正成功但没变”。
+        # 这里显式拒绝，避免静默无效操作；非实践课则拒绝拆分字段。
+        profile = profile_for(course)
+        for merged, parts, label in (
+            ("mid_score", ("mid_theory_score", "mid_practice_score"), "期中"),
+            ("final_score", ("final_theory_score", "final_practice_score"), "期末"),
+        ):
+            if profile.has_practice and merged in score_updates:
+                raise Conflict(
+                    f"该课程含实践学时，{label}请分别填写理论和实践成绩，"
+                    f"不能直接修改合并成绩 {merged}"
+                )
+            if not profile.has_practice and any(p in score_updates for p in parts):
+                raise Conflict(
+                    f"该课程无实践学时，不能修改{label}理论/实践拆分成绩"
+                )
+            if not profile.has_midterm and any(
+                p in score_updates for p in (merged, *parts)
+            ) and merged.startswith("mid"):
+                raise Conflict("该课程无期中考试，不能修改期中成绩")
+
+        before = self._snapshot(g)
+        try:
+            for k, v in score_updates.items():
+                setattr(g, k, v)
+            ScoreService.compute(course, g)
+        except Exception:
+            self.db.rollback()
+            raise
+
+        g.status = GradeStatus.APPROVED
+        g.approved_by = operator_id
+        g.approved_at = datetime.now()
+        g.reject_reason = None
+        self._log_change(
+            g, "CORRECT", reason, operator_id, before, self._snapshot(g)
+        )
+        self.db.commit()
+        self._refresh_student_credits({g.student_id})
+        return g
 
     def _refresh_student_credits(self, student_ids: set[int]) -> None:
         """重算已修学分与 GPA（学分只计及格课程；GPA 由 GpaService 统一口径）。"""

@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import RequirePermissions, get_current_user
+from app.api.deps import RequirePermissions, get_current_user, is_admin_user
 from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Student, Teacher
@@ -84,6 +84,38 @@ class ApproveRequest(BaseModel):
 class RejectRequest(BaseModel):
     grade_ids: list[int] = Field(..., min_length=1)
     reason: str = Field(..., min_length=1, max_length=500)
+
+
+class UnapproveRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+class GradeCorrectRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+    regular_score: Decimal | None = Field(None, ge=0, le=100)
+    mid_score: Decimal | None = Field(None, ge=0, le=100)
+    mid_theory_score: Decimal | None = Field(None, ge=0, le=100)
+    mid_practice_score: Decimal | None = Field(None, ge=0, le=100)
+    final_score: Decimal | None = Field(None, ge=0, le=100)
+    final_theory_score: Decimal | None = Field(None, ge=0, le=100)
+    final_practice_score: Decimal | None = Field(None, ge=0, le=100)
+    theory_makeup_score: Decimal | None = Field(None, ge=0, le=100)
+    practice_makeup_score: Decimal | None = Field(None, ge=0, le=100)
+
+
+class GradeChangeLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    grade_id: int
+    student_id: int
+    teaching_class_id: int
+    course_id: int
+    action: str
+    reason: str
+    before_snapshot: str
+    after_snapshot: str
+    operated_by: int | None = None
+    operated_at: datetime
 
 
 class RosterStudent(BaseModel):
@@ -192,7 +224,7 @@ def class_grades(
     current: User = Depends(RequirePermissions("grade:read")),
 ):
     svc = GradeService(db)
-    if current.user_type == UserType.TEACHER:
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
         svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
     elif current.user_type == UserType.STUDENT:
         raise PermissionDenied("无权查看整班成绩")
@@ -211,7 +243,7 @@ def class_roster(
 ):
     """教师查看本人授课教学班的学生名单及成绩状态（TASK-005）。"""
     svc = GradeService(db)
-    if current.user_type == UserType.TEACHER:
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
         svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
     elif current.user_type == UserType.STUDENT:
         raise PermissionDenied("无权查看学生名单")
@@ -229,7 +261,7 @@ def init_sheet(
     current: User = Depends(RequirePermissions("grade:write")),
 ):
     svc = GradeService(db)
-    if current.user_type == UserType.TEACHER:
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
         svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
     return [_out(g) for g in svc.init_sheet(class_id)]
 
@@ -266,7 +298,11 @@ def delete_grade(
     """
     if current.user_type == UserType.STUDENT:
         raise PermissionDenied("无权删除成绩")
-    teacher = _me_teacher(db, current) if current.user_type == UserType.TEACHER else None
+    teacher = (
+        _me_teacher(db, current)
+        if current.user_type == UserType.TEACHER and not is_admin_user(current)
+        else None
+    )
     GradeService(db).delete_draft(teacher, grade_id)
 
 
@@ -289,6 +325,54 @@ def pending(
     _=Depends(RequirePermissions("grade:approve")),
 ):
     return [_out(g) for g in GradeService(db).pending_approval(semester)]
+
+
+@router.get("/approved", response_model=list[GradeOut], summary="已审核通过成绩")
+def approved(
+    semester: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("grade:approve")),
+):
+    """供教务查看/更正已通过成绩；普通教师/学生无权访问。"""
+    return [_out(g) for g in GradeService(db).list_approved(semester)]
+
+
+@router.get(
+    "/{grade_id}/history",
+    response_model=list[GradeChangeLogOut],
+    summary="成绩变更历史",
+)
+def grade_history(
+    grade_id: int,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("grade:approve")),
+):
+    return GradeService(db).history(grade_id)
+
+
+@router.post("/{grade_id}/unapprove", response_model=GradeOut, summary="撤销审核")
+def unapprove(
+    grade_id: int,
+    payload: UnapproveRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(RequirePermissions("grade:approve")),
+):
+    g = GradeService(db).unapprove(current.id, grade_id, payload.reason)
+    return _out(g)
+
+
+@router.post("/{grade_id}/correct", response_model=GradeOut, summary="更正已审核成绩")
+def correct(
+    grade_id: int,
+    payload: GradeCorrectRequest,
+    db: Session = Depends(get_db),
+    current: User = Depends(RequirePermissions("grade:approve")),
+):
+    """直接更正 APPROVED 成绩；必须填写原因，并写入前后完整快照。"""
+    updates = payload.model_dump(exclude_unset=True)
+    reason = updates.pop("reason")
+    g = GradeService(db).correct(current.id, grade_id, updates, reason)
+    return _out(g)
 
 
 @router.post("/approve", summary="审核通过")
@@ -320,7 +404,7 @@ def statistics(
     current: User = Depends(RequirePermissions("grade:read")),
 ):
     svc = GradeService(db)
-    if current.user_type == UserType.TEACHER:
+    if current.user_type == UserType.TEACHER and not is_admin_user(current):
         svc.ensure_teacher_owns(_me_teacher(db, current), class_id)
     elif current.user_type == UserType.STUDENT:
         raise PermissionDenied("无权查看成绩统计")

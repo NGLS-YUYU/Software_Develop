@@ -12,7 +12,9 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.mysql import BIGINT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -204,3 +206,43 @@ class Grade(Base, IdMixin, TimestampMixin):
     student: Mapped["Student"] = relationship()
     teaching_class: Mapped["TeachingClass"] = relationship()
     course: Mapped["Course"] = relationship()
+
+
+class GradeChangeLog(Base, IdMixin):
+    """成绩更正/状态变更历史（F-03）。
+
+    before_snapshot / after_snapshot 为 JSON 文本，保存完整成绩字段快照；
+    grade_id 删除时历史随成绩删除（成绩本身受业务保护，不应被删除）。
+    """
+
+    __tablename__ = "grade_change_logs"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('SUBMIT','APPROVE','REJECT','UN_APPROVE','CORRECT','TEACHER_EDIT')",
+            name="ck_grade_change_action",
+        ),
+        Index("idx_grade_change_grade", "grade_id", "operated_at"),
+        Index("idx_grade_change_student", "student_id", "operated_at"),
+        {**_KW, "comment": "成绩变更历史"},
+    )
+
+    grade_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True),
+        ForeignKey("grades.id", ondelete="CASCADE", name="fk_gcl_grade"),
+        nullable=False,
+    )
+    student_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    teaching_class_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    course_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str] = mapped_column(String(500), nullable=False)
+    before_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    after_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    operated_by: Mapped[int | None] = mapped_column(
+        BIGINT(unsigned=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_gcl_operator"),
+        nullable=True,
+    )
+    operated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
