@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # --- 数据库 ---
     DATABASE_URL: str = Field(
-        default="mysql+pymysql://uams_app:888888@127.0.0.1:3306/uams?charset=utf8mb4"
+        default="mysql+pymysql://uams_app:CHANGE_ME@127.0.0.1:3306/uams?charset=utf8mb4"
     )
     DB_ECHO: bool = False
     DB_POOL_SIZE: int = 10

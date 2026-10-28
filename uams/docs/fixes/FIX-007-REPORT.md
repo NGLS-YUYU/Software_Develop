@@ -36,7 +36,7 @@
 | 5. 生产 build 托管 | 无方案（`preview` 未配置 host/proxy） |
 | 6. 启动脚本 | **不存在** `start.sh` / `deploy.sh`（仅有 `scripts/setup_mysql.sh`） |
 | 7. `.env` 使用情况 | **仓库内没有 `.env`**，全部走 `config.py` 内置默认值 |
-| 8. 默认口令 / 密钥 | ⚠️ **存在**：`config.py` 内置 `uams_app:888888` 与 `JWT_SECRET="CHANGE_ME_IN_ENV"`（详见 §12） |
+| 8. 默认口令 / 密钥 | ⚠️ **存在**：`config.py` 内置 `uams_app:CHANGE_ME` 与 `JWT_SECRET="CHANGE_ME_IN_ENV"`（详见 §12） |
 | 9. CORS | 有，默认仅 `localhost:5173` / `127.0.0.1:5173` |
 | 10. LAN 所需端口 | 前端 5173（prod 4173）、后端 8000；MySQL 3306 **不暴露** |
 
@@ -180,7 +180,7 @@
 
 ## 12. 已知问题
 
-1. **默认口令与占位密钥（§十九 要求先报告）**：`backend/app/core/config.py` 内置了 `DATABASE_URL` 默认串（含 `uams_app:888888`）与 `JWT_SECRET="CHANGE_ME_IN_ENV"`；仓库内无 `.env`，未配置时即使用这些默认值。**未修改代码**（不属于当前部署阻塞项），但已：`start.sh` 明确告警、`.env.example` 与 `DEPLOYMENT.md` 写明必须替换。局域网正式部署前**必须**创建 `.env`。
+1. **默认口令与占位密钥（§十九 要求先报告）**：`backend/app/core/config.py` 内置了 `DATABASE_URL` 默认串（含 `uams_app:CHANGE_ME`）与 `JWT_SECRET="CHANGE_ME_IN_ENV"`；仓库内无 `.env`，未配置时即使用这些默认值。**未修改代码**（不属于当前部署阻塞项），但已：`start.sh` 明确告警、`.env.example` 与 `DEPLOYMENT.md` 写明必须替换。局域网正式部署前**必须**创建 `.env`。
 2. **`favicon.ico` 404**：应用未提供图标，浏览器控制台会出现一条 404（纯外观，与功能无关，未处理以免越界做 UI）。
 3. **旧接口保留**：`/schedules/mine`、`/schedules/students/{id}`、`/teaching-classes/{id}/schedules` 未删除（避免破坏既有代码与调用方），但前端已不再使用前两组中的课表接口；`/teaching-classes/{id}/schedules` 仍保留在后端但前端已改用平铺接口。
 4. **教师课表与旧接口的一处行为差异**：旧 `/schedules/mine` 对教师额外过滤 `TeachingClass.status == 'ACTIVE'`，TASK-013 的 `/mine` 不做该过滤。已保持 TASK-013 现有行为（未改动其语义）；演示数据中无 `CANCELLED` 教学班，故无可见差异。
