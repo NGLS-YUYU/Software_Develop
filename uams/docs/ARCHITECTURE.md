@@ -58,6 +58,10 @@
 `backend/scripts/env_guard.py check production`，确认实际数据库为 `uams` 且版本等于 Alembic head；
 版本不一致时拒绝启动，不自动迁移。
 
+**当前实际状态（2026-10-29）**：Nginx 1.28.3 active（80），`uams-backend.service` active（127.0.0.1:8000），
+前端 `/var/www/uams/current`，正式库 `uams` @ `e4f5a6b7c8d9`，Vite 5173 已停止。
+更完整的技术细节见 [UAMS_系统技术文档.md](UAMS_系统技术文档.md)。
+
 ---
 
 ## 2. 后端结构
@@ -151,17 +155,17 @@ frontend/
     ├── components/       ScheduleGrid.vue（周课表网格）
     ├── composables/      useCrudTable.ts（分页表格通用逻辑）、useSemester.ts
     ├── assets/           main.css
-    └── views/            28 个页面
+    └── views/            38 个页面
 ```
 
-### 3.1 页面清单（28 个）
+### 3.1 页面清单（38 个）
 
 | 端 | 数量 | 页面 |
 |---|---|---|
-| 公共 | 3 | `Login.vue`、`common/Forbidden.vue`、`common/NotFound.vue`；另 `common/Announcements.vue` 供学生/教师共用 |
-| 学生端 | 7 | Dashboard、Profile、Schedule、Selection、Grades、Exams、Evaluation |
-| 教师端 | 5 | Dashboard、MyCourses、Schedule、GradeEntry、Evaluation |
-| 教务端 | 12 | Dashboard、Organization、Students、Teachers、Courses、Curriculum、Teaching、SelectionManage、GradeApproval、Exams、AnnouncementManage、Statistics |
+| 公共 | 4 | `Login.vue`、`common/Forbidden.vue`、`common/NotFound.vue`、`common/Announcements.vue` |
+| 学生端 | 9 | Dashboard、Profile、Schedule、Curriculum、Materials、Selection、Grades、Exams、Evaluation |
+| 教师端 | 7 | Dashboard、MyCourses、Materials、Schedule、GradeEntry、Adjustments、Evaluation |
+| 教务端 | 18 | Dashboard、Organization、Students、Teachers、Courses、Curriculum、Teaching、Adjustments、SelectionManage、AdminManage、Terms、AuditLogs、ImportCenter、GradeApproval、Evaluations、Exams、AnnouncementManage、Statistics |
 
 ### 3.2 认证与权限流
 
@@ -174,7 +178,7 @@ Pinia auth store 持久化 token 与 user（localStorage）
 路由守卫 router/index.ts
      ├─ 未登录 → 跳 /login
      ├─ 已登录但 permissions 为空（刷新页面）→ GET /auth/me 重新拉取
-     └─ 路由 meta.roles 与 user.user_type 不符 → 跳 /403
+     └─ 路由 meta.roles 与 identities（user_type ∪ 角色）不符 → 跳 /403
      ↓
 MainLayout 依据当前路由子树动态生成侧边菜单
 ```

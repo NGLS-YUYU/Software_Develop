@@ -12,9 +12,9 @@
 | 字符集 | utf8mb4 / utf8mb4_0900_ai_ci |
 | 时区 | +08:00 |
 | 迁移管理 | Alembic |
-| 表数量 | 28 张业务表 + 1 张 `alembic_version` |
-| 约束 | 47 个外键 / 46 个 CHECK 约束 |
-| 文档版本 | V1.0（2026-09-15）｜2026-09-17 补充模型与迁移位置说明 |
+| 表数量 | 32 张业务表 + 1 张 `alembic_version` |
+| 约束 | 57 个外键 / 62 个 CHECK 约束（2026-10-29 实测） |
+| 文档版本 | V3.2（2026-10-29）｜对齐 Alembic head `e4f5a6b7c8d9` |
 
 ### 代码位置
 
@@ -877,6 +877,75 @@ KEY idx_announcements_pub (status, target_type, published_at)
 ---
 
 # 12. 审计
+
+## 11.4 grade_change_logs（成绩变更历史，F-03）
+
+| 字段 | 类型 | 约束/说明 |
+|---|---|---|
+| `id` | BIGINT UNSIGNED | PK |
+| `grade_id` | BIGINT UNSIGNED | FK → `grades.id`，CASCADE |
+| `student_id` | BIGINT UNSIGNED | 学生 ID（快照，不加 FK） |
+| `teaching_class_id` | BIGINT UNSIGNED | 教学班 ID |
+| `course_id` | BIGINT UNSIGNED | 课程 ID |
+| `action` | VARCHAR(20) | SUBMIT / APPROVE / REJECT / UN_APPROVE / CORRECT / TEACHER_EDIT |
+| `reason` | VARCHAR(500) | 变更原因 |
+| `before_snapshot` | TEXT | 变更前完整成绩快照（JSON） |
+| `after_snapshot` | TEXT | 变更后完整成绩快照（JSON） |
+| `operated_by` | BIGINT UNSIGNED | FK → `users.id`，SET NULL |
+| `operated_at` | DATETIME | 操作时间 |
+
+索引：`(grade_id, operated_at)`、`(student_id, operated_at)`；CHECK 限制 action 枚举。
+
+## 11.5 teaching_materials（教学资料，F-21）
+
+| 字段 | 类型 | 约束/说明 |
+|---|---|---|
+| `id` | BIGINT UNSIGNED | PK |
+| `teaching_class_id` | BIGINT UNSIGNED | FK → `teaching_classes.id`，CASCADE |
+| `title` | VARCHAR(200) | 资料标题 |
+| `file_name` | VARCHAR(255) | 原始文件名（仅 basename） |
+| `file_path` | VARCHAR(500) | 服务端存储路径（绝对路径） |
+| `file_size` | BIGINT UNSIGNED | 字节数（≤10MB） |
+| `content_type` | VARCHAR(100) | MIME |
+| `uploaded_by` | BIGINT UNSIGNED | FK → `users.id`，SET NULL |
+| `created_at` | DATETIME | 创建时间 |
+
+索引：`(teaching_class_id, created_at)`。
+
+## 11.6 schedule_adjustments（调停课申请，F-22）
+
+| 字段 | 类型 | 约束/说明 |
+|---|---|---|
+| `id` | BIGINT UNSIGNED | PK |
+| `teaching_class_id` | BIGINT UNSIGNED | FK → `teaching_classes.id`，CASCADE |
+| `schedule_id` | BIGINT UNSIGNED | FK → `schedules.id`，SET NULL |
+| `request_type` | VARCHAR(20) | CHANGE / CANCEL / ADD |
+| `reason` | VARCHAR(500) | 申请原因 |
+| `new_day_of_week` | TINYINT | 新星期 |
+| `new_start_period` / `new_end_period` | TINYINT | 新节次 |
+| `new_start_week` / `new_end_week` | TINYINT | 新周次 |
+| `new_week_type` | VARCHAR(10) | ALL / ODD / EVEN |
+| `new_classroom_id` | BIGINT UNSIGNED | FK → `classrooms.id`，SET NULL |
+| `status` | VARCHAR(20) | PENDING / APPROVED / REJECTED |
+| `requested_by` | BIGINT UNSIGNED | FK → `users.id`，SET NULL |
+| `reviewed_by` | BIGINT UNSIGNED | FK → `users.id`，SET NULL |
+| `review_reason` | VARCHAR(500) | 审批意见 |
+| `created_at` / `updated_at` | DATETIME | 时间戳 |
+
+索引：`(status, created_at)`、`(teaching_class_id)`；CHECK 限制类型与状态。
+
+## 11.7 course_selections.source（FIX-002）
+
+`course_selections.source VARCHAR(20) NULL`：
+
+- `STUDENT`：学生自主选课；
+- `ADMIN_REQUIRED`：必修课预安排；
+- `ADMIN_MANUAL`：教务手动添加；
+- `NULL`：历史记录（未标记来源）。
+
+CHECK：`source IS NULL OR source IN (...)`。
+
+---
 
 ## 12.1 operation_logs
 

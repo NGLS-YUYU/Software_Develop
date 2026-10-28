@@ -136,7 +136,6 @@ body {
   margin-top: var(--uams-gap);
 }
 
-.page-card :deep(.el-card__header),
 .page-card .el-card__header {
   border-bottom: 1px solid var(--uams-border);
   padding: 14px 18px;

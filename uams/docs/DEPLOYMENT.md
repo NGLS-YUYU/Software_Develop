@@ -79,8 +79,14 @@ curl -s -o /dev/null -w '%{http_code}\n' "http://$IP/api/v1/terms/active"
 ./start.sh status
 ```
 
-> 当前执行环境没有可用的免密 sudo；Nginx 已安装并运行，但 80 由 Ubuntu 默认站点占用，UAMS 站点与 systemd 服务尚未安装，上述系统级步骤尚未执行。
-> 在此之前正式环境仍由现有 Vite + uvicorn 临时方式提供。
+> **当前部署状态（2026-10-29）**：上述正式部署已完成。
+> - Nginx 1.28.3 运行中，80 提供 UAMS 站点；
+> - `uams-backend.service` 运行中，仅监听 `127.0.0.1:8000`；
+> - 前端位于 `/var/www/uams/current`；
+> - 5173 开发服务器已停止；
+> - 正式库 `uams`，Alembic head `e4f5a6b7c8d9`。
+>
+> 日常检查使用 `./start.sh status` 或 `./start.sh --env production`。系统级变更仍需 sudo。
 
 ### 0.4 日常管理
 

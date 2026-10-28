@@ -61,8 +61,9 @@ cd /home/nglsyuyu/Software_Develop/Software_Develop/uams
 正式环境要求本机已安装 Nginx 与 `uams-backend.service`；未安装时启动器会拒绝启动并提示安装命令。
 本地开发/临时演示可用 `./start.sh start`（Vite + uvicorn + `uams`）。
 
-> 当前服务器（2026-10-29）Nginx 已安装并运行，但 UAMS 站点/systemd 服务尚未安装，且 80 由默认站点占用；
-> 正式模式会拒绝启动。安装需 sudo，步骤见 [../deploy/README.md](../deploy/README.md)。
+> 当前服务器（2026-10-29）正式环境已完成部署：Nginx 80 + `uams-backend.service` + 正式库 `uams`；
+> 5173 已停止。`./start.sh status` 可查看实际状态。系统级变更仍需 sudo，步骤见
+> [../deploy/README.md](../deploy/README.md)。
 
 绑定关系写在 `backend/scripts/env_guard.py` 的 `MODE_DATABASES` 中，启动前会用实际连接核对：
 

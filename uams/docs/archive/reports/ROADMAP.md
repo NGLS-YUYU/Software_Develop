@@ -1,6 +1,6 @@
 # 版本规划
 
-> 依据当前项目实际状态与 [V0.2_AUDIT.md](archive/V0.2_AUDIT.md) 整理（TASK-DOC-001，2026-09-17）。
+> 依据当前项目实际状态与 [V0.2_AUDIT.md](../audits/V0.2_AUDIT.md) 整理（TASK-DOC-001，2026-09-17）。
 > 本文档只记录**已确定**的规划；未确定的功能不在此列出。
 
 ---
@@ -89,7 +89,7 @@
 - 测试覆盖率提升至核心业务全覆盖
 - 前端交互完善与体验优化
 - 性能优化（列表查询、N+1 治理）
-- 部署方案落地（见 [DEPLOYMENT.md](DEPLOYMENT.md)）
+- 部署方案落地（见 [DEPLOYMENT.md](../../DEPLOYMENT.md)）
 
 ---
 
@@ -119,7 +119,7 @@ PRD §17 原规划的版本命名与当前实际版本号不同，对应关系�
 
 ## 相关文档
 
-- [V0.2_AUDIT.md](archive/V0.2_AUDIT.md) — 审计详情
-- [PRD.md](PRD.md) — 产品需求
-- [TESTING.md](TESTING.md) — 测试现状
+- [V0.2_AUDIT.md](../audits/V0.2_AUDIT.md) — 审计详情
+- [PRD.md](../../PRD.md) — 产品需求
+- [TESTING.md](../../TESTING.md) — 测试现状
 - [DOCUMENTATION_UPDATE_REPORT.md](DOCUMENTATION_UPDATE_REPORT.md) — 文档整理报告

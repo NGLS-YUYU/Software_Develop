@@ -27,8 +27,8 @@ cd uams
 
 详见 [docs/UAMS_启动与环境切换说明.md](docs/UAMS_启动与环境切换说明.md)。
 
-> 当前服务器（2026-10-29）Nginx 已安装，但 UAMS 站点/systemd 服务尚未安装（需要 sudo），
-> 正式模式会拒绝启动；临时演示可使用 `./start.sh start`（Vite + uvicorn + `uams`）。
+> 当前服务器（2026-10-29）正式环境已部署：Nginx 80 + `uams-backend.service` + 正式库 `uams`；
+> 5173 已停止。`./start.sh status` 可查看实际状态。
 
 ## 技术栈
 
@@ -68,6 +68,9 @@ uams/
 ## 文档
 
 - [文档入口](docs/README.md)
+- [产品需求文档（Markdown）](docs/PRD.md) ｜ [Word 版](docs/PRD.docx)
+- [系统白皮书](docs/UAMS_系统白皮书.md)
+- [系统技术文档](docs/UAMS_系统技术文档.md)
 - [启动说明](docs/STARTUP.md)
 - [部署说明](docs/DEPLOYMENT.md)
 - [开发规范](docs/DEVELOPMENT.md)

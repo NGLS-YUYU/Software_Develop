@@ -1,4 +1,3 @@
-/*
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
@@ -7,11 +6,7 @@ import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 import { defineConfig } from 'vite'
 
-/** 开发期与预览期都走同源代理，避免跨域；生产由 Nginx 等反向代理承担。
- *
- * 代理是「服务端 → 服务端」的转发，因此局域网用户用 `http://<服务器IP>:<前端端口>`
- * 访问时，浏览器只会请求同源的 `/api/*`，不会出现把 127.0.0.1 指向用户自己电脑的问题
- * （FIX-007 §十七）。 
+/** 开发期与预览期都走同源代理；正式环境由 Nginx 提供静态文件并代理 /api。 */
 const apiProxy = {
   '/api': {
     target: process.env.UAMS_BACKEND_URL || 'http://127.0.0.1:8000',
@@ -19,61 +14,13 @@ const apiProxy = {
   },
 }
 
-export default defineConfig({
-  plugins: [
-    vue(),
-    // 按需自动导入，避免全量引入 Element Plus 拖慢首屏
-    AutoImport({ resolvers: [ElementPlusResolver()] }),
-    Components({ resolvers: [ElementPlusResolver()] }),
-  ],
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-    },
-  },
-  server: {
-    host: '0.0.0.0',
-    port: 5173,
-    proxy: apiProxy,
-  },
-  preview: {
-    // 生产构建后的静态服务（`npm run build && npm run preview`），同样支持 LAN 访问
-    host: '0.0.0.0',
-    port: 4173,
-    proxy: apiProxy,
-  },
-})
-*/
-
-
-import { fileURLToPath, URL } from 'node:url'
-
-import vue from '@vitejs/plugin-vue'
-import AutoImport from 'unplugin-auto-import/vite'
-import Components from 'unplugin-vue-components/vite'
-import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
-import { defineConfig } from 'vite'
-
-/** 开发期与预览期都走同源代理，避免跨域；生产由 Nginx 等反向代理承担。 */
-const apiProxy = {
-  '/api': {
-    target: process.env.UAMS_BACKEND_URL || 'http://127.0.0.1:8000',
-    changeOrigin: true,
-  },
-}
-
-// 仅允许指定的 Cloudflare Tunnel 域名
-//const allowedHosts = [
-//  'elatives-active-janet-concord.trycloudflare.com',
-//]
-const allowedHosts = [
-  '.trycloudflare.com',
-]
-
+// 仅允许指定的 Cloudflare Tunnel 域名（开发临时隧道）
+const allowedHosts = ['.trycloudflare.com']
 
 export default defineConfig({
   plugins: [
     vue(),
+    // 按需自动导入 Element Plus，避免全量引入
     AutoImport({ resolvers: [ElementPlusResolver()] }),
     Components({ resolvers: [ElementPlusResolver()] }),
   ],
@@ -97,4 +44,9 @@ export default defineConfig({
     allowedHosts,
     proxy: apiProxy,
   },
+
+  // 说明：页面已按路由动态加载。曾尝试用 Rolldown codeSplitting 把
+  // Element Plus 拆成多个 vendor chunk，但触发 vendor 初始化顺序的运行时错误
+  // （TypeError），因此不启用自定义拆包；构建体积警告作为已知限制记录，
+  // 不通过提高警告阈值或强行拆包来掩盖。
 })

@@ -11,6 +11,10 @@ WEB_ROOT="${UAMS_WEB_ROOT:-/var/www/uams}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 RELEASE="$WEB_ROOT/releases/$STAMP"
 KEEP_RELEASES="${UAMS_KEEP_RELEASES:-3}"
+# 本机健康检查默认走 127.0.0.1；所有 curl 必须绕过 HTTP(S)_PROXY，
+# 否则代理环境会把本机请求转发到代理，造成“站点正常但检查失败”的误判。
+HEALTH_URL="${UAMS_HEALTH_URL:-http://127.0.0.1/}"
+API_URL="${UAMS_API_URL:-${HEALTH_URL%/}/api/v1/terms/active}"
 
 log()  { printf '\033[1;34m[deploy]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[deploy]\033[0m %s\n' "$*"; }
@@ -75,13 +79,41 @@ switch_current() {
   "${SUDO[@]}" mv -Tf "$tmp" "$WEB_ROOT/current"
 }
 
+verify_home() {
+  # 首屏可能因 reload 时序尚未就绪，重试最多 5 秒；必须绕过代理。
+  local tmp code i
+  tmp="$(mktemp)"
+  for i in $(seq 1 20); do
+    code="$(curl --noproxy '*' -sS -o "$tmp" -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || echo 000)"
+    if [[ "$code" == "200" ]] \
+      && grep -q '<div id="app"></div>' "$tmp" \
+      && grep -q '/assets/' "$tmp"; then
+      rm -f "$tmp"
+      return 0
+    fi
+    sleep 0.25
+  done
+  rm -f "$tmp"
+  return 1
+}
+
+verify_api_proxy() {
+  local code
+  code="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' "$API_URL" 2>/dev/null || echo 000)"
+  case "$code" in
+    200|401|403) return 0 ;;
+    *) warn "API 代理检查返回 HTTP $code（$API_URL）；后端/Nginx 请人工检查" ; return 1 ;;
+  esac
+}
+
 rollback() {
   if [[ -n "$PREV" && -d "$PREV" ]]; then
     switch_current "$PREV" || true
     warn "已回滚 current -> $PREV"
   else
-    "${SUDO[@]}" rm -f "$WEB_ROOT/current" || true
-    warn "无上一有效版本，已移除 current（不影响旧启动器服务）"
+    # 首次发布没有上一版本：不能删除刚发布的有效 current，
+    # 否则会把可用的静态站点直接变成 404。保留并提示人工处理。
+    warn "无上一有效版本，保留新 current 以避免站点不可用；请人工检查"
   fi
   if [[ "$NGINX_RUNNING" -eq 1 ]]; then
     "${SUDO[@]}" systemctl reload nginx 2>/dev/null || warn "回滚后 Nginx reload 失败，请手动检查"
@@ -97,10 +129,11 @@ if [[ "$NGINX_RUNNING" -eq 1 ]]; then
     die "Nginx reload 失败，已尝试回滚"
   fi
   if [[ "$UAMS_SITE_ENABLED" -eq 1 ]]; then
-    if ! curl -fsS "http://127.0.0.1/" 2>/dev/null | grep -q '<div id="app"></div>'; then
+    if ! verify_home; then
       rollback
-      die "Nginx 首页未返回 UAMS 前端（可能仍由默认站点响应），已尝试回滚"
+      die "Nginx 首页校验失败（HTTP/页面特征不符，已重试 5 秒），已尝试回滚"
     fi
+    verify_api_proxy || true
   fi
 fi
 
@@ -137,7 +170,7 @@ if [[ -n "$PREV" ]]; then
   log "上一版本：$PREV（同时记录在 $WEB_ROOT/previous）"
 fi
 if [[ "$NGINX_INSTALLED" -eq 1 && "$NGINX_RUNNING" -eq 1 ]]; then
-  log "访问：http://127.0.0.1/"
+  log "访问：$HEALTH_URL"
 else
-  warn "Nginx 尚未运行；安装/启动 Nginx 后访问 http://127.0.0.1/"
+  warn "Nginx 尚未运行；安装/启动 Nginx 后访问 $HEALTH_URL"
 fi

@@ -2,14 +2,15 @@
 
 本目录提供正式部署所需的配置和前端原子发布脚本。
 
-> **当前服务器状态（2026-10-29 复核）**：
-> - Nginx **1.28.3 已安装并运行**，80 端口由 Ubuntu 默认站点占用；
-> - 默认站点 `/etc/nginx/sites-enabled/default` 声明了 `listen 80 default_server`；
-> - UAMS 站点与 `uams-backend.service` 尚未安装；
-> - 当前执行环境仍无可用免密 sudo，系统级安装/切换**尚未执行**；
-> - 现有 Vite + uvicorn 服务仍在运行。
+> **当前服务器状态（2026-10-29）**：
+> - Nginx 1.28.3 运行中，UAMS 站点已启用，80 提供正式网站；
+> - Ubuntu 默认站点已备份并移出 `sites-enabled`；
+> - `uams-backend.service` 运行中，仅监听 `127.0.0.1:8000`；
+> - 前端 `/var/www/uams/current` 已发布；
+> - 5173 开发服务器已停止；
+> - 正式库 `uams`，Alembic head `e4f5a6b7c8d9`。
 >
-> 下面命令需在有 sudo 权限的终端执行。
+> 系统级变更仍需 sudo；日常检查：`./start.sh status`、`./start.sh --env production`。
 
 ## 1. 部署拓扑
 
@@ -112,13 +113,15 @@ bash deploy/deploy-frontend.sh
 脚本行为：
 
 1. 先 `npm run build`，成功后才创建 release；
-2. 复制到 `/var/www/uams/releases/<时间戳>`，权限 `a+rX`；
+2. 复制到 `/var/www/uams/releases/<时间戳>`，目录 755 / 文件 644；
 3. 若 Nginx 已安装，先 `nginx -t`；失败则不切换；
 4. 用临时软链 + `mv -T` 原子替换 `current`；
 5. 记录上一有效版本到 `/var/www/uams/previous`；
 6. Nginx 运行中则 `systemctl reload`；失败自动回滚 `current`；
-7. Nginx 未安装/未运行时仍发布静态文件，但明确警告，不假装已上线；
-8. 只清理 `releases/` 下符合时间戳、且不是 `current`/`previous` 的旧版本。
+7. `curl --noproxy '*'` 检查首页（HTTP 200 + UAMS 入口 + `/assets/`），重试约 5 秒，避免代理与 reload 时序误判；
+8. 首次发布失败时**保留新 current**（没有上一版本可回滚），仅退出非零并提示，避免误删有效站点；
+9. Nginx 未安装/未运行时仍发布静态文件，但明确警告，不假装已上线；
+10. 只清理 `releases/` 下符合时间戳、且不是 `current`/`previous` 的旧版本。
 
 首次部署时 Nginx 可能尚未启动：脚本会跳过 reload，完成静态文件发布并提示；随后启动 Nginx。
 
@@ -217,9 +220,18 @@ sudo ln -sfn /var/www/uams/releases/<上一个版本> /var/www/uams/current
 - 生产环境必须使用强数据库口令与随机 `JWT_SECRET`（`backend/.env`，不提交 Git）；
 - 当前为 HTTP，建议后续配置 HTTPS（HSTS、证书自动续期）。
 
-## 7. 当前待授权步骤
+## 7. 当前状态与后续发布
 
-本机 `sudo -n true` 失败（需要交互式 sudo）。Nginx 已安装并运行，但 UAMS 站点、systemd 服务与静态发布尚未安装：
+正式环境已部署。发布最新前端构建（例如 CSS/拆包修复后）仍需要 sudo 写入 `/var/www`：
+
+```bash
+cd /home/nglsyuyu/Software_Develop/Software_Develop/uams
+bash deploy/deploy-frontend.sh   # 构建 + 原子发布 + nginx -t/reload + 首页/API 校验
+```
+
+脚本会自动记录 `previous`，失败时回滚；首次发布失败保留 current，不删除有效站点。
+
+如需从零重装或迁移服务器，按以下步骤：
 
 ```bash
 cd /home/nglsyuyu/Software_Develop/Software_Develop/uams

@@ -1,7 +1,8 @@
 # 后端 API 文档
 
-> 依据当前 FastAPI 路由实际代码整理（TASK-DOC-001，2026-09-17；TASK-011 更新，2026-09-18）。
-> **88 个路径 / 131 个操作**，与代码一一对应，未列出的接口均不存在。
+> 依据当前 FastAPI 路由实际代码整理（V3.2，2026-10-29 复核）。
+> **119 个路径 / 169 个操作**（以 `/openapi.json` 为准）；未列出的接口不存在。
+> 正式环境经 Nginx 80 访问：`http://<服务器IP>/api/v1/...`；开发/测试直连 `http://127.0.0.1:8000/api/v1/...`。
 
 ---
 
@@ -544,14 +545,14 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 ---
 
-## 16. 未实现接口（V0.2 待开发）
+## 16. 原计划接口的当前状态
 
-| 接口 | 说明 |
+| 接口 | 当前状态 |
 |---|---|
-| Excel 导出 | 学生名单/成绩/课程/选课结果的批量导出（CLAUDE.md §22）—— **V0.2 planned**（导入已于 TASK-010 完成） |
-| 教学资料 | 教师上传课件与资料（PRD §9.7）—— **V0.2+ planned** |
-| 调停课申请 | 调课/停课/补课申请与审核（PRD §9.8）—— **V0.2+ planned** |
-| 学生端培养方案查询 | PRD §8.7 学生查看培养方案 —— **V0.2 planned** |
+| Excel 导出 | 已实现：学生/课程/已审核成绩/选课结果 |
+| 教学资料 | 已实现：上传/列表/下载/删除，按教学班鉴权 |
+| 调停课申请 | 已实现：申请/审批/驳回，批准后原子改排课 |
+| 学生端培养方案查询 | 已实现：学生查看本专业培养方案 |
 
 ---
 
@@ -582,7 +583,95 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 ---
 
-## 17. 相关文档
+## 18. V3.2 接口补充（按实际 OpenAPI）
+
+以下为 V3.1/V3.2 新增或增强的主要接口组，完整参数以 `/openapi.json` 为准。
+
+### 18.1 学期与教学班
+
+| 方法 | 路径 | 说明 | 权限/对象 |
+|---|---|---|---|
+| GET | `/terms/active` | 当前唯一 ACTIVE 学期 | `term:read` |
+| GET | `/teaching-classes/mine` | 教师本人授课课程 | 教师本人 |
+| GET/PUT/DELETE | `/teaching-classes/{id}` | 教学班详情/编辑/删除 | `teaching:read/write` + 对象 |
+| POST | `/teaching-classes/{id}/selection` | 开放/关闭选课（校验教师/排课） | `teaching:write` |
+| GET/POST | `/teaching-classes/{id}/students` | 名单查询/添加 | `selection:manage` |
+| DELETE | `/teaching-classes/{id}/students/{student_id}` | 移除学生（有成绩拒绝） | `selection:manage` |
+| POST | `/teaching-classes/{id}/assign-required?preview=` | 必修课预安排/只读预览 | `selection:manage` |
+| GET/POST | `/teaching-classes/{id}/schedules` | 排课查询/新增 | `teaching:*` |
+| PUT/DELETE | `/teaching-classes/{id}/schedules/{sid}` | 修改/删除排课（冲突检测） | `teaching:write` |
+
+### 18.2 选课
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/course-selections/window?semester=` | 学生选课/退课窗口状态与原因 |
+| GET | `/course-selections/available?semester=` | 可选课程（窗口/年级/ACTIVE 校验） |
+| GET | `/course-selections/mine?semester=` | 本人选课 |
+| POST | `/course-selections` | 选课 |
+| DELETE | `/course-selections/{id}` | 退课 |
+
+### 18.3 成绩
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/grades/my` | 学生成绩 + GPA + 班级/专业排名 |
+| GET | `/grades/approved` | 已审核成绩（教务） |
+| GET | `/grades/{id}/history` | 成绩变更历史 |
+| POST | `/grades/{id}/unapprove` | 撤销审核（APPROVED→REJECTED） |
+| POST | `/grades/{id}/correct` | 直接更正已审核成绩（写快照） |
+| POST | `/grades/approve` / `/grades/reject` | 批量审核/驳回 |
+| POST | `/grades/teaching-classes/{id}/init` | 生成成绩单（幂等） |
+| GET | `/grades/teaching-classes/{id}/students` | 名单 + 录入状态 |
+| GET | `/grades/teaching-classes/{id}/statistics` | 成绩分布 |
+
+### 18.4 考试
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET/POST | `/exams` | 考试列表/创建（冲突检测） |
+| PUT/DELETE | `/exams/{id}` | 修改/删除 |
+| POST | `/exams/{id}/rooms` | 添加考场 |
+| PUT/DELETE | `/exams/{id}/rooms/{rid}` | 修改/删除考场（容量/监考/已排座保护） |
+| POST | `/exams/{id}/assign` | 自动分配座位 |
+| POST | `/exams/{id}/publish` | 发布考试 |
+| GET | `/exams/mine` | 学生本人考试与座位 |
+
+### 18.5 评价、资料、调停课
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET/POST | `/evaluations/tasks` | 评价任务列表/创建 |
+| PUT | `/evaluations/tasks/{id}` | 修改评价任务（时间校验） |
+| POST | `/evaluations` | 学生提交评价（学期/选课/一次校验） |
+| GET | `/evaluations/statistics` | 评价统计 |
+| GET/POST | `/materials` | 资料列表/上传（≤10MB，类型白名单） |
+| GET | `/materials/my` | 我可查看的资料 |
+| GET | `/materials/{id}/download` | 鉴权下载 |
+| DELETE | `/materials/{id}` | 删除（教师本人/管理员） |
+| GET/POST | `/schedule-adjustments` | 调停课列表/提交 |
+| GET | `/schedule-adjustments/mine` | 我的申请 |
+| POST | `/schedule-adjustments/{id}/approve` / `reject` | 审批（行锁，原子改排课） |
+
+### 18.6 导入导出与审计
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/imports/templates/{students,teachers,courses,grades}` | 导入模板 |
+| POST | `/imports/{students,teachers,courses,grades}` | 批量导入 |
+| GET | `/exports/students|courses|grades|selections` | xlsx 导出 |
+| GET | `/audit-logs` | 操作日志（`audit:read`，可按 action/user/resource 过滤） |
+
+### 18.7 错误码补充
+
+| 错误码 | HTTP | 说明 |
+|---|---:|---|
+| `AUTH_ACCOUNT_LOCKED` | 423 | 含 `retry_after_seconds`、`locked_until` |
+| `AUTH_ACCOUNT_DISABLED` | 403 | 停用 |
+| `VALIDATION_ERROR` | 422 | `errors[]` |
+| `TEACHING_CLASS_*` / `CAPACITY_*` / `TEACHING_SCHEDULE_*` | 409 | 教学班/排课业务冲突 |
+
+## 19. 相关文档
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 分层与模块结构
 - [DATABASE.md](DATABASE.md) — 表结构与字段

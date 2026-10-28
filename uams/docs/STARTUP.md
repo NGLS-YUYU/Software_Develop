@@ -124,8 +124,8 @@ journalctl -u uams-backend -f
 
 安装与切换步骤见 [../deploy/README.md](../deploy/README.md)。
 
-> 当前服务器（2026-10-29）：Nginx 已安装并运行，但 80 由默认站点占用；UAMS 站点与 systemd 服务尚未安装，
-> 且没有免密 sudo，正式模式会拒绝启动并提示。现有服务仍以 `./start.sh start`（Vite + uvicorn）临时运行。
+> 当前服务器（2026-10-29）：正式环境已完成部署——Nginx 1.28.3（80）、`uams-backend.service`（127.0.0.1:8000）、
+> 前端 `/var/www/uams/current`、正式库 `uams`；5173 已停止。日常检查使用 `./start.sh status`。
 
 ---
 
