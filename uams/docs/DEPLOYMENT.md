@@ -3,12 +3,96 @@
 > 记录当前实际部署方式（TASK-DOC-001，2026-09-17；FIX-007 更新，2026-10-08：统一启动脚本与局域网访问；
 > **V3.0 更新，2026-10-09：补充 Windows 部署，并明确正式部署前的安全要求**）。
 >
+> **V3.2 起正式部署采用 Nginx + systemd + MySQL。**
+> 本文第 0 章为正式部署；第 1 章之后保留 Vite/uvicorn 的本地开发与测试方式。
+>
 > **Windows 与 Ubuntu 共用同一套业务配置**：数据库结构、环境变量名、API、前端构建、
 > 业务逻辑完全一致，**只有操作系统命令不同**。因此下面先讲共用部分，再分系统讲命令。
 
 ---
 
-## 1. 部署拓扑
+## 0. 正式部署（V3.2，Nginx + systemd）
+
+### 0.1 目标架构
+
+```text
+浏览器 → Nginx :80
+           ├─ /        → /var/www/uams/current（Vue 构建产物）
+           └─ /api/    → 127.0.0.1:8000（FastAPI，systemd）
+                              └→ MySQL 127.0.0.1:3306（uams）
+```
+
+- 正式环境不运行 Vite 5173；
+- FastAPI 只监听回环，由 Nginx 对外；
+- 教学资料走鉴权 API，不作为 Nginx 静态文件；
+- Nginx 不暴露源码、`.env`、Git、备份。
+
+### 0.2 配置与脚本
+
+| 文件 | 用途 |
+|---|---|
+| `deploy/nginx/uams.conf` | SPA 回退、`/api` 代理、缓存、敏感文件拒绝 |
+| `deploy/systemd/uams-backend.service` | FastAPI 长期运行，启动前校验 `uams` 与 head |
+| `deploy/deploy-frontend.sh` | 构建并原子发布到 `/var/www/uams/current` |
+| `deploy/README.md` | 安装、验收、日常管理、回滚 |
+
+### 0.3 安装顺序
+
+```bash
+# 1. 备份现有 Nginx/systemd 配置（若存在）
+# 2. 安装 Nginx + rsync（需要 sudo）
+sudo apt update && sudo apt install -y nginx rsync
+
+# 3. 安装站点配置（不要覆盖其他站点；默认站点先备份再停用）
+sudo cp deploy/nginx/uams.conf /etc/nginx/sites-available/uams
+sudo ln -sfn /etc/nginx/sites-available/uams /etc/nginx/sites-enabled/uams
+
+# 4. 构建并原子发布前端
+bash deploy/deploy-frontend.sh
+
+# 5. 停止旧开发模式后端，避免 8000 冲突
+./start.sh stop
+
+# 6. 安装并启动 systemd 后端
+sudo cp deploy/systemd/uams-backend.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now uams-backend.service
+sudo systemctl enable --now nginx
+
+# 7. 校验
+sudo nginx -t
+curl -s http://127.0.0.1:8000/health
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/api/v1/terms/active
+./start.sh --env production
+```
+
+> 当前执行环境没有可用的免密 sudo，且 Nginx 未安装；上述系统级步骤尚未执行。
+> 在此之前正式环境仍由现有 Vite + uvicorn 临时方式提供。
+
+### 0.4 日常管理
+
+```bash
+sudo systemctl status uams-backend nginx
+sudo systemctl restart uams-backend
+sudo systemctl reload nginx
+journalctl -u uams-backend -f
+sudo tail -f /var/log/nginx/access.log /var/log/nginx/error.log
+./start.sh status
+```
+
+### 0.5 回滚
+
+1. `sudo systemctl stop uams-backend && sudo systemctl disable uams-backend`
+2. 移除 `/etc/nginx/sites-enabled/uams`，恢复备份的 Nginx 配置，`sudo nginx -t && sudo systemctl reload nginx`
+3. 将 `/var/www/uams/current` 指回上一个 release
+4. 必要时 `./start.sh start` 恢复原开发/演示方式
+
+详见 [../deploy/README.md](../deploy/README.md) §5。
+
+---
+
+## 1. 本地开发拓扑（Vite）
 
 ```
 客户端（本机或局域网内其他电脑 / 手机）
@@ -87,7 +171,7 @@ python -c "import secrets;print(secrets.token_urlsafe(48))"
 
 ---
 
-## 4. Ubuntu 部署
+## 4. Ubuntu 本地开发部署（Vite）
 
 ### 4.1 环境要求与安装
 
@@ -144,11 +228,12 @@ cd ..
 ### 4.7 启动（推荐 `start.sh`）
 
 ```bash
-./start.sh            # 后端 + 前端（dev 模式）
-./start.sh prod       # 先构建前端，再用 vite preview 提供静态服务
-./start.sh status     # 健康检查
-./start.sh stop       # 停止
-./start.sh restart    # 重启
+./start.sh                    # 交互菜单（正式/测试/恢复）
+./start.sh --env testing      # 测试环境
+./start.sh start              # 本地开发/临时模式（Vite + uams）
+./start.sh --env production   # 正式环境（要求 Nginx + systemd 已安装）
+./start.sh status             # 模式、数据库、Nginx/systemd 状态
+./start.sh stop               # 停止 start.sh 启动的本地开发服务
 ```
 
 脚本会依次：检查 venv / node_modules → 检查 MySQL 连通 → 启动后端并轮询 `/health` →
@@ -173,9 +258,9 @@ cd frontend && npm run dev -- --host 0.0.0.0 --port 5173
 
 ```bash
 ip route get 1.1.1.1 | grep -oP 'src \K[0-9.]+'   # 查看服务器 IP
-sudo ufw allow 5173/tcp     # 前端（必需）
-sudo ufw allow 8000/tcp     # 后端（仅在需要直接访问接口文档时）
-# 3306 不要放行
+# 正式环境只需要 80（HTTPS 另加 443）
+sudo ufw allow 80/tcp
+# 本地开发临时方式才放行 5173；8000/3306 不对局域网开放
 ```
 
 ### 4.11 停止服务
@@ -188,9 +273,14 @@ sudo ufw allow 8000/tcp     # 后端（仅在需要直接访问接口文档时�
 ### 4.12 查看日志
 
 ```bash
+# 正式环境（Nginx + systemd）
+journalctl -u uams-backend -f
+sudo tail -f /var/log/nginx/access.log /var/log/nginx/error.log
+
+# 本地开发/测试
 tail -f logs/backend.log
 tail -f logs/frontend.log
-journalctl -u mysql -n 50          # MySQL 日志
+journalctl -u mysql -n 50
 ```
 
 ### 4.13 常见问题（Ubuntu）

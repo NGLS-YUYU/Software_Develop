@@ -1,6 +1,6 @@
 # 版本规划
 
-> 依据当前项目实际状态与 [V0.2_AUDIT.md](V0.2_AUDIT.md) 整理（TASK-DOC-001，2026-09-17）。
+> 依据当前项目实际状态与 [V0.2_AUDIT.md](archive/V0.2_AUDIT.md) 整理（TASK-DOC-001，2026-09-17）。
 > 本文档只记录**已确定**的规划；未确定的功能不在此列出。
 
 ---
@@ -67,7 +67,7 @@
 | 学生端培养方案查询 | PRD §8.7，教务端已实现方案管理，学生端页面未实现 |
 | 教学资料上传 | PRD §9.7，未实现 |
 | 时区约定文档化 | 业务用本地时间（DB `+08:00`），JWT 用 UTC —— 行为正确，建议在文档中明确 |
-| 前端模板残留清理 | `src/assets/` 中 `hero.png`、`vite.svg`、`vue.svg` 未被引用 |
+| 前端模板残留清理 | 已在 V3.2 删除 `hero.png`、`vite.svg`、`vue.svg`（确认 0 引用） |
 
 ### V0.2 建议执行顺序
 
@@ -119,7 +119,7 @@ PRD §17 原规划的版本命名与当前实际版本号不同，对应关系�
 
 ## 相关文档
 
-- [V0.2_AUDIT.md](V0.2_AUDIT.md) — 审计详情
+- [V0.2_AUDIT.md](archive/V0.2_AUDIT.md) — 审计详情
 - [PRD.md](PRD.md) — 产品需求
 - [TESTING.md](TESTING.md) — 测试现状
 - [DOCUMENTATION_UPDATE_REPORT.md](DOCUMENTATION_UPDATE_REPORT.md) — 文档整理报告

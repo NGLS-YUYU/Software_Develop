@@ -14,11 +14,11 @@
 
 | 编号 | 主题 | 报告 |
 |---|---|---|
-| FIX-005 | 批量导入闭环 + 成绩模板动态生成 + 成绩草稿删除 | [FIX-005-REPORT.md](fixes/FIX-005-REPORT.md) |
-| FIX-006 | 学期管理前端闭环 | [FIX-006-REPORT.md](fixes/FIX-006-REPORT.md) |
-| FIX-007 | 部署优化 + 排课前端联调收尾 | [FIX-007-REPORT.md](fixes/FIX-007-REPORT.md) |
-| FIX-008 | 成绩权重一致性治理 | [fixes/FIX-008.md](fixes/FIX-008.md) |
-| FIX-009 | 课程学时 / 理论实践学时 / 学分与成绩结构闭环 | [fixes/FIX-009.md](fixes/FIX-009.md) |
+| FIX-005 | 批量导入闭环 + 成绩模板动态生成 + 成绩草稿删除 | [FIX-005-REPORT.md](archive/fixes/FIX-005-REPORT.md) |
+| FIX-006 | 学期管理前端闭环 | [FIX-006-REPORT.md](archive/fixes/FIX-006-REPORT.md) |
+| FIX-007 | 部署优化 + 排课前端联调收尾 | [FIX-007-REPORT.md](archive/fixes/FIX-007-REPORT.md) |
+| FIX-008 | 成绩权重一致性治理 | [FIX-008.md](archive/fixes/FIX-008.md) |
+| FIX-009 | 课程学时 / 理论实践学时 / 学分与成绩结构闭环 | [FIX-009.md](archive/fixes/FIX-009.md) |
 | V2.1 发布审计 | 最终冻结审计（P0 = 0，P1 = 0，GO） | 见对话验收记录 |
 | V3.0 | UI/UX 与响应式产品化重构 | 见对话验收记录 |
 

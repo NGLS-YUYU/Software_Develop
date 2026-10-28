@@ -7,7 +7,12 @@
 
 ## 1. 总体架构
 
-前后端分离的单体 Web 应用。
+前后端分离的单体 Web 应用。V3.2 起提供两种运行形态：
+
+- **正式环境**：Nginx 提供 Vue 构建产物，`/api/` 反向代理到 systemd 管理的 FastAPI（127.0.0.1:8000）；
+- **开发/测试环境**：Vite 开发服务器（5173）通过 `/api` 代理到 uvicorn。
+
+下面的总体架构图描述应用内部结构，两种形态共用同一套 FastAPI 与数据库配置。
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -15,7 +20,7 @@
 │  Vue 3 + TypeScript + Element Plus          │
 │  Pinia（状态） + Vue Router（路由守卫）        │
 └──────────────────┬──────────────────────────┘
-                   │  Axios（/api/v1/*，开发期由 Vite 代理）
+                   │  Axios（同源 /api/v1/*；正式由 Nginx、开发由 Vite 代理）
                    ▼
 ┌─────────────────────────────────────────────┐
 │  FastAPI 应用（backend/app）                  │
@@ -41,6 +46,17 @@
 
 **分层约束**（CLAUDE.md §11）：`Router → Service → Repository/CRUD → SQLAlchemy → MySQL`。
 禁止把大量业务逻辑写在 Router 中。
+
+### 1.1 部署形态
+
+| 形态 | 前端 | 后端 | 入口 |
+|---|---|---|---|
+| 正式（V3.2） | Nginx `:80` + `/var/www/uams/current` | systemd `uams-backend.service`，`127.0.0.1:8000` | `http://<服务器IP>/` |
+| 开发/测试 | Vite `:5173`（热更新） | `start.sh` 子进程，uvicorn | `http://127.0.0.1:5173` |
+
+正式后端通过 `deploy/systemd/uams-backend.service` 的 `ExecStartPre` 调用
+`backend/scripts/env_guard.py check production`，确认实际数据库为 `uams` 且版本等于 Alembic head；
+版本不一致时拒绝启动，不自动迁移。
 
 ---
 

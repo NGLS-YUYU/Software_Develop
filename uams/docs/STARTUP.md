@@ -1,26 +1,40 @@
 # 项目启动说明
 
-> 一站式启动指南：从零初始化到日常启动（TASK-DOC-001，2026-09-18）。
-> 详细环境说明见 [DEVELOPMENT.md](DEVELOPMENT.md)，部署与安全基线见 [DEPLOYMENT.md](DEPLOYMENT.md)。
+> 从零初始化到日常启动。
+> **V3.2 起正式环境采用 Nginx + systemd；本地开发/测试仍可使用 Vite。**
+> 正式部署与回滚见 [DEPLOYMENT.md](DEPLOYMENT.md) 与 [../deploy/README.md](../deploy/README.md)。
 
 ---
 
 ## 1. 组件拓扑
 
+**正式环境**
+
 ```
-浏览器 http://localhost:5173（Vite 前端，含热更新）
-      ↓  /api/* 反向代理
-FastAPI http://127.0.0.1:8000（uvicorn）
-      ↓  PyMySQL
-MySQL 8.4  127.0.0.1:3306（本机原生安装，仅监听回环）
+浏览器 http://<服务器IP>/（80）
+      ↓
+Nginx ── 静态文件 → /var/www/uams/current（Vue 构建产物）
+      └─ /api/     → FastAPI 127.0.0.1:8000（systemd）
+                             ↓ PyMySQL
+                     MySQL 127.0.0.1:3306（uams）
 ```
 
-| 组件 | 地址 | 说明 |
+**本地开发/测试环境**
+
+```
+浏览器 http://localhost:5173（Vite）
+      ↓ /api 同源代理
+FastAPI 127.0.0.1:8000（uvicorn）
+      ↓
+MySQL 127.0.0.1:3306（uams / uams_test）
+```
+
+| 组件 | 正式环境 | 本地开发/测试 |
 |---|---|---|
-| 前端 | `http://localhost:5173` | Vite 开发服务器 |
-| 后端 | `http://127.0.0.1:8000` | uvicorn |
-| API 文档 | `http://127.0.0.1:8000/docs` | 仅 `DEBUG=true` 时开放 |
-| 健康检查 | `http://127.0.0.1:8000/health` | 返回数据库连通状态 |
+| 前端 | Nginx `:80`，静态构建 | Vite `:5173` |
+| 后端 | systemd，`127.0.0.1:8000` | `start.sh` 子进程，`0.0.0.0:8000` |
+| 健康检查 | `http://127.0.0.1:8000/health` | 同左 |
+| API 文档 | 仅 `DEBUG=true` | 同左 |
 
 ---
 
@@ -61,22 +75,57 @@ npm install
 
 ---
 
-## 4. 日常启动（三步）
+## 4. 日常启动
+
+### 4.1 统一入口（推荐）
 
 ```bash
-# ① 数据库（通常随系统启动，可跳过）
-systemctl start mysql
+cd uams
+./start.sh
+```
 
-# ② 后端 —— 终端 A
+菜单：
+
+1. **正式环境**：Nginx + systemd FastAPI + `uams`（要求 Nginx 与 `uams-backend.service` 已安装）
+2. **测试环境**：Vite + FastAPI + `uams_test`
+3. **恢复验证环境**：Vite + FastAPI + `uams_restore_20261027`（版本必须等于 head）
+
+非交互：
+
+```bash
+./start.sh --env production
+./start.sh --env testing
+./start.sh --env restore
+./start.sh status
+./start.sh stop
+```
+
+### 4.2 本地开发手动启动（可选）
+
+```bash
+# 后端
 cd uams/backend
 .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
-# ③ 前端 —— 终端 B
+# 前端（另一个终端）
 cd uams/frontend
 npm run dev
 ```
 
-启动完成后浏览器访问 **http://localhost:5173**（前端 `/api` 自动代理到后端 `8000`）。
+浏览器访问 `http://localhost:5173`。
+
+### 4.3 正式环境（Nginx + systemd）
+
+```bash
+./start.sh --env production   # 只做检查，不启动 Vite
+sudo systemctl status uams-backend nginx
+journalctl -u uams-backend -f
+```
+
+安装与切换步骤见 [../deploy/README.md](../deploy/README.md)。
+
+> 当前服务器（2026-10-29）：Nginx 未安装且没有免密 sudo，正式模式会拒绝启动并提示安装命令；
+> 现有服务仍以 `./start.sh start`（Vite + uvicorn）临时运行。
 
 ---
 
@@ -85,7 +134,7 @@ npm run dev
 ```bash
 # 后端连通性
 curl http://127.0.0.1:8000/health
-# 期望：{"status":"ok","app":"UAMS","env":"development","database":"up"}
+# 期望：{"status":"ok","app":"UAMS","env":"production|testing","database":"up"}
 ```
 
 | 角色 | 账号 | 密码 |

@@ -55,12 +55,12 @@ views（页面） → api/index.ts（接口封装） → api/request.ts（Axios�
 4. Element Plus 组件与 API 已配置**按需自动导入**，无需手动 import
 5. 列表页复用 `useCrudTable` 组合式函数，避免重复样板
 6. 类型检查请用 `node_modules/.bin/vue-tsc --noEmit`，**不要用 `npx vue-tsc`**（npx 缓存版本与本地 TypeScript 6.0 不兼容）
-7. `src/assets/` 中的 `hero.png`、`vite.svg`、`vue.svg` 为 Vite 模板残留，未被引用
+7. `src/assets/` 仅保留 `main.css`；未引用的 Vite 模板图片已在 V3.2 清理
 
 ## 当前状态
 
 - **已实现**：登录、三端全部页面、路由守卫、角色动态菜单、周课表网格、成绩录入、选课、考试、评价、公告、统计
-- **V0.2 待完善**：学生端培养方案页面、Excel 导入导出界面、调停课申请页面
+- **V3.1 已补齐**：培养方案、教学资料、调停课、评价管理、导出等页面
 
 ## 相关文档
 

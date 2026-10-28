@@ -76,8 +76,13 @@ cp .env.example .env
 .venv/bin/python -m scripts.seed_rbac    # 角色、权限、admin 账号（幂等）
 .venv/bin/python -m scripts.seed_demo    # 演示数据（幂等）
 
-# 启动
-.venv/bin/uvicorn app.main:app --port 8000 --reload
+# 启动（推荐统一入口，自动做数据库身份与版本检查）
+cd ../..
+./start.sh --env testing      # 测试库 uams_test + Vite
+./start.sh start              # 本地开发/临时模式（uams + Vite）
+
+# 或手动启动后端
+cd backend && .venv/bin/uvicorn app.main:app --port 8000 --reload
 ```
 
 ### 2.3 前端
@@ -86,6 +91,7 @@ cp .env.example .env
 cd uams/frontend
 npm install
 npm run dev     # http://localhost:5173，/api 自动代理到 127.0.0.1:8000
+npm run build   # 生产构建，产物 frontend/dist（正式部署由 Nginx 提供）
 ```
 
 ---

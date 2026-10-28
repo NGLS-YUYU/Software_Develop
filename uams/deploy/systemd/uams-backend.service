@@ -1,0 +1,39 @@
+[Unit]
+Description=UAMS FastAPI backend (127.0.0.1:8000)
+Documentation=file:///home/nglsyuyu/Software_Develop/Software_Develop/uams/docs/DEPLOYMENT.md
+After=network-online.target mysql.service
+Wants=network-online.target
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=nglsyuyu
+Group=nglsyuyu
+WorkingDirectory=/home/nglsyuyu/Software_Develop/Software_Develop/uams/backend
+Environment=PYTHONUNBUFFERED=1
+Environment=APP_ENV=production
+
+# 启动前校验：实际数据库必须是 uams，且 alembic_version = head。
+# 版本不一致时服务不会启动，也不会自动执行迁移。
+ExecStartPre=/home/nglsyuyu/Software_Develop/Software_Develop/uams/backend/.venv/bin/python scripts/env_guard.py check production
+
+# exec 子命令再次校验后，把 DATABASE_URL/APP_ENV 放入子进程环境。
+# uvicorn 只监听回环地址，由 Nginx 对外提供 /api。
+ExecStart=/home/nglsyuyu/Software_Develop/Software_Develop/uams/backend/.venv/bin/python scripts/env_guard.py exec production -- \
+    .venv/bin/python -m uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1
+
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

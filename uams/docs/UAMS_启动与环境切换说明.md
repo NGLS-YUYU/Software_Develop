@@ -22,13 +22,13 @@ cd /home/nglsyuyu/Software_Develop/Software_Develop/uams
 请选择运行环境：
 
   [1] 正式环境（Production）
-      数据库：uams
+      Nginx + FastAPI + uams
 
   [2] 测试环境（Testing）
-      数据库：uams_test
+      Vite + FastAPI + uams_test
 
   [3] 恢复验证环境（Restore）
-      数据库：uams_restore_20261027
+      Vite + FastAPI + uams_restore_20261027
 
   [0] 退出
 
@@ -52,11 +52,17 @@ cd /home/nglsyuyu/Software_Develop/Software_Develop/uams
 
 ## 2. 运行环境与数据库绑定
 
-| 选项 | 运行模式 | 数据库 | `APP_ENV` |
-|---|---|---|---|
-| 1 | production | `uams` | `production` |
-| 2 | testing | `uams_test` | `testing` |
-| 3 | restore | `uams_restore_20261027` | `restore` |
+| 选项 | 运行模式 | 数据库 | 启动方式 | `APP_ENV` |
+|---|---|---|---|---|
+| 1 | production | `uams` | Nginx + systemd | `production` |
+| 2 | testing | `uams_test` | Vite + uvicorn | `testing` |
+| 3 | restore | `uams_restore_20261027` | Vite + uvicorn | `restore` |
+
+正式环境要求本机已安装 Nginx 与 `uams-backend.service`；未安装时启动器会拒绝启动并提示安装命令。
+本地开发/临时演示可用 `./start.sh start`（Vite + uvicorn + `uams`）。
+
+> 当前服务器（2026-10-29）尚未安装 Nginx/systemd 服务，正式模式会拒绝启动；安装需 sudo，步骤见
+> [../deploy/README.md](../deploy/README.md)。
 
 绑定关系写在 `backend/scripts/env_guard.py` 的 `MODE_DATABASES` 中，启动前会用实际连接核对：
 
@@ -70,12 +76,12 @@ cd /home/nglsyuyu/Software_Develop/Software_Develop/uams
 ## 3. 非交互启动
 
 ```bash
-./start.sh --env production
-./start.sh --env testing
-./start.sh --env restore
+./start.sh --env production   # 正式环境（Nginx + systemd，不做 Vite 启动）
+./start.sh --env testing      # 测试环境（Vite，前台）
+./start.sh --env restore      # 恢复环境（Vite，前台）
 ```
 
-非交互模式执行与菜单模式相同的安全检查，并且在前台运行：
+`testing` / `restore` 执行与菜单模式相同的安全检查，并在前台运行：
 
 - `Ctrl+C` 停止本次启动的后端和前端；
 - 任一端异常退出时，启动器会停止另一端，避免残留进程。
@@ -86,20 +92,18 @@ cd /home/nglsyuyu/Software_Develop/Software_Develop/uams
 
 ## 4. 兼容原有命令
 
-原有命令仍可使用（后台运行，不占用终端）：
-
 ```bash
-./start.sh start            # 后台启动正式环境（dev 前端）
-./start.sh start prod       # 后台启动正式环境（构建 + vite preview）
-./start.sh prod             # 同上
-./start.sh restart          # 重启正式环境
-./start.sh restart prod     # 以生产前端重启
-./start.sh stop             # 停止本脚本记录的 UAMS 进程
-./start.sh status           # 查看运行环境、实际数据库、版本与健康状态
+./start.sh start            # 本地开发/临时模式：Vite + uvicorn + uams（后台）
+./start.sh start prod       # 正式环境（Nginx + systemd 检查）
+./start.sh prod             # 正式环境（Nginx + systemd 检查）
+./start.sh restart          # 重启本地开发/临时服务；systemd 服务请用 sudo systemctl restart
+./start.sh stop             # 停止本脚本启动的本地开发服务
+./start.sh status           # 查看模式、实际数据库、版本、Nginx/systemd 状态
 ./start.sh --help           # 帮助
 ```
 
-> 注意：无参数运行 `./start.sh` 现在进入交互菜单；后台启动请用 `./start.sh start`。
+> 无参数运行 `./start.sh` 进入交互菜单；正式环境不再由 Vite 5173 提供。
+> 正式部署安装、切换与回滚见 [../deploy/README.md](../deploy/README.md)。
 
 ---
 
@@ -134,9 +138,10 @@ cd backend
 ## 6. 停止服务
 
 | 启动方式 | 停止方式 |
-|---|---|
-| `./start.sh` / `--env ...`（前台） | `Ctrl+C` |
-| `./start.sh start` / `prod`（后台） | `./start.sh stop` |
+|---|---|---|
+| 正式环境（Nginx + systemd） | `sudo systemctl stop uams-backend`；Nginx 视是否需要保留其他站点 |
+| `./start.sh` / `--env testing|restore`（前台） | `Ctrl+C` |
+| `./start.sh start`（后台本地开发） | `./start.sh stop` |
 
 `stop` 只停止：
 
@@ -156,16 +161,19 @@ cd backend
 | 数据库版本不匹配 | 目标库未升级到项目 head | **先单独申请并执行迁移**，启动器不会自动迁移 |
 | 数据库身份不符 | 环境映射与实际连接库不一致 | 检查 `.env` 与模式；禁止绕过 |
 | 检测到 UAMS 已在运行 | `.run/*.pid` 指向存活进程 | 先 `./start.sh stop` |
-| 端口 8000 / 5173 已被占用 | 其他程序占用 | 停止占用程序，或使用 `UAMS_BACKEND_PORT` / `UAMS_FRONTEND_PORT` 覆盖 |
+| 端口 8000 / 5173 已被占用 | 其他程序占用 | 正式环境检查 80/8000；开发/测试检查 8000/5173；停止占用程序或使用 `UAMS_*_PORT` 覆盖 |
+| 正式环境提示 Nginx 未安装 | 系统级依赖缺失 | 按 deploy/README.md 使用 sudo 安装 |
+| 正式环境提示 systemd 服务未安装 | 未部署 `uams-backend.service` | 按 deploy/README.md 安装并 `daemon-reload` |
 | 无效选项 / 无效的 --env 参数 | 输入不在允许范围 | 重新运行并选择 1/2/3 或使用允许的模式名 |
 
 日志：
 
-- **前台模式**（`./start.sh`、`./start.sh --env ...`）：终端实时显示后端/前端输出，并带前缀：
+- **正式环境**：`journalctl -u uams-backend -f`；Nginx 日志在 `/var/log/nginx/`。
+- **前台模式**（`./start.sh --env testing|restore`）：终端实时显示后端/前端输出，并带前缀：
   - `[Backend]`：Uvicorn 启动、HTTP 请求、FastAPI 异常、SQLAlchemy 错误；
   - `[Frontend]`：Vite 启动、编译错误、代理输出。
   同一份内容同时追加到日志文件，便于事后排查。
-- **后台模式**（`./start.sh start/prod`）：终端不输出，日志写入文件：
+- **后台模式**（`./start.sh start`）：终端不输出，日志写入文件：
   - `uams/logs/backend.log`
   - `uams/logs/frontend.log`
   - `uams/logs/frontend-build.log`（生产前端构建）
@@ -202,7 +210,7 @@ cd backend
 | `UAMS_BACKEND_HOST` | `0.0.0.0` | 后端监听地址 |
 | `UAMS_BACKEND_PORT` | `8000` | 后端端口 |
 | `UAMS_FRONTEND_HOST` | `0.0.0.0` | 前端监听地址 |
-| `UAMS_FRONTEND_PORT` | `5173`（prod 4173） | 前端端口 |
+| `UAMS_FRONTEND_PORT` | `5173` | 仅开发/测试 Vite 端口 |
 | `UAMS_BACKEND_URL` | `http://127.0.0.1:8000` | Vite `/api` 代理目标 |
 | `UAMS_ENV_FILE` | `backend/.env` | 仅供测试/排障指定配置文件，不改变数据库密码 |
 

@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # UAMS 统一启动与环境管理器
 #
-#   ./start.sh                         交互式选择运行环境并前台启动（Ctrl+C 停止）
-#   ./start.sh --env production        非交互启动正式环境（uams）
-#   ./start.sh --env testing           非交互启动测试环境（uams_test）
-#   ./start.sh --env restore           非交互启动恢复环境（uams_restore_20261027）
+#   ./start.sh                         交互式选择运行环境
+#   ./start.sh --env production        正式环境（Nginx + systemd + uams，需已安装）
+#   ./start.sh --env testing           测试环境（Vite + uams_test）
+#   ./start.sh --env restore           恢复环境（Vite + uams_restore_20261027）
 #
-# 兼容原有命令：
-#   ./start.sh start [prod]            后台启动正式环境（dev / prod 前端）
-#   ./start.sh prod                    后台启动正式环境（构建 + vite preview）
-#   ./start.sh stop                    停止本脚本记录的前后端进程
-#   ./start.sh restart [prod]          重启正式环境
-#   ./start.sh status                  查看运行状态与当前数据库
+# 兼容/辅助命令：
+#   ./start.sh start                   本地开发/临时模式（Vite + uvicorn + uams）
+#   ./start.sh start prod              正式环境（同 --env production）
+#   ./start.sh prod                    正式环境（同 --env production）
+#   ./start.sh stop                    停止本脚本启动的本地开发服务
+#   ./start.sh restart                 重启本地开发/临时服务
+#   ./start.sh status                  查看模式、实际数据库与 Nginx/systemd 状态
 #
 # 安全约定：
 # - 不修改 backend/.env，不把数据库密码写入脚本或输出到终端；
@@ -138,19 +139,19 @@ cleanup_readers() {
 show_menu() {
   cat <<EOF
 ============================================
-        UAMS V3.1 启动管理器
+        UAMS V3.2 启动管理器
 ============================================
 
 请选择运行环境：
 
   [1] 正式环境（Production）
-      数据库：uams
+      Nginx + FastAPI + uams
 
   [2] 测试环境（Testing）
-      数据库：uams_test
+      Vite + FastAPI + uams_test
 
   [3] 恢复验证环境（Restore）
-      数据库：uams_restore_20261027
+      Vite + FastAPI + uams_restore_20261027
 
   [0] 退出
 
@@ -164,31 +165,33 @@ interactive_menu() {
   local choice
   read -r choice || true
   case "$choice" in
-    1) MODE=production ;;
-    2) MODE=testing ;;
-    3) MODE=restore ;;
+    1) start_production ;;
+    2) MODE=testing; FOREGROUND=1; start_flow ;;
+    3) MODE=restore; FOREGROUND=1; start_flow ;;
     0) log "已退出。"; exit 0 ;;
     *) err "无效选项：${choice:-<空>}，拒绝启动。"; exit 1 ;;
   esac
-  FOREGROUND=1
-  start_flow
 }
 
 # ---------------------------------------------------------------- 环境检查
-check_env() {
-  log "检查运行环境..."
+check_backend_env() {
+  log "检查后端运行环境..."
   [[ -x "$PY" ]] || die "未找到后端虚拟环境：$BACKEND_DIR/.venv"
   log "  后端 venv         OK"
   [[ -f "$GUARD" ]] || die "缺少环境守卫脚本：$GUARD"
   (cd "$BACKEND_DIR" && "$PY" -c "import fastapi, sqlalchemy, pymysql, alembic" >/dev/null 2>&1) \
     || die "后端依赖不完整，请执行：cd backend && .venv/bin/pip install -r requirements.txt"
   log "  后端依赖          OK"
-  command -v node >/dev/null 2>&1 || die "未找到 node，请先安装 Node.js"
-  [[ -f "$VITE_BIN" ]] || die "未找到前端依赖：$VITE_BIN，请先执行 cd frontend && npm install"
-  log "  前端 node_modules OK"
   local env_file="${UAMS_ENV_FILE:-$BACKEND_DIR/.env}"
   [[ -f "$env_file" ]] || die "未找到数据库配置文件：$env_file（不会回退到任何内置默认连接）"
   log "  配置文件          $env_file"
+}
+
+check_env() {
+  check_backend_env
+  command -v node >/dev/null 2>&1 || die "未找到 node，请先安装 Node.js"
+  [[ -f "$VITE_BIN" ]] || die "未找到前端依赖：$VITE_BIN，请先执行 cd frontend && npm install"
+  log "  前端 node_modules OK"
 }
 
 run_guard_check() {
@@ -476,6 +479,9 @@ print_success() {
   fi
   echo
   echo "运行环境：$(mode_label "$MODE")"
+  if [[ "$MODE" == "production" ]]; then
+    echo "启动方式：本地开发/临时演示（Vite + uvicorn，非 Nginx 正式部署）"
+  fi
   echo "数据库：${DB_ACTUAL}"
   echo "数据库版本：已与 Alembic head 一致（${DB_HEAD}）"
   echo
@@ -495,6 +501,65 @@ print_success() {
   else
     echo "停止服务：./start.sh stop"
   fi
+  echo "============================================"
+}
+
+# ---------------------------------------------------------------- 正式部署模式
+nginx_installed() { command -v nginx >/dev/null 2>&1; }
+systemd_unit_installed() { systemctl cat uams-backend.service >/dev/null 2>&1; }
+
+check_production() {
+  MODE=production
+  check_backend_env
+  check_not_running
+  run_guard_check
+
+  nginx_installed || die "Nginx 未安装。正式部署需要 sudo 安装，命令见 deploy/README.md（本脚本不会自动提权）。"
+  systemd_unit_installed || die "systemd 服务 uams-backend.service 未安装。请按 deploy/README.md 安装后重试。"
+  [[ -f /var/www/uams/current/index.html ]] \
+    || die "前端构建未部署到 /var/www/uams/current。请运行 deploy/deploy-frontend.sh（需要 sudo 写入）。"
+
+  if ! systemctl is-active --quiet uams-backend.service; then
+    err "后端 systemd 服务未运行。请执行：sudo systemctl start uams-backend.service"
+    exit 1
+  fi
+  if ! systemctl is-active --quiet nginx; then
+    err "Nginx 未运行。请执行：sudo systemctl start nginx"
+    exit 1
+  fi
+}
+
+start_production() {
+  check_production
+  if ! curl -fsS "http://127.0.0.1:$BACKEND_PORT/health" 2>/dev/null | grep -q '"database":"up"'; then
+    err "后端健康检查失败（127.0.0.1:$BACKEND_PORT/health）。请查看：journalctl -u uams-backend -n 100"
+    exit 1
+  fi
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1/api/v1/terms/active" 2>/dev/null || echo 000)"
+  case "$code" in
+    200|401|403) ;;
+    *) err "Nginx /api 代理检查失败（HTTP $code）。请检查 deploy/nginx/uams.conf 与 nginx -t。"; exit 1 ;;
+  esac
+  local front_code
+  front_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1/" 2>/dev/null || echo 000)"
+  [[ "$front_code" == "200" ]] || { err "Nginx 静态首页返回 HTTP $front_code。"; exit 1; }
+
+  local ip; ip="$(lan_ip || true)"
+  echo
+  echo "============================================"
+  echo "UAMS 正式环境已就绪"
+  echo
+  echo "运行方式：Nginx + systemd FastAPI"
+  echo "数据库：${DB_ACTUAL}"
+  echo "数据库版本：${DB_CURRENT}（head 一致）"
+  echo
+  echo "本机访问：http://127.0.0.1/"
+  [[ -n "${ip:-}" ]] && echo "局域网访问：http://$ip/"
+  echo
+  echo "后端服务：http://127.0.0.1:$BACKEND_PORT（仅回环）"
+  echo "状态：sudo systemctl status uams-backend nginx"
+  echo "日志：journalctl -u uams-backend -f"
   echo "============================================"
 }
 
@@ -557,10 +622,29 @@ health() {
 }
 
 show_status() {
+  if systemd_unit_installed; then
+    MODE=production
+    log "后端模式：systemd（uams-backend.service）"
+    systemctl is-active uams-backend.service 2>/dev/null | sed 's/^/  后端状态：/'
+    systemctl is-active nginx 2>/dev/null | sed 's/^/  Nginx 状态：/'
+    set +e
+    local out; out="$(cd "$BACKEND_DIR" && "$PY" scripts/env_guard.py check production 2>&1)"
+    local rc=$?
+    set -e
+    printf '%s\n' "$out"
+    [[ $rc -eq 0 ]] || warn "  环境守卫检查未通过（rc=$rc）"
+    log "健康检查"
+    curl -fsS "http://127.0.0.1:$BACKEND_PORT/health" 2>/dev/null && echo || warn "  后端未响应"
+    curl -fsS -o /dev/null -w "  Nginx 首页 HTTP %{http_code}\n" "http://127.0.0.1/" 2>/dev/null \
+      || warn "  Nginx 未响应"
+    return 0
+  fi
+
   local mode=""
   [[ -f "$RUN_DIR/environment" ]] && mode="$(cat "$RUN_DIR/environment" 2>/dev/null || true)"
   if valid_mode "$mode"; then
     MODE="$mode"
+    log "当前为本地开发/临时模式（未安装 systemd 正式服务）"
     log "记录运行环境：$(mode_label "$MODE")（$(mode_db "$MODE")）"
     set +e
     local out; out="$(cd "$BACKEND_DIR" && "$PY" scripts/env_guard.py check "$MODE" 2>&1)"
@@ -578,15 +662,16 @@ show_status() {
 usage() {
   cat <<EOF
 用法：
-  ./start.sh                         交互式选择运行环境（前台，Ctrl+C 停止）
-  ./start.sh --env production        正式环境 uams
-  ./start.sh --env testing           测试环境 uams_test
-  ./start.sh --env restore           恢复环境 uams_restore_20261027
-  ./start.sh start [prod]            后台启动正式环境（兼容旧用法）
-  ./start.sh prod                    后台启动正式环境（生产前端）
-  ./start.sh stop                    停止本脚本启动的服务
-  ./start.sh restart [prod]          重启正式环境
-  ./start.sh status                  查看状态、实际数据库与版本
+  ./start.sh                         交互式选择运行环境
+  ./start.sh --env production        正式环境（Nginx + systemd + uams）
+  ./start.sh --env testing           测试环境（Vite + uams_test）
+  ./start.sh --env restore           恢复环境（Vite + uams_restore_20261027）
+  ./start.sh start                   本地开发/临时模式（Vite + uams）
+  ./start.sh start prod              正式环境（与 --env production 相同）
+  ./start.sh prod                    正式环境（与 --env production 相同）
+  ./start.sh stop                    停止本脚本启动的本地开发服务
+  ./start.sh restart                 重启本地开发服务
+  ./start.sh status                  查看模式、实际数据库、Nginx/systemd 状态
 EOF
 }
 
@@ -598,29 +683,39 @@ case "${1:-}" in
   --env)
     MODE="${2:-}"
     valid_mode "$MODE" || { err "无效的 --env 参数：${MODE:-<空>}"; usage; exit 1; }
-    FOREGROUND=1
-    start_flow
+    if [[ "$MODE" == "production" ]]; then
+      start_production
+    else
+      FOREGROUND=1
+      start_flow
+    fi
     ;;
   start)
-    MODE=production
-    [[ "${2:-}" == "prod" ]] && FRONTEND_MODE="prod"
-    FOREGROUND=0
-    start_flow
+    if [[ "${2:-}" == "prod" ]]; then
+      start_production
+    else
+      MODE=production
+      FOREGROUND=0
+      start_flow
+    fi
     ;;
   prod)
-    MODE=production
-    FRONTEND_MODE="prod"
-    FOREGROUND=0
-    start_flow
+    start_production
     ;;
   stop)
     stop_all
+    if systemd_unit_installed && systemctl is-active --quiet uams-backend.service; then
+      warn "systemd 后端仍在运行。如需停止：sudo systemctl stop uams-backend.service"
+    fi
     ;;
   restart)
+    if systemd_unit_installed && systemctl is-active --quiet uams-backend.service; then
+      err "后端由 systemd 管理，请执行：sudo systemctl restart uams-backend.service && sudo systemctl reload nginx"
+      exit 1
+    fi
     stop_all
     sleep 1
     MODE=production
-    [[ "${2:-}" == "prod" ]] && FRONTEND_MODE="prod"
     FOREGROUND=0
     start_flow
     ;;

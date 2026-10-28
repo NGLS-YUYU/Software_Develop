@@ -486,7 +486,7 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 |---|---|---|---|
 | GET | `/audit-logs` | 操作日志列表（`action`、`user_id`） | `audit:read` |
 
-> ⚠️ **当前仅提供查询，业务操作尚未自动写入日志**（V0.2 待实现，见 [V0.2_AUDIT.md](V0.2_AUDIT.md)）。
+> 说明：V3.1 F-09 起，已认证的写操作与登录成功/失败会写入操作日志；查询接口需要 `audit:read`。
 
 ---
 
