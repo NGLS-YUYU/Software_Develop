@@ -70,6 +70,17 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(username: string, password: string) {
     const res = await authApi.login(username, password)
+    // 后端返回 200 但没有有效凭证时，绝不能进入系统。
+    if (
+      !res?.access_token ||
+      !res?.user?.id ||
+      !res?.home_route ||
+      !Array.isArray(res.roles) ||
+      !Array.isArray(res.permissions)
+    ) {
+      clear()
+      throw new Error('INVALID_LOGIN_RESPONSE')
+    }
     token.value = res.access_token
     user.value = res.user
     roles.value = res.roles

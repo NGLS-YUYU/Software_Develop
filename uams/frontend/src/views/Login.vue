@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import { useAuthStore } from '@/stores/auth'
+import type { ApiError, LoginResponse } from '@/types'
 
 const router = useRouter()
 const route = useRoute()
@@ -11,21 +12,99 @@ const auth = useAuthStore()
 
 const form = ref({ username: '', password: '' })
 const loading = ref(false)
+const errorMessage = ref('')
+const passwordRef = ref<{ focus: () => void } | null>(null)
+
+type LoginErrorData = ApiError & {
+  retry_after_seconds?: number
+  locked_until?: string
+}
+
+function lockedMessage(seconds?: number): string {
+  if (typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0) {
+    if (seconds >= 60) {
+      return `账号已被暂时锁定，请 ${Math.ceil(seconds / 60)} 分钟后再试`
+    }
+    return `账号已被暂时锁定，请 ${Math.ceil(seconds)} 秒后再试`
+  }
+  return '账号已被暂时锁定，请稍后重试'
+}
+
+/** 把后端业务码/HTTP 状态转换为登录页提示；账号不存在与密码错误统一措辞。 */
+function loginErrorInfo(err: unknown): { message: string; clearPassword: boolean } {
+  if (err instanceof Error && err.message === 'INVALID_LOGIN_RESPONSE') {
+    return { message: '登录服务暂时不可用，请稍后重试', clearPassword: false }
+  }
+  const e = err as { response?: { status?: number; data?: unknown } }
+  if (!e.response) {
+    return { message: '无法连接服务器，请检查网络或联系管理员', clearPassword: false }
+  }
+  const status = e.response.status
+  const raw = e.response.data
+  const data = raw && typeof raw === 'object' ? (raw as LoginErrorData) : undefined
+
+  switch (data?.code) {
+    case 'AUTH_INVALID_CREDENTIALS':
+      return { message: '用户名或密码错误，请重新输入', clearPassword: true }
+    case 'AUTH_ACCOUNT_DISABLED':
+      return { message: '该账号已被停用，请联系管理员', clearPassword: false }
+    case 'AUTH_ACCOUNT_LOCKED':
+      return { message: lockedMessage(data.retry_after_seconds), clearPassword: false }
+    case 'VALIDATION_ERROR':
+      return { message: '请输入用户名和密码', clearPassword: false }
+  }
+
+  if (status === 401) {
+    return { message: '用户名或密码错误，请重新输入', clearPassword: true }
+  }
+  if (status === 403) {
+    return { message: '该账号已被停用，请联系管理员', clearPassword: false }
+  }
+  if (status === 423 || status === 429) {
+    return { message: lockedMessage(), clearPassword: false }
+  }
+  if (status && status >= 500) {
+    return { message: '登录服务暂时不可用，请稍后重试', clearPassword: false }
+  }
+  return { message: data?.message || '登录失败，请稍后重试', clearPassword: false }
+}
+
+function clearError() {
+  errorMessage.value = ''
+}
 
 async function submit() {
-  if (!form.value.username || !form.value.password) {
-    ElMessage.warning('请输入用户名和密码')
+  const username = form.value.username.trim()
+  const password = form.value.password
+  errorMessage.value = ''
+  if (!username || !password) {
+    errorMessage.value = '请输入用户名和密码'
     return
   }
+
   loading.value = true
+  let res: LoginResponse
   try {
-    const res = await auth.login(form.value.username, form.value.password)
-    ElMessage.success(`欢迎回来，${res.user.real_name}`)
-    const redirect = route.query.redirect as string | undefined
-    router.push(redirect || res.home_route)
+    res = await auth.login(username, password)
+  } catch (err) {
+    const info = loginErrorInfo(err)
+    errorMessage.value = info.message
+    if (info.clearPassword) {
+      form.value.password = ''
+      await nextTick()
+      passwordRef.value?.focus()
+    }
+    return
   } finally {
     loading.value = false
   }
+
+  ElMessage.success(`欢迎回来，${res.user.real_name}`)
+  const redirect =
+    typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
+      ? route.query.redirect
+      : ''
+  await router.push(redirect || res.home_route)
 }
 
 /** 演示账号，方便验收时快速切换角色。 
@@ -71,16 +150,19 @@ function fill(a: { username: string; password: string }) {
               placeholder="学号 / 工号 / 用户名"
               :prefix-icon="'User'"
               clearable
+              @input="clearError"
             />
           </el-form-item>
           <el-form-item>
             <el-input
+              ref="passwordRef"
               v-model="form.password"
               size="large"
               type="password"
               placeholder="密码"
               :prefix-icon="'Lock'"
               show-password
+              @input="clearError"
               @keyup.enter="submit"
             />
           </el-form-item>
@@ -93,6 +175,15 @@ function fill(a: { username: string; password: string }) {
           >
             登 录
           </el-button>
+
+          <el-alert
+            v-if="errorMessage"
+            class="login-error"
+            type="error"
+            :title="errorMessage"
+            :closable="false"
+            show-icon
+          />
         </el-form>
 
         <!-- 演示账号 
@@ -228,6 +319,10 @@ function fill(a: { username: string; password: string }) {
   height: 42px;
   font-weight: 600;
   letter-spacing: 2px;
+}
+
+.login-error {
+  margin-top: 14px;
 }
 
 .demo {

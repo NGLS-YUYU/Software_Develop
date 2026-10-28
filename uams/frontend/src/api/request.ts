@@ -40,13 +40,17 @@ http.interceptors.response.use(
   (error) => {
     const status = error.response?.status
     const data = error.response?.data as ApiError | undefined
+    const url = String(error.config?.url || '')
+
+    // 登录请求/登录页的错误由页面统一展示（内联提示 + 重新尝试），
+    // 全局拦截器不再弹 toast、不触发 401/403 登录态处理，避免吞掉或重复提示。
+    if (url.includes('/auth/login') || location.pathname.startsWith('/login')) {
+      return Promise.reject(error)
+    }
 
     if (status === 401) {
-      // 不在登录页时才提示，避免登录失败被重复提示
-      if (!location.pathname.startsWith('/login')) {
-        ElMessage.error('登录已过期，请重新登录')
-        onUnauthorized?.()
-      }
+      ElMessage.error('登录已过期，请重新登录')
+      onUnauthorized?.()
     } else if (status === 403) {
       // 提示照旧；是否调整登录态/跳转交给 auth store 判定
       ElMessage.error(data?.message || '没有权限执行该操作')

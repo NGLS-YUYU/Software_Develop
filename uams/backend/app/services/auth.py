@@ -61,15 +61,16 @@ class AuthService:
         now = datetime.now()
 
         if user.locked_until and user.locked_until > now:
-            raise AccountLocked(
-                f"账号已锁定，请于 {user.locked_until:%Y-%m-%d %H:%M} 后重试"
-            )
+            raise self._locked_error(user.locked_until, now)
 
         if user.status == UserStatus.DISABLED:
             raise AccountDisabled()
 
         if not verify_password(password, user.password_hash):
-            self._record_failure(user, now)
+            locked_until = self._record_failure(user, now)
+            if locked_until is not None:
+                # 触发锁定当次即返回锁定状态，避免用户继续尝试却只看到“密码错误”。
+                raise self._locked_error(locked_until, now)
             raise InvalidCredentials()
 
         # 登录成功：清零失败计数
@@ -80,14 +81,27 @@ class AuthService:
         self.db.commit()
         return user
 
-    def _record_failure(self, user: User, now: datetime) -> None:
-        """登录失败限制（CLAUDE.md §23）。"""
+    @staticmethod
+    def _locked_error(locked_until: datetime, now: datetime) -> AccountLocked:
+        """锁定错误附带到期时间与剩余秒数，供前端显示真实剩余时间。"""
+        remaining = max(1, int((locked_until - now).total_seconds()))
+        return AccountLocked(
+            f"账号已锁定，请于 {locked_until:%Y-%m-%d %H:%M} 后重试",
+            locked_until=locked_until.isoformat(sep=" ", timespec="seconds"),
+            retry_after_seconds=remaining,
+        )
+
+    def _record_failure(self, user: User, now: datetime) -> datetime | None:
+        """登录失败限制（CLAUDE.md §23）。返回本次触发的锁定到期时间。"""
         user.failed_login_count += 1
+        locked_until = None
         if user.failed_login_count >= settings.MAX_LOGIN_FAILURES:
-            user.locked_until = now + timedelta(minutes=settings.LOGIN_LOCK_MINUTES)
+            locked_until = now + timedelta(minutes=settings.LOGIN_LOCK_MINUTES)
+            user.locked_until = locked_until
             user.status = UserStatus.LOCKED
             user.failed_login_count = 0
         self.db.commit()
+        return locked_until
 
     def issue_token(self, user: User) -> tuple[str, int]:
         token = create_access_token(

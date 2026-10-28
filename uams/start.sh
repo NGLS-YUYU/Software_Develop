@@ -68,8 +68,16 @@ mode_label() {
 valid_mode() { case "$1" in production|testing|restore) return 0 ;; *) return 1 ;; esac; }
 
 lan_ip() {
-  ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' | head -1 \
-    || hostname -I 2>/dev/null | awk '{print $1}'
+  # 优先真实私网地址：排除 loopback、link-local、VPN 常用的 198.18.0.0/15。
+  local ip
+  for ip in $(hostname -I 2>/dev/null); do
+    [[ "$ip" == *:* ]] && continue
+    case "$ip" in
+      127.*|169.254.*|198.18.*|198.19.*) continue ;;
+    esac
+    echo "$ip"; return 0
+  done
+  ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' | head -1
 }
 
 pid_alive() {
