@@ -3,7 +3,10 @@ Description=UAMS FastAPI backend (127.0.0.1:8000)
 Documentation=file:///home/nglsyuyu/Software_Develop/Software_Develop/uams/docs/DEPLOYMENT.md
 After=network-online.target mysql.service
 Wants=network-online.target
+# 本机 MySQL 单元名已确认为 mysql.service
 Requires=mysql.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -26,12 +29,14 @@ ExecStart=/home/nglsyuyu/Software_Develop/Software_Develop/uams/backend/.venv/bi
 
 Restart=on-failure
 RestartSec=3
+TimeoutStartSec=60
 TimeoutStopSec=30
 KillSignal=SIGINT
 
 NoNewPrivileges=true
 PrivateTmp=true
 
+SyslogIdentifier=uams-backend
 StandardOutput=journal
 StandardError=journal
 

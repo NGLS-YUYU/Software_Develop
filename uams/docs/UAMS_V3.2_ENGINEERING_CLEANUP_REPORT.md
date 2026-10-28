@@ -3,7 +3,7 @@
 > 执行日期：2026-10-29
 > 分支：`main`
 > 正式库：`uams`（head `e4f5a6b7c8d9`，未修改结构或业务数据）
-> 当前服务：仍为 Vite + uvicorn 临时方式（正式 Nginx 切换尚未执行，原因见 §11）
+> 当前服务：仍为 Vite + uvicorn 临时方式（Nginx 已安装，UAMS 站点/systemd 切换尚未执行，原因见 §11）
 
 ---
 
@@ -12,10 +12,10 @@
 1. 已完成工程结构清理：历史报告归档、Vue 模板残留删除、重复上传目录确认并统一、空目录清理。
 2. 已准备可执行的 Nginx、systemd 与前端原子发布配置，位于 `deploy/`。
 3. `start.sh` 已升级：正式环境使用 Nginx + systemd 检查；测试/恢复环境保留 Vite；旧命令保留并区分语义。
-4. 当前服务器 **Nginx 未安装**，且 `sudo -n` 不可用（需要交互式 sudo），因此系统级安装与正式切换**未执行**。
+4. 当前服务器 **Nginx 1.28.3 已安装并运行**，80 由 Ubuntu 默认站点（`default_server`）占用；`sudo -n` 不可用，因此 UAMS 站点与 systemd 切换**未执行**。
 5. 现有 Vite + uvicorn 正式服务保持运行，未在新部署验证前关闭。
 6. 前端构建、后端 44 项测试、Shell 语法、systemd unit 校验通过；19 个核心页面浏览器回归通过。
-7. Nginx 配置因 Nginx 未安装，尚未执行 `nginx -t`，也未做 Nginx 下的浏览器验收。
+7. UAMS Nginx 配置已用临时前缀完成语法校验；因站点未安装，实际 `sudo nginx -t` 与 Nginx 下浏览器验收尚未执行。
 
 ---
 
@@ -117,14 +117,28 @@ uams/
 | 仓库配置 | `deploy/nginx/uams.conf` |
 | 目标路径 | `/etc/nginx/sites-available/uams` → `/etc/nginx/sites-enabled/uams` |
 | 静态根 | `/var/www/uams/current`（软链到 `releases/<时间戳>`） |
-| 对外端口 | 80（当前 80 空闲） |
+| 对外端口 | 80（当前由 Ubuntu 默认站点占用，安装时备份停用） |
 | API 代理 | `location ^~ /api/` → `http://127.0.0.1:8000`，`proxy_pass` 末尾无 `/`，保留 `/api/v1/...` |
 | SPA | `try_files $uri $uri/ /index.html` |
 | 缓存 | `/assets/` 30 天 immutable；`index.html` no-store |
 | 上传 | `client_max_body_size 20m`（后端限制 10MB） |
 | 安全 | 拒绝点文件；不 alias 项目目录；不暴露 `.env`/`.git`/备份/uploads |
 
-**状态**：Nginx 未安装，未执行 `nginx -t`，未写入 `/etc/nginx`。
+**默认站点处理**：
+
+- 实际检查发现 `/etc/nginx/sites-enabled/default` 已启用，并声明 `listen 80 default_server`；
+- UAMS 配置**不声明** `default_server`，避免重复错误；
+- 安装时必须先备份并把默认站点**移出 `sites-enabled` 目录**（不能只在目录内改名为 `default.disabled`，否则仍会被 `include sites-enabled/*` 加载）；
+- 若存在其他 80 站点，不强行设置 default_server，改为人工确认/server_name 区分。
+
+**状态**：Nginx 1.28.3 已安装并运行；UAMS 站点未写入 `/etc/nginx`。配置文件已用临时前缀、临时端口完成 `nginx -t` 语法校验，并用临时实例验证首页、SPA 回退、`/api` 代理、静态资源与点文件拒绝；实际 UAMS 站点 `sudo nginx -t` 待安装后执行。
+
+**预检脚本**：
+
+- `deploy/preflight-nginx.sh`：检查 Nginx、80 占用、默认站点、default_server、UAMS 站点、静态目录、8000；
+- `deploy/preflight-system.sh`：检查 venv、env_guard、`.env`、MySQL 单元、systemd unit、8000、静态目录。
+
+**前端发布脚本**：构建成功后创建 release；`nginx -t` 通过后使用临时软链 + `mv -T` 原子切换；记录 `previous`；reload 失败自动回滚；只清理 `releases/` 下符合时间戳且非 current/previous 的版本；目录 755、文件 644。
 
 ---
 
@@ -203,9 +217,10 @@ cd uams
 | 前端 `npm run build`（删除模板资源后） | 通过 |
 | 后端 `pytest -q` | **44 通过，0 失败** |
 | 后端 `compileall app tests scripts` | 通过 |
-| `bash -n start.sh deploy/deploy-frontend.sh` | 通过 |
+| `bash -n start.sh deploy/*.sh` | 通过 |
 | `systemd-analyze verify deploy/systemd/uams-backend.service` | 无 unit 错误 |
-| `nginx -t` | **未执行**（Nginx 未安装） |
+| UAMS 配置语法（临时前缀/端口 `nginx -t -c`） | 通过 |
+| 实际站点 `sudo nginx -t` | 待安装后执行 |
 
 ### 9.2 启动管理器
 
@@ -213,10 +228,38 @@ cd uams
 |---|---|
 | `./start.sh status` | 正确显示“本地开发/临时模式”、`uams`、head、健康状态 |
 | `./start.sh --env testing` | 启动 Vite + uvicorn，实时日志正常，Ctrl+C 后端口释放 |
-| `./start.sh --env production`（Nginx 缺失） | 拒绝启动，提示需 sudo 安装 Nginx |
+| `./start.sh --env production`（UAMS 站点未安装） | 拒绝启动，提示启用站点/停用 default |
 | `./start.sh stop` / `start` | 停止和恢复现有开发服务正常，正式库健康 |
 
-### 9.3 浏览器回归（当前 Vite 临时正式服务）
+### 9.3 Nginx 逻辑预验证（临时实例，端口 18080）
+
+使用当前构建产物和现有 uvicorn（8000）启动临时 Nginx 实例：
+
+| 检查 | 结果 |
+|---|---|
+| 首页 `/` | 200，包含 `<div id="app"></div>` |
+| 子路由 `/admin/students` 直接访问 | 200，SPA 回退成功 |
+| `/api/v1/terms/active` | 401（代理到后端，无 Token） |
+| `/assets/*.js` | 200，`application/javascript` |
+| `/.env` | 403，敏感文件拒绝 |
+
+> 这是临时前缀/端口的逻辑验证，不等于正式站点已安装；`sudo nginx -t` 与 80 端口默认站点切换仍待授权。
+
+### 9.4 原子发布与回滚（隔离目录）
+
+使用临时 Web 根目录与桩 `sudo/nginx/systemctl` 验证脚本逻辑：
+
+| 场景 | 结果 |
+|---|---|
+| 首次发布 | 创建 release，`current` 原子切换成功 |
+| reload 失败 | 自动回滚 `current` 到上一版本，退出码 1 |
+| 再次成功发布 | `previous` 记录上一有效版本 |
+| 连续发布 | 只保留最近 3 个 release，不删除 current/previous |
+| 首页校验失败 | 脚本回滚 current（前提：UAMS 站点已启用且 Nginx 运行） |
+| 权限 | 目录 755、文件 644，Nginx 可读 |
+| `sites-enabled` 停用方式 | 预检脚本检测目录内 `*disabled*` 文件并告警 |
+
+### 9.5 浏览器回归（当前 Vite 临时正式服务）
 
 管理员 9 页、教师 4 页、学生 6 页，共 **19 页全部 OK**：
 
@@ -226,9 +269,9 @@ cd uams
 - 未出现无权限、加载失败或 1054。
 
 教学资料上传/下载/删除与权限由 `tests/test_v31_fixes.py::test_materials_flow` 在 `uams_test` 覆盖并通过。
-Nginx 下的页面刷新、`/api` 代理与登录流程**尚未验证**（等待系统安装）。
+Nginx 逻辑已通过临时实例验证；正式 80 站点下的三角色浏览器与登录流程仍待站点安装后执行。
 
-### 9.4 数据保护
+### 9.6 数据保护
 
 - 正式库 `uams`：未执行结构变更或业务写入；head `e4f5a6b7c8d9`；
 - `uams_test`：仅自动化测试使用，测试清理；
@@ -245,7 +288,7 @@ sudo systemctl stop uams-backend && sudo systemctl disable uams-backend
 
 # 2) 恢复 Nginx 配置（安装前的备份）
 sudo rm -f /etc/nginx/sites-enabled/uams
-sudo mv /etc/nginx/sites-enabled/default.disabled.<STAMP> /etc/nginx/sites-enabled/default 2>/dev/null || true
+sudo mv /etc/nginx/default.disabled.<STAMP> /etc/nginx/sites-enabled/default 2>/dev/null || true
 # 或整目录恢复：sudo rm -rf /etc/nginx && sudo mv /etc/nginx.backup.<STAMP> /etc/nginx
 sudo nginx -t && sudo systemctl reload nginx
 
@@ -264,33 +307,40 @@ sudo ln -sfn /var/www/uams/releases/<上一个版本> /var/www/uams/current
 
 ```text
 sudo -n true → 需要交互式认证
-nginx → 未安装
-80/443 → 空闲
+nginx 1.28.3 → 已安装并运行，80 由默认站点占用
+UAMS 站点 → 未安装
+uams-backend.service → 未安装
 systemd user instance → running，Linger=no
 ```
 
 需要用户在终端执行（不会自动提权）：
 
 ```bash
-sudo apt update && sudo apt install -y nginx rsync
+# Nginx 与 rsync 已安装；仍需
 sudo cp deploy/nginx/uams.conf /etc/nginx/sites-available/uams
 sudo ln -sfn /etc/nginx/sites-available/uams /etc/nginx/sites-enabled/uams
-sudo cp deploy/systemd/uams-backend.service /etc/systemd/system/uams-backend.service
-sudo systemctl daemon-reload
-
-# 先停当前开发服务，释放 8000
-./start.sh stop
+STAMP=$(date +%Y%m%d_%H%M%S)
+sudo mv /etc/nginx/sites-enabled/default "/etc/nginx/default.disabled.$STAMP"
+sudo nginx -t
 
 # 部署前端（构建 + 原子发布）
 bash deploy/deploy-frontend.sh
 
-# 启动正式后端与 Nginx
+# 预验证：Nginx 静态页 + 旧 uvicorn 的 /api
+IP=$(hostname -I | awk '{print $1}')
+curl -s "http://$IP/" | grep -q '<div id="app"></div>'
+curl -s -o /dev/null -w '%{http_code}\n' "http://$IP/api/v1/terms/active"
+
+# 切换后端
+./start.sh stop
+sudo cp deploy/systemd/uams-backend.service /etc/systemd/system/uams-backend.service
+sudo systemctl daemon-reload
 sudo systemctl enable --now uams-backend.service
-sudo systemctl enable --now nginx
-sudo nginx -t && sudo systemctl reload nginx
+sudo systemctl restart nginx
 
 # 验收
 ./start.sh --env production
+./start.sh status
 ```
 
 安装后需补做：
@@ -305,7 +355,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ## 12. 剩余风险
 
 1. 正式环境尚未切换到 Nginx；当前仍依赖 Vite 5173 和 nohup 后端，机器重启后需手动 `./start.sh start`。
-2. Nginx 配置未经 `nginx -t` 与实际代理验证。
+2. UAMS 站点未经实际 `sudo nginx -t`、Nginx `/api` 代理与默认站点切换验证；仅完成临时前缀语法校验。
 3. 默认站点可能与 `server_name _` 冲突，安装时需按 deploy/README 备份并停用默认站点。
 4. 暂无 HTTPS；正式对外应补充证书与 HSTS。
 5. 前端日志目录曾累积约 128MB，已启用 20MB 轮转；历史日志可手动归档。

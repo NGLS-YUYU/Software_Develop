@@ -515,6 +515,11 @@ check_production() {
   run_guard_check
 
   nginx_installed || die "Nginx 未安装。正式部署需要 sudo 安装，命令见 deploy/README.md（本脚本不会自动提权）。"
+  [[ -e /etc/nginx/sites-enabled/uams ]] \
+    || die "UAMS Nginx 站点未启用（/etc/nginx/sites-enabled/uams）。请按 deploy/README.md 安装站点配置。"
+  if [[ -e /etc/nginx/sites-enabled/default ]]; then
+    die "Ubuntu 默认站点仍启用，IP 访问会进入欢迎页。请备份并停用 default 后重试。"
+  fi
   systemd_unit_installed || die "systemd 服务 uams-backend.service 未安装。请按 deploy/README.md 安装后重试。"
   [[ -f /var/www/uams/current/index.html ]] \
     || die "前端构建未部署到 /var/www/uams/current。请运行 deploy/deploy-frontend.sh（需要 sudo 写入）。"
@@ -541,9 +546,20 @@ start_production() {
     200|401|403) ;;
     *) err "Nginx /api 代理检查失败（HTTP $code）。请检查 deploy/nginx/uams.conf 与 nginx -t。"; exit 1 ;;
   esac
-  local front_code
-  front_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1/" 2>/dev/null || echo 000)"
-  [[ "$front_code" == "200" ]] || { err "Nginx 静态首页返回 HTTP $front_code。"; exit 1; }
+
+  local home
+  home="$(curl -fsS "http://127.0.0.1/" 2>/dev/null || true)"
+  [[ "$home" == *'<div id="app"></div>'* ]] \
+    || { err "Nginx 首页不是 UAMS 前端（可能仍由默认站点响应）。"; exit 1; }
+
+  local asset
+  asset="$(printf '%s' "$home" | grep -oE '/assets/[^"]+\.js' | head -1 || true)"
+  [[ -n "$asset" ]] || { err "首页未包含构建后的 JS 资源。"; exit 1; }
+  curl -fsS "http://127.0.0.1$asset" >/dev/null 2>&1 \
+    || { err "静态资源加载失败：$asset"; exit 1; }
+
+  curl -fsS "http://127.0.0.1/admin/students" 2>/dev/null | grep -q '<div id="app"></div>' \
+    || { err "Vue 子路由 history 回退失败（/admin/students）。"; exit 1; }
 
   local ip; ip="$(lan_ip || true)"
   echo

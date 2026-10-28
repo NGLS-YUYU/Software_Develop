@@ -43,31 +43,43 @@
 # 2. 安装 Nginx + rsync（需要 sudo）
 sudo apt update && sudo apt install -y nginx rsync
 
-# 3. 安装站点配置（不要覆盖其他站点；默认站点先备份再停用）
+# 3. 只读预检（Nginx/80/default_server/静态目录/8000）
+./deploy/preflight-nginx.sh || true
+./deploy/preflight-system.sh || true
+
+# 4. 安装站点配置，并把默认站点移出 sites-enabled（仅在目录内改名仍会被 include）
+STAMP=$(date +%Y%m%d_%H%M%S)
 sudo cp deploy/nginx/uams.conf /etc/nginx/sites-available/uams
 sudo ln -sfn /etc/nginx/sites-available/uams /etc/nginx/sites-enabled/uams
+sudo mv /etc/nginx/sites-enabled/default "/etc/nginx/default.disabled.$STAMP"
+sudo nginx -t
 
-# 4. 构建并原子发布前端
+# 5. 构建并原子发布前端（脚本会再次 nginx -t/reload，并校验首页是 UAMS）
 bash deploy/deploy-frontend.sh
 
-# 5. 停止旧开发模式后端，避免 8000 冲突
-./start.sh stop
+# 6. 预验证：Nginx 静态页/子路由 + 旧 uvicorn 的 /api（此时旧后端仍在 8000）
+IP=$(hostname -I | awk '{print $1}')
+curl -s "http://$IP/" | grep -q '<div id="app"></div>'
+curl -s "http://$IP/admin/students" | grep -q '<div id="app"></div>'
+curl -s -o /dev/null -w '%{http_code}\n' "http://$IP/api/v1/terms/active"
 
-# 6. 安装并启动 systemd 后端
+# 7. 停止旧开发模式后端，安装并启动 systemd 后端
+./start.sh stop
 sudo cp deploy/systemd/uams-backend.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now uams-backend.service
-sudo systemctl enable --now nginx
+sudo systemctl restart nginx
 
-# 7. 校验
-sudo nginx -t
+# 8. 校验
+sudo systemctl status uams-backend nginx --no-pager
 curl -s http://127.0.0.1:8000/health
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/api/v1/terms/active
+curl -s -o /dev/null -w '%{http_code}\n' "http://$IP/"
+curl -s -o /dev/null -w '%{http_code}\n' "http://$IP/api/v1/terms/active"
 ./start.sh --env production
+./start.sh status
 ```
 
-> 当前执行环境没有可用的免密 sudo，且 Nginx 未安装；上述系统级步骤尚未执行。
+> 当前执行环境没有可用的免密 sudo；Nginx 已安装并运行，但 80 由 Ubuntu 默认站点占用，UAMS 站点与 systemd 服务尚未安装，上述系统级步骤尚未执行。
 > 在此之前正式环境仍由现有 Vite + uvicorn 临时方式提供。
 
 ### 0.4 日常管理
