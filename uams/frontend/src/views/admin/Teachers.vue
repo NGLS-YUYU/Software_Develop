@@ -212,8 +212,8 @@ onMounted(async () => {
             <el-option label="教授" value="PROFESSOR" />
           </el-select>
         </el-form-item>
-        <el-form-item label="性别">
-          <el-radio-group v-model="t.form.value.gender">
+        <el-form-item label="性别" for="teacher-gender">
+          <el-radio-group v-model="t.form.value.gender" v-control-id="'teacher-gender'">
             <el-radio value="MALE">男</el-radio>
             <el-radio value="FEMALE">女</el-radio>
             <el-radio value="UNKNOWN">未填写</el-radio>

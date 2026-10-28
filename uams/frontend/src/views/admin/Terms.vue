@@ -374,8 +374,8 @@ onMounted(load)
             placeholder="如 2026-2027"
           />
         </el-form-item>
-        <el-form-item label="学期序号" required>
-          <el-radio-group v-model="t.form.value.semester">
+        <el-form-item label="学期序号" required for="term-semester">
+          <el-radio-group v-model="t.form.value.semester" v-control-id="'term-semester'">
             <el-radio :value="1">第一学期</el-radio>
             <el-radio :value="2">第二学期</el-radio>
           </el-radio-group>

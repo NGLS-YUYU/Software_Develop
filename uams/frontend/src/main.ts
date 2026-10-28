@@ -6,10 +6,12 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'element-plus/dist/index.css'
 
 import App from './App.vue'
+import { controlId } from './directives/controlId'
 import router from './router'
 import './assets/main.css'
 
 const app = createApp(App)
+app.directive('control-id', controlId)
 
 // 图标全局注册，模板里可直接用 <component :is="'User'" />
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {

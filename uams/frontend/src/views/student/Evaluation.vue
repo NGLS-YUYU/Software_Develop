@@ -147,13 +147,13 @@ onMounted(async () => {
       </div>
 
       <el-form label-position="top">
-        <el-form-item label="评分">
+        <el-form-item label="评分" for="student-eval-score">
           <div class="rating">
             <div class="rating__value">
               <span class="rating__num">{{ form.score }}</span>
               <span class="rating__unit">分</span>
             </div>
-            <el-slider v-model="form.score" :min="0" :max="100" show-input />
+            <el-slider v-model="form.score" :min="0" :max="100" show-input v-control-id="'student-eval-score'" />
             <div class="rating__hint muted">0 - 100 分，拖动滑块或直接输入</div>
           </div>
         </el-form-item>

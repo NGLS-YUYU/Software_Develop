@@ -103,6 +103,28 @@ E2E 环境：`uams_test` 后端 8010、Vite 5180、Chrome/CDP；脚本强制检�
 
 **未验证**：多浏览器矩阵、WebSocket/跨用户实时推送、复杂筛选与翻页组合、正式库写入（禁止）。
 
+### 4.4 表单标签关联修复（Chrome Issues）
+
+问题：Chrome DevTools Issues 报 `Incorrect use of <label for=FORM_ELEMENT>`。
+
+根因：Element Plus `el-form-item` 会自动把 `label for` 指向单个注册控件的 id；`el-radio-group` / `el-slider` 的根节点是 `div`，其 id 不是可标注表单元素，因此产生无效关联。
+
+修复（应用层，未改 node_modules）：
+
+- 新增 `src/directives/controlId.ts`，为复合控件内部第一个真实 `input` 分配 id；
+- 7 个 `el-radio-group`（学生/教师性别、课程考核方式、学期序号、考试类型、公告面向对象、学院状态）与 1 个 `el-slider`（学生评价评分）的 FormItem `for` 指向该 input；
+- 单输入控件（input/select/date-picker/input-number/textarea/switch）保持原有关联。
+
+验证：
+
+- `npm run build` 通过；
+- DOM 扫描：已检查页面的 `label[for]` 均指向 `INPUT/TEXTAREA`，无 `DIV`/不存在目标；
+- 学生表单 E2E（新增/编辑/删除/失败）通过；
+- 多页面 E2E（课程/教学班/学期/公告/选课/成绩审核）通过；
+- 点击性别分组标签已验证聚焦首个 radio（`activeElement` 为 `student-gender|radio`）。
+
+未验证/未执行：未直接读取 DevTools Issues 面板（使用等价 DOM 规则检查）；最新前端构建尚未发布到正式站点。
+
 ## 5. 未覆盖范围
 
 - 全页面 × 全权限组合；

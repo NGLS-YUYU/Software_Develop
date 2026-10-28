@@ -310,8 +310,8 @@ onMounted(async () => {
               :label="`${c.course_name}（${c.code}）`" :value="c.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="考试类型">
-          <el-radio-group v-model="form.exam_type">
+        <el-form-item label="考试类型" for="exam-exam-type">
+          <el-radio-group v-model="form.exam_type" v-control-id="'exam-exam-type'">
             <el-radio value="FINAL">期末</el-radio>
             <el-radio value="MAKEUP">补考</el-radio>
             <el-radio value="RETAKE">重修</el-radio>

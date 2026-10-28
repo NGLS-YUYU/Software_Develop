@@ -296,8 +296,8 @@ onMounted(async () => {
           <el-alert :title="hoursError() || ''" type="error" :closable="false" show-icon />
         </el-form-item>
 
-        <el-form-item label="考核方式">
-          <el-radio-group v-model="t.form.value.exam_type">
+        <el-form-item label="考核方式" for="course-exam-type">
+          <el-radio-group v-model="t.form.value.exam_type" v-control-id="'course-exam-type'">
             <el-radio value="EXAM">考试</el-radio>
             <el-radio value="CHECK">考查</el-radio>
           </el-radio-group>

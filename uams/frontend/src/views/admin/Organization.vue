@@ -567,8 +567,8 @@ onMounted(async () => {
         <el-form-item label="说明">
           <el-input v-model="college.form.value.description" type="textarea" :rows="3" />
         </el-form-item>
-        <el-form-item label="状态">
-          <el-radio-group v-model="college.form.value.status">
+        <el-form-item label="状态" for="org-college-status">
+          <el-radio-group v-model="college.form.value.status" v-control-id="'org-college-status'">
             <el-radio value="ACTIVE">启用</el-radio>
             <el-radio value="INACTIVE">停用</el-radio>
           </el-radio-group>

@@ -176,8 +176,8 @@ onMounted(t.load)
         <el-form-item label="标题" required>
           <el-input v-model="t.form.value.title" maxlength="200" show-word-limit />
         </el-form-item>
-        <el-form-item label="面向对象">
-          <el-radio-group v-model="t.form.value.target_type">
+        <el-form-item label="面向对象" for="announcement-target">
+          <el-radio-group v-model="t.form.value.target_type" v-control-id="'announcement-target'">
             <el-radio value="ALL">全体</el-radio>
             <el-radio value="STUDENT">学生</el-radio>
             <el-radio value="TEACHER">教师</el-radio>
