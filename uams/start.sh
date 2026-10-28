@@ -41,6 +41,8 @@ FOREGROUND=0
 BACKEND_PID=""
 FRONTEND_PID=""
 CHILD_PIDS=()
+READER_PIDS=()
+FIFO_FILES=()
 
 log()  { printf '\033[1;34m[UAMS]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[UAMS]\033[0m %s\n' "$*"; }
@@ -97,6 +99,39 @@ rotate_log() {
   if (( size > 20 * 1024 * 1024 )); then
     mv -f "$f" "$f.1" 2>/dev/null || true
   fi
+}
+
+# 前台日志：FIFO → sed 加前缀（无缓冲）→ tee 同时写终端和文件。
+# 后台模式仍直接重定向到文件，不经过 FIFO。
+start_log_reader() {
+  local name="$1" log="$2"
+  local fifo="$RUN_DIR/${name,,}.pipe"
+  rm -f "$fifo"
+  mkfifo "$fifo"
+  (sed -u "s/^/[${name}] /" <"$fifo" | tee -a "$log") &
+  READER_PIDS+=("$!")
+  FIFO_FILES+=("$fifo")
+}
+
+cleanup_readers() {
+  local pid _i
+  for pid in "${READER_PIDS[@]:-}"; do
+    [[ -n "$pid" ]] || continue
+    for _i in $(seq 1 25); do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 0.2
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+  done
+  local fifo
+  for fifo in "${FIFO_FILES[@]:-}"; do
+    [[ -n "$fifo" ]] && rm -f "$fifo"
+  done
+  READER_PIDS=()
+  FIFO_FILES=()
 }
 
 # ---------------------------------------------------------------- 交互菜单
@@ -316,6 +351,7 @@ cleanup_children() {
     fi
     wait "$pid" 2>/dev/null || true
   done
+  cleanup_readers
   local cur
   for pair in "backend:$BACKEND_PID" "frontend:$FRONTEND_PID"; do
     local name="${pair%%:*}" p="${pair#*:}"
@@ -351,12 +387,13 @@ start_backend() {
   rotate_log "$LOG_DIR/backend.log"
   log "启动后端（$MODE → $(mode_db "$MODE")）..."
   if [[ "$FOREGROUND" -eq 1 ]]; then
+    start_log_reader Backend "$LOG_DIR/backend.log"
     (
       cd "$BACKEND_DIR"
       exec "$PY" scripts/env_guard.py exec "$MODE" -- \
         .venv/bin/python -m uvicorn app.main:app \
         --host "$BACKEND_HOST" --port "$BACKEND_PORT"
-    ) >"$LOG_DIR/backend.log" 2>&1 &
+    ) >"$RUN_DIR/backend.pipe" 2>&1 &
     BACKEND_PID=$!
     CHILD_PIDS+=("$BACKEND_PID")
   else
@@ -396,11 +433,12 @@ start_frontend() {
   rotate_log "$LOG_DIR/frontend.log"
   log "启动前端（$FRONTEND_MODE，端口 $fport）..."
   if [[ "$FOREGROUND" -eq 1 ]]; then
+    start_log_reader Frontend "$LOG_DIR/frontend.log"
     (
       cd "$FRONTEND_DIR"
       export UAMS_BACKEND_URL="${UAMS_BACKEND_URL:-http://127.0.0.1:$BACKEND_PORT}"
       exec "${cmd[@]}"
-    ) >"$LOG_DIR/frontend.log" 2>&1 &
+    ) >"$RUN_DIR/frontend.pipe" 2>&1 &
     FRONTEND_PID=$!
     CHILD_PIDS+=("$FRONTEND_PID")
   else

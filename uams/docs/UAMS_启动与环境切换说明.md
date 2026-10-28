@@ -161,9 +161,14 @@ cd backend
 
 日志：
 
-- `uams/logs/backend.log`
-- `uams/logs/frontend.log`
-- `uams/logs/frontend-build.log`（生产前端构建）
+- **前台模式**（`./start.sh`、`./start.sh --env ...`）：终端实时显示后端/前端输出，并带前缀：
+  - `[Backend]`：Uvicorn 启动、HTTP 请求、FastAPI 异常、SQLAlchemy 错误；
+  - `[Frontend]`：Vite 启动、编译错误、代理输出。
+  同一份内容同时追加到日志文件，便于事后排查。
+- **后台模式**（`./start.sh start/prod`）：终端不输出，日志写入文件：
+  - `uams/logs/backend.log`
+  - `uams/logs/frontend.log`
+  - `uams/logs/frontend-build.log`（生产前端构建）
 
 日志超过 20MB 时会在下次启动自动轮转为 `*.log.1`。
 
