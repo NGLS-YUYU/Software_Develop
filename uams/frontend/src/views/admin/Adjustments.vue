@@ -5,9 +5,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { adjustmentApi } from '@/api'
 import type { Adjustment } from '@/types'
+import { createLatestGuard } from '@/utils/latest'
 
 const rows = ref<Adjustment[]>([])
 const loading = ref(false)
+const loadGuard = createLatestGuard()
 const statusFilter = ref<string>('PENDING')
 
 const TYPE: Record<string, string> = { CHANGE: '调课', CANCEL: '停课', ADD: '补课' }
@@ -15,11 +17,13 @@ const STATUS: Record<string, string> = { PENDING: '待审核', APPROVED: '已批
 const STATUS_TYPE: Record<string, string> = { PENDING: 'warning', APPROVED: 'success', REJECTED: 'danger' }
 
 async function load() {
+  const seq = loadGuard.next()
   loading.value = true
   try {
-    rows.value = await adjustmentApi.list(statusFilter.value || undefined)
+    const data = await adjustmentApi.list(statusFilter.value || undefined)
+    if (loadGuard.isCurrent(seq)) rows.value = data
   } finally {
-    loading.value = false
+    if (loadGuard.isCurrent(seq)) loading.value = false
   }
 }
 

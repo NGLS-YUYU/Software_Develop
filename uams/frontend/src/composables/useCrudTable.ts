@@ -20,6 +20,8 @@ export function useCrudTable<T extends { id: number }>(
     entityName?: string
     defaultFilters?: Record<string, unknown>
     emptyForm: () => Record<string, unknown>
+    /** 写入/删除成功后，刷新与当前资源关联的下拉、统计或跨 Tab 数据。 */
+    afterMutation?: () => void | Promise<void>
   },
 ) {
   const rows = ref<T[]>([])
@@ -37,17 +39,27 @@ export function useCrudTable<T extends { id: number }>(
   const form = ref<Record<string, unknown>>(options.emptyForm())
   const editingId = ref<number | null>(null)
   const saving = ref(false)
+  /** 查询序号：较早发出的请求即使晚返回，也不能覆盖较新的结果。 */
+  let loadSeq = 0
 
   const name = options.entityName ?? '记录'
 
   async function load() {
+    const seq = ++loadSeq
     loading.value = true
     try {
       const res = await api.list({ ...query })
+      if (seq !== loadSeq) return
       rows.value = res.items
       total.value = res.total
+      // 删除当前页最后一条（或筛选后当前页已空）时回退一页，避免停在空页。
+      const currentPage = query.page ?? 1
+      if (!res.items.length && currentPage > 1) {
+        query.page = currentPage - 1
+        await load()
+      }
     } finally {
-      loading.value = false
+      if (seq === loadSeq) loading.value = false
     }
   }
 
@@ -71,21 +83,41 @@ export function useCrudTable<T extends { id: number }>(
   }
 
   async function save(payload?: Record<string, unknown>) {
+    if (saving.value) return false
     const body = payload ?? { ...form.value }
+    const isCreate = dialogMode.value === 'create'
     saving.value = true
     try {
-      if (dialogMode.value === 'create') {
-        await api.create?.(body)
+      let created: T | undefined
+      if (isCreate) {
+        if (!api.create) throw new Error(`${name}不支持新增`)
+        created = await api.create(body)
+        // 先回到第一页；若新记录因分页未出现，再定位到包含它的末页。
+        query.page = 1
         ElMessage.success(`${name}已创建`)
       } else if (editingId.value != null) {
-        await api.update?.(editingId.value, body)
+        if (!api.update) throw new Error(`${name}不支持修改`)
+        await api.update(editingId.value, body)
         ElMessage.success(`${name}已更新`)
       }
       dialogVisible.value = false
       await load()
+      if (isCreate && created?.id != null && !rows.value.some((r) => r.id === created!.id)) {
+        const pageSize = Number(query.page_size ?? 20)
+        const lastPage = Math.max(1, Math.ceil(total.value / pageSize))
+        if (lastPage !== (query.page ?? 1)) {
+          query.page = lastPage
+          await load()
+        }
+      }
+      try {
+        await options.afterMutation?.()
+      } catch {
+        // 关联数据刷新失败由拦截器提示；本次写入本身已成功
+      }
       return true
     } catch {
-      // 错误信息由 axios 拦截器统一提示
+      // 错误信息由 axios 拦截器统一提示；保留弹窗数据便于重试
       return false
     } finally {
       saving.value = false
@@ -103,9 +135,15 @@ export function useCrudTable<T extends { id: number }>(
       return
     }
     try {
-      await api.remove?.(row.id)
+      if (!api.remove) throw new Error(`${name}不支持删除`)
+      await api.remove(row.id)
       ElMessage.success(`${name}已删除`)
       await load()
+      try {
+        await options.afterMutation?.()
+      } catch {
+        // 关联数据刷新失败由拦截器提示
+      }
     } catch {
       // 被引用时后端返回 409，拦截器已提示
     }

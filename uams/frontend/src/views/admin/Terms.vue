@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { termApi } from '@/api'
+import { setActiveSemester } from '@/composables/useSemester'
 import { useCrudTable } from '@/composables/useCrudTable'
 import type { Term } from '@/types'
 
@@ -22,6 +23,8 @@ const t = useCrudTable<Term>(termApi as never, {
     start_date: '',
     end_date: '',
   }),
+  // 创建/编辑/删除后都重新同步全局 ACTIVE 学期。
+  afterMutation: syncActiveSemester,
 })
 
 /** 纯展示：进行中的学期整行浅紫底，便于一眼定位当前学期。 */
@@ -64,13 +67,25 @@ function validate(): string | null {
   return null
 }
 
+async function syncActiveSemester() {
+  try {
+    const active = await termApi.active()
+    activeTerm.value = active
+    setActiveSemester(`${active.academic_year}-${active.semester}`)
+  } catch {
+    activeTerm.value = null
+    setActiveSemester(null)
+  }
+}
+
 async function submit() {
   const err = validate()
   if (err) {
     ElMessage.warning(err)
     return
   }
-  await t.save(payload())
+  const ok = await t.save(payload())
+  if (ok) await syncActiveSemester()
 }
 
 async function activate(row: Term) {
@@ -87,6 +102,7 @@ async function activate(row: Term) {
     await termApi.activate(row.id)
     ElMessage.success('已激活')
     await t.load()
+    await syncActiveSemester()
   } catch {
     // 409 等业务错误由 axios 拦截器统一提示（例如已存在进行中的学期）
   }
@@ -106,6 +122,7 @@ async function endTerm(row: Term) {
     await termApi.end(row.id)
     ElMessage.success('已结束')
     await t.load()
+    await syncActiveSemester()
   } catch {
     // 后端拒绝（如该学期不是进行中）时拦截器已提示
   }
@@ -115,7 +132,7 @@ const activeTerm = ref<Term | null>(null)
 
 async function load() {
   await t.load()
-  activeTerm.value = t.rows.value.find((r) => r.status === 'ACTIVE') ?? null
+  await syncActiveSemester()
 }
 
 onMounted(load)

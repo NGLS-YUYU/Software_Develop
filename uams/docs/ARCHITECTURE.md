@@ -189,7 +189,15 @@ MainLayout 依据当前路由子树动态生成侧边菜单
 ### 3.3 状态管理
 
 仅一个 Pinia store：`stores/auth.ts`。
-其余页面数据通过 `api/index.ts` 直接获取，未做全局缓存，列表状态由 `useCrudTable` 组合式函数在组件内维护。
+
+业务数据不做全局缓存，由页面/组合式函数维护：
+
+- `useCrudTable`：列表加载、分页、增删改后的 reload、创建跨页可见、删除回退分页、重复提交保护、`afterMutation` 关联刷新、`loadSeq` 竞态保护；
+- `utils/latest.ts`：页面级查询序号守卫，旧请求不得覆盖新结果；
+- `useSemester`：登录/学期变更后同步后端 ACTIVE 学期；
+- 所有业务 GET 请求带 `Cache-Control: no-cache`，避免浏览器缓存旧列表。
+
+写入后以服务器响应/重查结果为准，不做 WebSocket/SSE 或其他用户实时推送。
 
 ---
 

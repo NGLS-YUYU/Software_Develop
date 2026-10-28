@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { exportApi, gradeApi } from '@/api'
 import { semesterOptions } from '@/composables/useSemester'
+import { createLatestGuard } from '@/utils/latest'
 import type { Grade, GradeChangeLog } from '@/types'
 
 const semester = ref<string | undefined>(undefined)
@@ -12,6 +13,7 @@ const rows = ref<Grade[]>([])
 const approvedRows = ref<Grade[]>([])
 const selected = ref<Grade[]>([])
 const loading = ref(false)
+const loadGuard = createLatestGuard()
 
 const correctVisible = ref(false)
 const correctSaving = ref(false)
@@ -40,17 +42,23 @@ const grouped = computed(() => {
 })
 
 async function load() {
+  const seq = loadGuard.next()
+  const currentMode = mode.value
   loading.value = true
   try {
-    if (mode.value === 'pending') {
-      rows.value = await gradeApi.pending(semester.value)
+    if (currentMode === 'pending') {
+      const data = await gradeApi.pending(semester.value)
+      if (!loadGuard.isCurrent(seq)) return
+      rows.value = data
       selected.value = []
     } else {
-      approvedRows.value = await gradeApi.approved(semester.value)
+      const data = await gradeApi.approved(semester.value)
+      if (!loadGuard.isCurrent(seq)) return
+      approvedRows.value = data
       selected.value = []
     }
   } finally {
-    loading.value = false
+    if (loadGuard.isCurrent(seq)) loading.value = false
   }
 }
 

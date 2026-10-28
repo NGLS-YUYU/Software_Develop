@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { selectionApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
+import { createLatestGuard } from '@/utils/latest'
 import type { Selection, SelectionWindowStatus, TeachingClass } from '@/types'
 
 const semester = ref(currentSemester())
@@ -13,6 +14,7 @@ const mine = ref<Selection[]>([])
 const windowState = ref<SelectionWindowStatus | null>(null)
 const loading = ref(false)
 const tab = ref('available')
+const loadGuard = createLatestGuard()
 
 const totalCredits = computed(() =>
   mine.value.reduce((sum, s) => sum + Number(s.credits ?? 0), 0),
@@ -47,6 +49,7 @@ function dropBlockReason(s: Selection) {
 }
 
 async function load() {
+  const seq = loadGuard.next()
   loading.value = true
   try {
     const [a, m, w] = await Promise.allSettled([
@@ -54,11 +57,13 @@ async function load() {
       selectionApi.mine(semester.value),
       selectionApi.windowStatus(semester.value),
     ])
+    // 旧学期的慢请求不能覆盖新学期的结果。
+    if (!loadGuard.isCurrent(seq)) return
     if (a.status === 'fulfilled') available.value = a.value
     if (m.status === 'fulfilled') mine.value = m.value
     if (w.status === 'fulfilled') windowState.value = w.value
   } finally {
-    loading.value = false
+    if (loadGuard.isCurrent(seq)) loading.value = false
   }
 }
 

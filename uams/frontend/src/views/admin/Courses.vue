@@ -17,6 +17,7 @@ const t = useCrudTable<Course>(courseApi, {
     exam_type: 'EXAM',
     description: '', status: 'ACTIVE',
   }),
+  afterMutation: loadCourses,
 })
 
 const TYPE: Record<string, string> = {

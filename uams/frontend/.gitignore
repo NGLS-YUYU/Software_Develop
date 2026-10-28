@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 前端单元测试编译产物（V3.2 FIX-REFRESH-001）
+tests/.build/

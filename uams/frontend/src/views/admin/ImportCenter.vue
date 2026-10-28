@@ -5,6 +5,7 @@ import type { UploadFile, UploadInstance } from 'element-plus'
 
 import { importApi, teachingApi } from '@/api'
 import type { ImportKind, ImportResult, TeachingClass } from '@/types'
+import { createLatestGuard } from '@/utils/latest'
 
 /**
  * 批量导入中心（FIX-005）。
@@ -38,6 +39,7 @@ const KINDS: { key: ImportKind; label: string; hint: string }[] = [
 const active = ref<ImportKind>('students')
 const file = ref<File | null>(null)
 const uploader = ref<UploadInstance>()
+const classGuard = createLatestGuard()
 const result = ref<ImportResult | null>(null)
 const importing = ref(false)
 const downloading = ref(false)

@@ -6,12 +6,15 @@ import { ElMessage } from 'element-plus'
 import { adjustmentApi, classroomApi, teacherApi, teachingApi } from '@/api'
 import { currentSemester } from '@/composables/useSemester'
 import type { Adjustment, Classroom, Schedule, TeachingClass } from '@/types'
+import { createLatestGuard } from '@/utils/latest'
 
 const classes = ref<TeachingClass[]>([])
 const schedules = ref<Schedule[]>([])
 const classrooms = ref<Classroom[]>([])
 const rows = ref<Adjustment[]>([])
 const loading = ref(false)
+const listGuard = createLatestGuard()
+const scheduleGuard = createLatestGuard()
 const saving = ref(false)
 const form = ref<Record<string, unknown>>({
   teaching_class_id: undefined,
@@ -36,7 +39,9 @@ async function loadSchedules() {
     schedules.value = []
     return
   }
-  schedules.value = await teachingApi.schedules(Number(form.value.teaching_class_id))
+  const seq = scheduleGuard.next()
+  const data = await teachingApi.schedules(Number(form.value.teaching_class_id))
+  if (scheduleGuard.isCurrent(seq)) schedules.value = data
 }
 
 async function submit() {
@@ -72,11 +77,13 @@ async function submit() {
 }
 
 async function load() {
+  const seq = listGuard.next()
   loading.value = true
   try {
-    rows.value = await adjustmentApi.mine()
+    const data = await adjustmentApi.mine()
+    if (listGuard.isCurrent(seq)) rows.value = data
   } finally {
-    loading.value = false
+    if (listGuard.isCurrent(seq)) loading.value = false
   }
 }
 

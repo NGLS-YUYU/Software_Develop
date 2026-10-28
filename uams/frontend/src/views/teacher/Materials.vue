@@ -7,6 +7,7 @@ import type { UploadFile } from 'element-plus'
 import { materialApi, teacherApi, teachingApi } from '@/api'
 import { currentSemester } from '@/composables/useSemester'
 import type { Material, TeachingClass } from '@/types'
+import { createLatestGuard } from '@/utils/latest'
 
 const classes = ref<TeachingClass[]>([])
 const classId = ref<number | undefined>(undefined)
@@ -14,6 +15,7 @@ const rows = ref<Material[]>([])
 const title = ref('')
 const selectedFile = ref<File | null>(null)
 const loading = ref(false)
+const rowGuard = createLatestGuard()
 const uploading = ref(false)
 
 function fileSize(size: number) {
@@ -32,11 +34,13 @@ async function loadRows() {
     rows.value = []
     return
   }
+  const seq = rowGuard.next()
   loading.value = true
   try {
-    rows.value = await materialApi.list(classId.value)
+    const rowsData = await materialApi.list(classId.value)
+    if (rowGuard.isCurrent(seq)) rows.value = rowsData
   } finally {
-    loading.value = false
+    if (rowGuard.isCurrent(seq)) loading.value = false
   }
 }
 

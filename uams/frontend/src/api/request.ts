@@ -32,6 +32,11 @@ http.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
+  // 业务列表/详情不做浏览器缓存：写入后再次查询必须拿到服务器最新数据。
+  if ((config.method || 'get').toLowerCase() === 'get') {
+    config.headers['Cache-Control'] = 'no-cache'
+    config.headers.Pragma = 'no-cache'
+  }
   return config
 })
 

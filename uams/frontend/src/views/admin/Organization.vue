@@ -16,6 +16,7 @@ const teachers = ref<Teacher[]>([])
 const college = useCrudTable<College>(collegeApi, {
   entityName: '学院',
   emptyForm: () => ({ code: '', name: '', description: '', status: 'ACTIVE' }),
+  afterMutation: loadOptions,
 })
 const major = useCrudTable<Major>(majorApi, {
   entityName: '专业',
@@ -27,6 +28,7 @@ const major = useCrudTable<Major>(majorApi, {
     duration_years: 4,
     status: 'ACTIVE',
   }),
+  afterMutation: loadOptions,
 })
 const klass = useCrudTable<ClassInfo>(classApi, {
   entityName: '班级',
@@ -38,6 +40,7 @@ const klass = useCrudTable<ClassInfo>(classApi, {
     counselor_id: undefined,
     status: 'ACTIVE',
   }),
+  afterMutation: loadOptions,
 })
 const room = useCrudTable<Classroom>(classroomApi, {
   entityName: '教室',
@@ -48,6 +51,7 @@ const room = useCrudTable<Classroom>(classroomApi, {
     room_type: 'NORMAL',
     status: 'ACTIVE',
   }),
+  afterMutation: loadOptions,
 })
 
 const DEGREE: Record<string, string> = { BACHELOR: '本科', MASTER: '硕士', DOCTOR: '博士' }

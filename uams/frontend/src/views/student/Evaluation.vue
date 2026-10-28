@@ -5,11 +5,13 @@ import { ElMessage } from 'element-plus'
 import { evaluationApi } from '@/api'
 import { currentSemester } from '@/composables/useSemester'
 import type { EvaluationTask, PendingEvaluation } from '@/types'
+import { createLatestGuard } from '@/utils/latest'
 
 const tasks = ref<EvaluationTask[]>([])
 const taskId = ref<number | undefined>(undefined)
 const pending = ref<PendingEvaluation[]>([])
 const loading = ref(false)
+const pendingGuard = createLatestGuard()
 
 const dialog = ref(false)
 const current = ref<PendingEvaluation | null>(null)
@@ -33,11 +35,13 @@ async function loadTasks() {
 
 async function loadPending() {
   if (!taskId.value) return
+  const seq = pendingGuard.next()
   loading.value = true
   try {
-    pending.value = await evaluationApi.pending(taskId.value)
+    const data = await evaluationApi.pending(taskId.value)
+    if (pendingGuard.isCurrent(seq)) pending.value = data
   } finally {
-    loading.value = false
+    if (pendingGuard.isCurrent(seq)) loading.value = false
   }
 }
 

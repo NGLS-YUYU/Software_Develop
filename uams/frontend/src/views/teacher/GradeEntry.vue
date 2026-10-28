@@ -6,6 +6,7 @@ import type { UploadFile, UploadInstance } from 'element-plus'
 
 import { gradeApi, importApi, teacherApi, teachingApi } from '@/api'
 import { currentSemester } from '@/composables/useSemester'
+import { createLatestGuard } from '@/utils/latest'
 import type { Grade, GradeStatistics, ImportResult, TeachingClass } from '@/types'
 
 const route = useRoute()
@@ -20,6 +21,7 @@ const saving = ref(false)
 const importing = ref(false)
 const importResult = ref<ImportResult | null>(null)
 const uploader = ref<UploadInstance>()
+const sheetGuard = createLatestGuard()
 
 const STATUS_LABEL: Record<string, string> = {
   DRAFT: '草稿',
@@ -92,12 +94,20 @@ async function loadClasses() {
 
 async function loadSheet() {
   if (!classId.value) return
+  const seq = sheetGuard.next()
+  const id = classId.value
   loading.value = true
   try {
-    rows.value = await gradeApi.byClass(classId.value)
-    stats.value = await gradeApi.statistics(classId.value)
+    const [sheet, statistics] = await Promise.all([
+      gradeApi.byClass(id),
+      gradeApi.statistics(id),
+    ])
+    // 快速切换教学班时，旧班级的慢响应不能覆盖当前班级。
+    if (!sheetGuard.isCurrent(seq)) return
+    rows.value = sheet
+    stats.value = statistics
   } finally {
-    loading.value = false
+    if (sheetGuard.isCurrent(seq)) loading.value = false
   }
 }
 

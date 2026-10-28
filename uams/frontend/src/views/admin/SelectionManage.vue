@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 
 import { exportApi, selectionApi, teachingApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
+import { createLatestGuard } from '@/utils/latest'
 import type { SelectionPeriod, TeachingClass } from '@/types'
 
 const semester = ref(currentSemester())
@@ -12,6 +13,8 @@ const classes = ref<TeachingClass[]>([])
 const total = ref(0)
 const page = ref(1)
 const loading = ref(false)
+const periodGuard = createLatestGuard()
+const classGuard = createLatestGuard()
 
 const dialog = ref(false)
 const form = ref<Record<string, unknown>>({})
@@ -121,19 +124,27 @@ async function showRoster(row: TeachingClass) {
 }
 
 async function loadPeriods() {
-  periods.value = await selectionApi.periods(semester.value)
+  const seq = periodGuard.next()
+  const rows = await selectionApi.periods(semester.value)
+  if (periodGuard.isCurrent(seq)) periods.value = rows
 }
 
 async function loadClasses() {
+  const seq = classGuard.next()
   loading.value = true
   try {
     const res = await teachingApi.classes({
       semester: semester.value, page: page.value, page_size: 20,
     })
+    if (!classGuard.isCurrent(seq)) return
     classes.value = res.items
     total.value = res.total
+    if (!res.items.length && page.value > 1) {
+      page.value -= 1
+      await loadClasses()
+    }
   } finally {
-    loading.value = false
+    if (classGuard.isCurrent(seq)) loading.value = false
   }
 }
 

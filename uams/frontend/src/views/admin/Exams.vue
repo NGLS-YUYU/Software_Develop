@@ -5,12 +5,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { classroomApi, examApi, teacherApi, teachingApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
 import type { Classroom, Exam, ExamRoom, Teacher, TeachingClass } from '@/types'
+import { createLatestGuard } from '@/utils/latest'
 
 const semester = ref(currentSemester())
 const exams = ref<Exam[]>([])
 const total = ref(0)
 const page = ref(1)
 const loading = ref(false)
+const loadGuard = createLatestGuard()
 
 const classes = ref<TeachingClass[]>([])
 const classrooms = ref<Classroom[]>([])
@@ -131,13 +133,19 @@ async function publish(row: Exam) {
 }
 
 async function load() {
+  const seq = loadGuard.next()
   loading.value = true
   try {
     const res = await examApi.list({ semester: semester.value, page: page.value, page_size: 20 })
+    if (!loadGuard.isCurrent(seq)) return
     exams.value = res.items
     total.value = res.total
+    if (!res.items.length && page.value > 1) {
+      page.value -= 1
+      await load()
+    }
   } finally {
-    loading.value = false
+    if (loadGuard.isCurrent(seq)) loading.value = false
   }
 }
 

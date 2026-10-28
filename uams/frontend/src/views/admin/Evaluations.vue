@@ -5,9 +5,11 @@ import { ElMessage } from 'element-plus'
 
 import { evaluationApi } from '@/api'
 import type { EvaluationTask } from '@/types'
+import { createLatestGuard } from '@/utils/latest'
 
 const rows = ref<EvaluationTask[]>([])
 const loading = ref(false)
+const loadGuard = createLatestGuard()
 const dialog = ref(false)
 const saving = ref(false)
 const editingId = ref<number | null>(null)
@@ -35,11 +37,13 @@ function openEdit(row: EvaluationTask) {
 }
 
 async function load() {
+  const seq = loadGuard.next()
   loading.value = true
   try {
-    rows.value = await evaluationApi.tasks()
+    const data = await evaluationApi.tasks()
+    if (loadGuard.isCurrent(seq)) rows.value = data
   } finally {
-    loading.value = false
+    if (loadGuard.isCurrent(seq)) loading.value = false
   }
 }
 

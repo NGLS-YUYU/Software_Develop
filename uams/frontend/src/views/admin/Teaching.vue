@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { classroomApi, collegeApi, courseApi, scheduleApi, teacherApi, teachingApi, termApi } from '@/api'
 import ClassEnrollmentDialog from '@/components/ClassEnrollmentDialog.vue'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
+import { createLatestGuard } from '@/utils/latest'
 import type {
   Classroom,
   College,
@@ -52,6 +53,8 @@ const classes = ref<TeachingClass[]>([])
 const classesTotal = ref(0)
 const classPage = ref(1)
 const loading = ref(false)
+const taskGuard = createLatestGuard()
+const classGuard = createLatestGuard()
 
 /** FIX-002：教学班学生安排/名单弹窗 */
 const enrollVisible = ref(false)
@@ -214,6 +217,8 @@ async function saveClass() {
     }
     classDialog.value = false
     await loadClasses()
+    // 教学任务列表中的“已开班数”依赖教学班数量，必须同步刷新。
+    await loadTasks()
   } catch {
     // 失败时保留弹窗与已填内容，错误提示由 axios 拦截器统一给出
   } finally {
@@ -233,6 +238,7 @@ async function removeClass(row: TeachingClass) {
     await teachingApi.removeClass(row.id)
     ElMessage.success('已删除')
     await loadClasses()
+    await loadTasks()
   } catch {
     // 有选课/成绩等业务拒绝由拦截器提示
   }
@@ -368,6 +374,7 @@ function scheduleText(tc: TeachingClass) {
 
 // --- 加载 ---
 async function loadTasks() {
+  const seq = taskGuard.next()
   loading.value = true
   try {
     const res = await teachingApi.tasks({
@@ -375,14 +382,16 @@ async function loadTasks() {
       page: taskPage.value,
       page_size: 20,
     })
+    if (!taskGuard.isCurrent(seq)) return
     tasks.value = res.items
     tasksTotal.value = res.total
   } finally {
-    loading.value = false
+    if (taskGuard.isCurrent(seq)) loading.value = false
   }
 }
 
 async function loadClasses() {
+  const seq = classGuard.next()
   loading.value = true
   try {
     const res = await teachingApi.classes({
@@ -390,10 +399,15 @@ async function loadClasses() {
       page: classPage.value,
       page_size: 20,
     })
+    if (!classGuard.isCurrent(seq)) return
     classes.value = res.items
     classesTotal.value = res.total
+    if (!res.items.length && classPage.value > 1) {
+      classPage.value -= 1
+      await loadClasses()
+    }
   } finally {
-    loading.value = false
+    if (classGuard.isCurrent(seq)) loading.value = false
   }
 }
 

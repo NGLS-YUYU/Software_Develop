@@ -21,7 +21,7 @@ cd backend
 
 ---
 
-## 2. 当前自动化测试（44 项）
+## 2. 后端自动化测试（44 项）
 
 | 文件 | 收集数 | 覆盖 |
 |---|---:|---|
@@ -29,6 +29,7 @@ cd backend
 | `tests/test_v31_fixes.py` | 24 | 成绩撤销/更正/历史、ACTIVE 学期、考试冲突/考场、教学任务、教学班开放校验、评价任务、审计、双身份、数据隔离、排名、导出、培养方案、资料、调停课、登录相关对象校验 |
 | `tests/test_login_errors.py` | 6 | 登录成功、错误密码/未知账号统一响应、停用、锁定（5 次/剩余秒数）、空值校验、强制 500 |
 | `tests/test_env_guard.py` | 8 | 模式映射、URL 只改库名、特殊字符密码、未知模式、配置缺失、库名不符、版本不符 |
+| `frontend/tests/latest.test.mjs` | 2 | 最近请求守卫（`npm run test:unit`） |
 
 **最近结果：44 passed，0 failed。**
 
@@ -83,6 +84,24 @@ cd backend
 - Nginx 临时实例：首页/子路由/API/静态资源/点文件拒绝均符合预期。
 
 ---
+
+### 4.3 前端写入后数据同步回归
+
+问题：写入成功后页面可能显示旧数据。修复后新增：
+
+| 类型 | 位置/命令 | 覆盖 |
+|---|---|---|
+| 单元测试 | `cd frontend && npm run test:unit` | `createLatestGuard` 竞态守卫（2 项） |
+| E2E | `python3 tests/e2e/test_student_crud.py` | 新增/修改/删除/重复失败保留 |
+| E2E | `python3 tests/e2e/test_multi_page_refresh.py` | 课程、教学班、学期、公告、选课/退课、成绩审核 |
+| E2E | `python3 tests/e2e/test_materials_refresh.py` | 资料上传/删除 |
+| E2E | `python3 tests/e2e/test_grade_entry_refresh.py` | 成绩保存/提交 |
+
+E2E 环境：`uams_test` 后端 8010、Vite 5180、Chrome/CDP；脚本强制检查 `/health.env=testing`，临时数据自清理。详细说明见 `frontend/tests/e2e/README.md`。
+
+最近结果：单元测试 2 通过；四组 E2E 全部通过（REF-001/002/003/004/005/007/008/009/010/011/012/013/014），REF-006 验证了学期编辑刷新与“已有 ACTIVE 时激活被拒绝”，REF-015 验证了新增跨页可见，REF-016 由守卫单测覆盖。
+
+**未验证**：多浏览器矩阵、WebSocket/跨用户实时推送、复杂筛选与翻页组合、正式库写入（禁止）。
 
 ## 5. 未覆盖范围
 
