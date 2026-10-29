@@ -97,6 +97,7 @@ cd backend
 | E2E | `python3 tests/e2e/test_multi_page_refresh.py` | 课程、教学班、学期、公告、选课/退课、成绩审核 |
 | E2E | `python3 tests/e2e/test_materials_refresh.py` | 资料上传/删除 |
 | E2E | `python3 tests/e2e/test_grade_entry_refresh.py` | 成绩保存/提交 |
+| E2E | `python3 tests/e2e/test_business_acceptance.py` | FIX-BUSINESS-001：学院级联、批量删除保护、四类模板与导入、三字段登录、无刷新；Console/Network 检查（49 项） |
 
 E2E 环境：`uams_test` 后端 8010、Vite 5180、Chrome/CDP；脚本强制检查 `/health.env=testing`，临时数据自清理。详细说明见 `frontend/tests/e2e/README.md`。
 
