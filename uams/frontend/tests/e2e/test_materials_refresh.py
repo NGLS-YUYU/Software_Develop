@@ -21,7 +21,7 @@ def api(p,t=None,m='GET',b=None):
  except urllib.error.HTTPError as e:
   raw=e.read().decode();return e.code,(json.loads(raw) if raw else None)
 def login(u,p):
- st,b=api('/auth/login',m='POST',b={'username':u,'password':p});assert st==200;return b
+ st,b=api('/auth/login',m='POST',b={'username':u,'real_name':{'admin':'admin','T001':'钱秀兰','20260001':'钱伟'}.get(u,u),'password':p});assert st==200;return b
 def wsc(url):
  u=urlparse(url);s=socket.create_connection((u.hostname,u.port));k=base64.b64encode(os.urandom(16)).decode();s.sendall((f"GET {u.path} HTTP/1.1\r\nHost: {u.hostname}:{u.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {k}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode());s.recv(4096);return s
 def send(s,p):

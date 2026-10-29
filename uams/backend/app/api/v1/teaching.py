@@ -9,7 +9,8 @@ from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Teacher
 from app.models.user import User, UserType
-from app.schemas.common import PageParams, PageResult
+from app.schemas.common import BatchDeleteRequest, BatchDeleteResult, PageParams, PageResult
+from app.services.base import batch_delete_each
 from app.schemas.teaching import (
     ScheduleCreate,
     ScheduleOut,
@@ -131,6 +132,18 @@ def update_task(
     return _task_out(svc.get_or_404(task_id), svc)
 
 
+@tasks.post(
+    "/batch-delete", response_model=BatchDeleteResult, summary="批量删除教学任务"
+)
+def batch_delete_tasks(
+    payload: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("teaching:write")),
+):
+    svc = TeachingTaskService(db)
+    return batch_delete_each(payload.ids, svc.delete)
+
+
 @tasks.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除教学任务")
 def delete_task(
     task_id: int,
@@ -249,6 +262,18 @@ def update_class(
     svc = TeachingClassService(db)
     svc.update_class(class_id, payload.model_dump(exclude_unset=True))
     return _tc_out(svc.get_or_404(class_id), svc.selection_count(class_id))
+
+
+@classes.post(
+    "/batch-delete", response_model=BatchDeleteResult, summary="批量删除教学班"
+)
+def batch_delete_classes(
+    payload: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("teaching:write")),
+):
+    svc = TeachingClassService(db)
+    return batch_delete_each(payload.ids, svc.delete)
 
 
 @classes.delete("/{class_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除教学班")

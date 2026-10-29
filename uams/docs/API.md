@@ -87,8 +87,14 @@
 
 ```json
 POST /api/v1/auth/login
-{ "username": "20260001", "password": "20260001" }
+{ "username": "20260001", "real_name": "钱伟", "password": "20260001" }
 ```
+
+> **三字段登录（FIX-BUSINESS-001）**：`username`、`real_name`、`password` 三者必须同时匹配才签发令牌。
+> - `username` 全局唯一（学号 / 工号 / 管理员登录名）；`real_name` 取自 `users.real_name`（学生 / 教师建档时写入），不是独立登录名；
+> - 姓名不一致与密码错误返回同一 `AUTH_INVALID_CREDENTIALS`，并计入原有失败次数与锁定策略，避免泄露具体失败字段；
+> - 初始管理员 `admin` 兼容姓名字段填 `admin` 或历史显示名「系统管理员」；
+> - 教师兼任管理员（`POST /admins/{user_id}/grant`）复用同一账号、同一姓名，无需另建账号。
 
 **响应示例**
 
@@ -162,8 +168,10 @@ POST /api/v1/auth/login
 | POST | `/students` | 新增（同时创建 users 账号并授 STUDENT 角色） | `student:write` |
 | PUT | `/students/{student_id}` | 修改 | `student:write` |
 | DELETE | `/students/{student_id}` | 删除（有选课记录时 409） | `student:write` |
+| POST | `/students/batch-delete` | 批量删除（逐条校验，见 §4.5） | `student:write` |
 
 > 新增学生时 `password` 留空则默认密码为学号。
+> **学院 / 专业 / 班级联动（FIX-BUSINESS-001）**：`class_id` 是唯一权威归属，`college_id`、`major_id` 为一致性校验字段（可选）。传入时若与班级的派生关系不一致返回 409；不传则完全由班级推导。
 
 ### 4.2 教师 `/api/v1/teachers`
 
@@ -175,6 +183,26 @@ POST /api/v1/auth/login
 | POST | `/teachers` | 新增（同时创建账号并授 TEACHER 角色） | `teacher:write` |
 | PUT | `/teachers/{teacher_id}` | 修改 | `teacher:write` |
 | DELETE | `/teachers/{teacher_id}` | 删除（有教学班时 409） | `teacher:write` |
+| POST | `/teachers/batch-delete` | 批量删除（逐条校验，见 §4.5） | `teacher:write` |
+
+### 4.5 批量删除约定（FIX-BUSINESS-001）
+
+`POST .../batch-delete`，请求体 `{ "ids": [1, 2, 3] }`（1–100 条，自动去重）。每条记录独立执行各自的删除校验：
+
+```json
+{
+  "requested": 3,
+  "deleted": [2],
+  "failed": [
+    { "id": 1, "reason": "该学生有 2 条选课记录，无法删除" },
+    { "id": 3, "reason": "学生不存在（id=3）" }
+  ]
+}
+```
+
+- 任一条失败**不影响**其他条；HTTP 状态固定 200，前端据 `failed` 展示原因；
+- 复用单条删除的全部业务约束（选课 / 成绩 / 教学任务 / 教学班 / 已结束学期等），不会级联清除历史记录；
+- 已支持：学生、教师、课程、培养方案、教学任务、教学班、教学安排，以及教学班学生名单（`POST /teaching-classes/{id}/students/batch-delete`，字段为 `student_ids`，已有成绩的学生会被拒绝）。
 
 ---
 
@@ -189,6 +217,7 @@ POST /api/v1/auth/login
 | POST | `/courses` | 新增 | `course:write` |
 | PUT | `/courses/{course_id}` | 修改 | `course:write` |
 | DELETE | `/courses/{course_id}` | 删除（有教学任务时 409） | `course:write` |
+| POST | `/courses/batch-delete` | 批量删除（逐条校验，见 §4.5） | `course:write` |
 | GET | `/courses/{course_id}/prerequisites` | 先修课程列表 | 登录 |
 | POST | `/courses/{course_id}/prerequisites` | 添加先修（**含环路检测**） | `course:write` |
 | DELETE | `/courses/{course_id}/prerequisites/{row_id}` | 移除先修 | `course:write` |
@@ -205,6 +234,7 @@ POST /api/v1/auth/login
 | POST | `/curriculum-plans` | 新增（同专业同年级唯一） | `curriculum:write` |
 | PUT | `/curriculum-plans/{plan_id}` | 修改 | `curriculum:write` |
 | DELETE | `/curriculum-plans/{plan_id}` | 删除 | `curriculum:write` |
+| POST | `/curriculum-plans/batch-delete` | 批量删除（逐条校验，见 §4.5） | `curriculum:write` |
 | GET | `/curriculum-plans/{plan_id}/courses` | 方案课程列表 | 登录 |
 | POST | `/curriculum-plans/{plan_id}/courses` | 添加课程 | `curriculum:write` |
 | DELETE | `/curriculum-plans/{plan_id}/courses/{row_id}` | 移除课程 | `curriculum:write` |
@@ -244,6 +274,7 @@ POST /api/v1/auth/login
 | POST | `/teaching-tasks` | 新增 | `teaching:write` |
 | PUT | `/teaching-tasks/{task_id}` | 修改 | `teaching:write` |
 | DELETE | `/teaching-tasks/{task_id}` | 删除（有教学班时 409） | `teaching:write` |
+| POST | `/teaching-tasks/batch-delete` | 批量删除（逐条校验，见 §4.5） | `teaching:write` |
 
 ### 6.3 教学班 `/api/v1/teaching-classes`
 
@@ -255,6 +286,7 @@ POST /api/v1/auth/login
 | POST | `/teaching-classes` | 新增（`term_id`、`teacher_id` 必填，可选 `name`；`ENDED` 学期拒绝） | `teaching:write` |
 | PUT | `/teaching-classes/{class_id}` | 修改（`code`/`name`/`teacher_id`/`capacity`/`selection_status`/`status`；`term_id`/`course_id` 不可变；换教师有 SUBMITTED/APPROVED 成绩时锁定；容量不得小于已选人数） | `teaching:write` |
 | DELETE | `/teaching-classes/{class_id}` | 删除（有选课或成绩时 409 `TEACHING_CLASS_HAS_DATA`；`ENDED` 学期拒绝） | `teaching:write` |
+| POST | `/teaching-classes/batch-delete` | 批量删除（逐条校验，见 §4.5） | `teaching:write` |
 | POST | `/teaching-classes/{class_id}/selection?open=true\|false` | 开放/关闭选课 | `selection:manage` |
 | GET | `/teaching-classes/{class_id}/schedules` | 排课列表 | 登录 |
 | POST | `/teaching-classes/{class_id}/schedules` | 添加排课（**冲突检测**） | `schedule:write` |
@@ -263,6 +295,7 @@ POST /api/v1/auth/login
 | GET | `/teaching-classes/{class_id}/students` | 教学班学生名单（含 `selection_id`、专业、行政班、`status`、`source`/`source_label`、`selected_at`；教师仅限本人） | `selection:read` |
 | POST | `/teaching-classes/{class_id}/students` | 教务手动添加学生（FIX-002：校验学期/学籍/容量/同课程/时间冲突，来源 `ADMIN_MANUAL`） | `selection:manage` |
 | DELETE | `/teaching-classes/{class_id}/students/{student_id}` | 教务移除学生（FIX-002：已有成绩记录时 409） | `selection:manage` |
+| POST | `/teaching-classes/{class_id}/students/batch-delete` | 教务批量移除学生（`student_ids`；逐条复用单条移除校验，有成绩者失败） | `selection:manage` |
 | POST | `/teaching-classes/{class_id}/assign-required?preview=true\|false` | 必修课预安排（FIX-002：`preview=true` 只预览不写库；按行政班/专业/学院，优先级 class_id>major_id>college_id） | `selection:manage` |
 | GET | `/teaching-classes/{class_id}/selection-stats` | 选课统计（含计数一致性检查） | `selection:read` |
 
@@ -288,6 +321,7 @@ POST /api/v1/auth/login
 | POST | `/teaching-schedules` | 新增（`teaching_class_id` + `classroom_id` + 星期/节次/周次/单双周；**自动检测三类冲突**） | `schedule:write` |
 | PUT | `/teaching-schedules/{schedule_id}` | 修改（仅星期/节次/周次/教室；`teaching_class_id` 不可变） | `schedule:write` |
 | DELETE | `/teaching-schedules/{schedule_id}` | 删除 | `schedule:write` |
+| POST | `/teaching-schedules/batch-delete` | 批量删除排课（逐条校验，见 §4.5；不影响教学班与选课） | `schedule:write` |
 | GET | `/teaching-schedules/mine` | 我的教学安排（教师，身份取自 token；过滤：`term_id` / `semester` / `week`） | 登录（教师） |
 | GET | `/teaching-schedules/my` | 我的课程安排（学生，本人已选教学班；未选课返回空列表；过滤同上） | 登录（学生） |
 
@@ -508,8 +542,18 @@ DRAFT ──提交──> SUBMITTED ──通过──> APPROVED（学生可见�
 
 **模板（FIX-005）**
 
-- 首行是**中文字段名**，同时兼容旧的英文字段名（`student_no` 等），既有调用方不受影响；取值也支持中文（职称 `教授/副教授/讲师/助教`、性别 `男/女/未知`、课程性质 `专业必修/…`）。
+- 首行是**中文字段名**，同时兼容旧的英文字段名（`student_no` 等），既有调用方不受影响；取值也支持中文（职称 `教授/副教授/讲师/助教`、性别 `男/女/未知`、课程性质 `专业必修/…`、考核形式 `考试/考查`、状态 `启用/停用`）。
 - 模板包含第 2 个工作表「填写说明」，逐条说明必填项与常见错误；说明不放在数据行，避免被当成数据解析。
+- **模板字段与单独新增表单一致（FIX-BUSINESS-001）**，必填列用 * 标注：
+
+| 模板 | 必填列 | 选填列 |
+|---|---|---|
+| 学生 | 学号、姓名、学院、专业、行政班 | 登录名、性别、出生日期（YYYY-MM-DD）、入学年份、邮箱、手机 |
+| 教师 | 工号、姓名、学院 | 职称、性别、入职日期（YYYY-MM-DD）、邮箱、联系电话 |
+| 课程 | 课程代码、课程名称、学院、学分、总学时、理论学时、实践学时、课程性质 | 考核形式（考试/考查，默认考试）、课程简介、状态（启用/停用，默认启用） |
+| 成绩 | 学号、教学班 及课程成绩列 | —（按教学班动态生成） |
+
+> 学生的学院 / 专业 / 行政班必须层级匹配（专业属于该学院、班级属于该专业）；入学年份留空时取行政班年级。导入逐行校验，失败行返回字段级原因，不影响其他行。
 - **成绩模板按 `teaching_class_id` 动态生成**：学号 / 姓名 / 班级 / 课程代码 / 课程名称 / 教学班 由系统带出（灰底，教师不用填），成绩列由 `AssessmentProfile` 决定：
 
 | 课程 | 成绩列 |

@@ -49,7 +49,7 @@ class AuthService:
 
     # --- 登录 ---
 
-    def authenticate(self, username: str, password: str) -> User:
+    def authenticate(self, username: str, real_name: str, password: str) -> User:
         user = self.repo.get_by_username(username)
 
         # 用户不存在时也走一次哈希校验，避免通过响应时间区分
@@ -66,10 +66,13 @@ class AuthService:
         if user.status == UserStatus.DISABLED:
             raise AccountDisabled()
 
-        if not verify_password(password, user.password_hash):
+        # 姓名与密码同时校验，任一失败统一计入失败次数。
+        password_ok = verify_password(password, user.password_hash)
+        name_ok = self._name_matches(user, real_name.strip())
+        if not (password_ok and name_ok):
             locked_until = self._record_failure(user, now)
             if locked_until is not None:
-                # 触发锁定当次即返回锁定状态，避免用户继续尝试却只看到“密码错误”。
+                # 触发锁定当次即返回锁定状态，避免用户继续尝试却只看到“凭据错误”。
                 raise self._locked_error(locked_until, now)
             raise InvalidCredentials()
 
@@ -80,6 +83,19 @@ class AuthService:
         user.last_login_at = now
         self.db.commit()
         return user
+
+    @staticmethod
+    def _name_matches(user: User, real_name: str) -> bool:
+        """姓名精确匹配（去首尾空白）；初始 admin 兼容姓名 admin。
+
+        User.real_name 是统一权威姓名来源；Student/Teacher 不另存姓名。
+        初始 admin 在历史库中可能显示为“系统管理员”，因此仅对 username=admin
+        额外接受 admin，不修改任何历史身份资料。
+        """
+        expected = (user.real_name or "").strip()
+        if real_name and real_name == expected:
+            return True
+        return user.username == "admin" and real_name == "admin"
 
     @staticmethod
     def _locked_error(locked_until: datetime, now: datetime) -> AccountLocked:

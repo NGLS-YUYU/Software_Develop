@@ -14,6 +14,7 @@ FIX-005 补充：
   - 教师导入教师本人只能操作自己的教学班（路由层传入 current 用户做归属校验）。
 """
 
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 
@@ -39,9 +40,21 @@ from app.services.person import StudentService, TeacherService
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # --- 模板字段定义（与 V2.0 指南一致） ---
-_STUDENT_HEADERS = ["student_no", "name", "username", "college", "major", "class_name"]
-_TEACHER_HEADERS = ["teacher_no", "name", "college", "title", "gender", "phone"]
+_STUDENT_HEADERS = [
+    "student_no", "name", "username", "gender", "college", "major", "class_name",
+    "enrollment_year", "birth_date", "email", "phone",
+]
+_STUDENT_REQUIRED = ["student_no", "name", "college", "major", "class_name"]
+_TEACHER_HEADERS = [
+    "teacher_no", "name", "college", "title", "gender", "hire_date", "email", "phone",
+]
+_TEACHER_REQUIRED = ["teacher_no", "name", "college"]
 _COURSE_HEADERS = [
+    "course_code", "course_name", "college", "credits", "total_hours",
+    "theory_hours", "practice_hours", "course_type",
+    "exam_type", "description", "status",
+]
+_COURSE_REQUIRED = [
     "course_code", "course_name", "college", "credits", "total_hours",
     "theory_hours", "practice_hours", "course_type",
 ]
@@ -65,13 +78,15 @@ _HEADER_ALIASES: dict[str, str] = {
     # 学生
     "学号": "student_no", "姓名": "name", "登录名": "username",
     "学院": "college", "专业": "major", "行政班": "class_name", "班级": "class_name",
+    "性别": "gender", "出生日期": "birth_date", "入学年份": "enrollment_year",
+    "邮箱": "email", "联系电话": "phone", "联系方式": "phone", "手机": "phone",
     # 教师
-    "工号": "teacher_no", "职称": "title", "性别": "gender",
-    "联系电话": "phone", "联系方式": "phone", "入职日期": "hire_date",
+    "工号": "teacher_no", "职称": "title", "入职日期": "hire_date",
     # 课程
     "课程代码": "course_code", "课程编号": "course_code", "课程名称": "course_name",
     "学分": "credits", "总学时": "total_hours",
     "理论学时": "theory_hours", "实践学时": "practice_hours", "课程性质": "course_type",
+    "考核形式": "exam_type", "考核方式": "exam_type", "课程简介": "description", "状态": "status",
     # 成绩
     "课程代码(固定)": "course_code", "课程名称(固定)": "course_name",
     "教学班": "teaching_class_code", "教学班编号": "teaching_class_code",
@@ -105,6 +120,8 @@ _COURSE_TYPE_VALUES = {
     "专业必修": "REQUIRED", "专业选修": "ELECTIVE",
     "公共必修": "PUBLIC_REQUIRED", "公共选修": "PUBLIC_ELECTIVE", "实践": "PRACTICE",
 }
+_EXAM_TYPE_VALUES = {"考试": "EXAM", "考查": "CHECK", "EXAM": "EXAM", "CHECK": "CHECK"}
+_STATUS_VALUES = {"启用": "ACTIVE", "停用": "INACTIVE", "ACTIVE": "ACTIVE", "INACTIVE": "INACTIVE"}
 _SCORE_LABELS = {
     "regular_score": "平时成绩",
     "mid_score": "期中成绩",
@@ -151,6 +168,23 @@ def _cell_decimal(value) -> Decimal | None:
         return Decimal(str(value))
     except (InvalidOperation, ValueError) as e:
         raise ValueError(f"非法数字：{value}") from e
+
+
+def _parse_date(value) -> date | None:
+    """解析 Excel 日期/YYYY-MM-DD 字符串；空值返回 None。"""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = _cell_str(value)
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"日期格式非法：{text}（应为 YYYY-MM-DD）")
 
 
 def _load_sheet(file_bytes: bytes):
@@ -303,23 +337,25 @@ class ImportService:
     def student_template(self) -> bytes:
         return _template_bytes(
             [_label_of(f) for f in _STUDENT_HEADERS],
-            ["20240001", "张三", "20240001", "信息工程学院", "软件工程", "软件2401班"],
+            ["20240001", "张三", "20240001", "男", "信息工程学院", "软件工程", "软件2401班", "", "", "", ""],
             title="学生批量导入模板",
             notes=[
                 "① 学号：必填，唯一，作为学生的登录名（可另填「登录名」列覆盖）。",
                 "② 姓名：必填。",
-                "③ 学院 / 专业 / 行政班：必填，必须与系统中已存在的名称完全一致；",
+                "③ 性别：选填，可填 男 / 女 / 未知。",
+                "④ 学院 / 专业 / 行政班：必填，必须与系统中已存在的名称完全一致；",
                 "   三者层级必须匹配（专业属于该学院、行政班属于该专业），系统不会自动创建。",
-                "④ 入学年份由行政班的年级自动带入，无需填写。",
-                "⑤ 首行表头请勿修改或删除；从第 2 行开始填写数据，可留空行。",
-                "⑥ 支持 .xlsx 格式，单个文件不超过 10MB。",
+                "⑤ 入学年份：选填；留空时由行政班年级自动带入。",
+                "⑥ 出生日期：选填，格式 YYYY-MM-DD；邮箱/手机：选填。",
+                "⑦ 首行表头请勿修改或删除；从第 2 行开始填写数据，可留空行。",
+                "⑧ 支持 .xlsx 格式，单个文件不超过 10MB。",
             ],
         )
 
     def teacher_template(self) -> bytes:
         return _template_bytes(
             [_label_of(f) for f in _TEACHER_HEADERS],
-            ["T100", "李四", "信息工程学院", "讲师", "男", "13800000000"],
+            ["T100", "李四", "信息工程学院", "讲师", "男", "", "", "13800000000"],
             title="教师批量导入模板",
             notes=[
                 "① 工号：必填，唯一，同时作为教师的登录名；初始密码与工号相同。",
@@ -327,7 +363,7 @@ class ImportService:
                 "③ 学院：必填，必须与系统中已存在的学院名称完全一致，系统不会自动创建。",
                 "④ 职称：选填，可填 教授 / 副教授 / 讲师 / 助教（也可直接填 PROFESSOR 等英文值）。",
                 "⑤ 性别：选填，可填 男 / 女 / 未知。",
-                "⑥ 联系电话：选填。",
+                "⑥ 入职日期：选填，格式 YYYY-MM-DD；邮箱/联系电话：选填。",
                 "⑦ 首行表头请勿修改或删除；从第 2 行开始填写数据，可留空行。",
                 "⑧ 支持 .xlsx 格式，单个文件不超过 10MB。",
             ],
@@ -336,7 +372,7 @@ class ImportService:
     def course_template(self) -> bytes:
         return _template_bytes(
             [_label_of(f) for f in _COURSE_HEADERS],
-            ["CS101", "程序设计基础", "信息工程学院", 4.0, 64, 40, 24, "专业必修"],
+            ["CS101", "程序设计基础", "信息工程学院", 4.0, 64, 40, 24, "专业必修", "考试", "", "启用"],
             title="课程批量导入模板",
             notes=[
                 "① 课程代码：必填，唯一。课程名称：必填。",
@@ -349,8 +385,9 @@ class ImportService:
                 "   实践学时 > 0 的课程才有实践考试与实践成绩。",
                 "⑥ 课程性质：可填 专业必修 / 专业选修 / 公共必修 / 公共选修 / 实践"
                 "（也可填 REQUIRED 等英文值）。",
-                "⑦ 首行表头请勿修改或删除；从第 2 行开始填写数据，可留空行。",
-                "⑧ 支持 .xlsx 格式，单个文件不超过 10MB。",
+                "⑦ 考核形式：选填，考试 / 考查（默认考试）；课程简介：选填；状态：启用 / 停用。",
+                "⑧ 首行表头请勿修改或删除；从第 2 行开始填写数据，可留空行。",
+                "⑨ 支持 .xlsx 格式，单个文件不超过 10MB。",
             ],
         )
 
@@ -484,7 +521,7 @@ class ImportService:
     def import_students(self, file_bytes: bytes) -> dict:
         ws = _load_sheet(file_bytes)
         hmap = _header_map(ws)
-        _require_headers(hmap, _STUDENT_HEADERS)
+        _require_headers(hmap, _STUDENT_REQUIRED)
 
         rows: list[dict] = []
         college_vals: set[str] = set()
@@ -495,17 +532,29 @@ class ImportService:
         for r in range(2, ws.max_row + 1):
             student_no = _cell_str(ws.cell(r, hmap["student_no"]).value)
             name = _cell_str(ws.cell(r, hmap["name"]).value)
-            username = _cell_str(ws.cell(r, hmap["username"]).value) or student_no
+            # 「登录名」为首行可选列：未提供时默认取学号。
+            username = (
+                _cell_str(ws.cell(r, hmap["username"]).value)
+                if "username" in hmap
+                else ""
+            ) or student_no
+            gender_v = _cell_str(ws.cell(r, hmap["gender"]).value) if "gender" in hmap else ""
             college_v = _cell_str(ws.cell(r, hmap["college"]).value)
             major_v = _cell_str(ws.cell(r, hmap["major"]).value)
             class_v = _cell_str(ws.cell(r, hmap["class_name"]).value)
-            if not any([student_no, name, username, college_v, major_v, class_v]):
+            year_v = _cell_str(ws.cell(r, hmap["enrollment_year"]).value) if "enrollment_year" in hmap else ""
+            birth_v = ws.cell(r, hmap["birth_date"]).value if "birth_date" in hmap else None
+            email_v = _cell_str(ws.cell(r, hmap["email"]).value) if "email" in hmap else ""
+            phone_v = _cell_str(ws.cell(r, hmap["phone"]).value) if "phone" in hmap else ""
+            if not any([student_no, name, username, gender_v, college_v, major_v, class_v, year_v, birth_v, email_v, phone_v]):
                 continue  # 空行
             rows.append(
                 {
                     "row": r, "student_no": student_no, "name": name,
-                    "username": username, "college": college_v,
-                    "major": major_v, "class_name": class_v,
+                    "username": username, "gender": gender_v,
+                    "college": college_v, "major": major_v, "class_name": class_v,
+                    "enrollment_year": year_v, "birth_date": birth_v,
+                    "email": email_v, "phone": phone_v,
                 }
             )
             college_vals.add(college_v)
@@ -566,6 +615,23 @@ class ImportService:
             if klass.major_id != major.id:
                 errors.append(fail("class_name", "行政班与专业不匹配")); continue
 
+            try:
+                gender = _translate(row["gender"], _GENDER_VALUES, "性别") or "UNKNOWN"
+            except ValueError as e:
+                errors.append(fail("gender", str(e))); continue
+            try:
+                birth_date = _parse_date(row["birth_date"])
+            except ValueError as e:
+                errors.append(fail("birth_date", str(e))); continue
+            enrollment_year = klass.grade_year
+            if row["enrollment_year"]:
+                try:
+                    enrollment_year = int(row["enrollment_year"])
+                except ValueError:
+                    errors.append(fail("enrollment_year", "入学年份必须是整数")); continue
+            if not (1900 <= enrollment_year <= 2200):
+                errors.append(fail("enrollment_year", "入学年份必须在 1900-2200")); continue
+
             if row["student_no"] in existing_nos:
                 errors.append(fail("student_no", f"学号已存在：{row['student_no']}")); continue
             if row["student_no"] in seen_nos:
@@ -577,18 +643,22 @@ class ImportService:
 
             seen_nos.add(row["student_no"])
             seen_usernames.add(row["username"])
-            svc.create_student(
-                {
+            try:
+                svc.create_student({
                     "student_no": row["student_no"],
                     "real_name": row["name"],
                     "username": row["username"],
                     "class_id": klass.id,
-                    # 入学年份与行政班 grade_year 保持一致
-                    "enrollment_year": klass.grade_year,
-                    # FIX-001：导入模板不含邮箱列，显式按“未填写”处理为 NULL
-                    "email": None,
-                }
-            )
+                    "college_id": college.id,
+                    "major_id": major.id,
+                    "gender": gender,
+                    "birth_date": birth_date,
+                    "enrollment_year": enrollment_year,
+                    "email": row["email"] or None,
+                    "phone": row["phone"] or None,
+                })
+            except Exception as e:  # noqa: BLE001
+                errors.append(fail("row", str(e))); continue
             success += 1
 
         return {
@@ -603,7 +673,7 @@ class ImportService:
     def import_teachers(self, file_bytes: bytes) -> dict:
         ws = _load_sheet(file_bytes)
         hmap = _header_map(ws)
-        _require_headers(hmap, ["teacher_no", "name", "college"])
+        _require_headers(hmap, _TEACHER_REQUIRED)
 
         rows: list[dict] = []
         college_vals: set[str] = set()
@@ -614,14 +684,16 @@ class ImportService:
             college_v = _cell_str(ws.cell(r, hmap["college"]).value)
             title_v = _cell_str(ws.cell(r, hmap["title"]).value) if "title" in hmap else ""
             gender_v = _cell_str(ws.cell(r, hmap["gender"]).value) if "gender" in hmap else ""
+            hire_v = ws.cell(r, hmap["hire_date"]).value if "hire_date" in hmap else None
+            email_v = _cell_str(ws.cell(r, hmap["email"]).value) if "email" in hmap else ""
             phone_v = _cell_str(ws.cell(r, hmap["phone"]).value) if "phone" in hmap else ""
-            if not any([teacher_no, name, college_v, title_v, gender_v, phone_v]):
+            if not any([teacher_no, name, college_v, title_v, gender_v, hire_v, email_v, phone_v]):
                 continue
             rows.append(
                 {
                     "row": r, "teacher_no": teacher_no, "name": name,
                     "college": college_v, "title": title_v, "gender": gender_v,
-                    "phone": phone_v,
+                    "hire_date": hire_v, "email": email_v, "phone": phone_v,
                 }
             )
             college_vals.add(college_v)
@@ -665,6 +737,10 @@ class ImportService:
                 gender = _translate(row["gender"], _GENDER_VALUES, "性别") or "UNKNOWN"
             except ValueError as e:
                 errors.append(fail("gender", str(e))); continue
+            try:
+                hire_date = _parse_date(row["hire_date"])
+            except ValueError as e:
+                errors.append(fail("hire_date", str(e))); continue
 
             if row["teacher_no"] in existing_nos:
                 errors.append(fail("teacher_no", f"工号已存在：{row['teacher_no']}")); continue
@@ -674,18 +750,19 @@ class ImportService:
                 errors.append(fail("teacher_no", f"登录名已被占用：{row['teacher_no']}")); continue
 
             seen.add(row["teacher_no"])
-            svc.create_teacher(
-                {
+            try:
+                svc.create_teacher({
                     "teacher_no": row["teacher_no"],
                     "real_name": row["name"],
                     "college_id": college.id,
                     "title": title,
                     "gender": gender,
+                    "hire_date": hire_date,
                     "phone": row["phone"] or None,
-                    # FIX-001：导入模板不含邮箱列，显式按“未填写”处理为 NULL
-                    "email": None,
-                }
-            )
+                    "email": row["email"] or None,
+                })
+            except Exception as e:  # noqa: BLE001
+                errors.append(fail("row", str(e))); continue
             success += 1
 
         return {
@@ -700,7 +777,7 @@ class ImportService:
     def import_courses(self, file_bytes: bytes) -> dict:
         ws = _load_sheet(file_bytes)
         hmap = _header_map(ws)
-        _require_headers(hmap, _COURSE_HEADERS)
+        _require_headers(hmap, _COURSE_REQUIRED)
 
         rows: list[dict] = []
         college_vals: set[str] = set()
@@ -714,9 +791,13 @@ class ImportService:
             theory_raw = ws.cell(r, hmap["theory_hours"]).value
             practice_raw = ws.cell(r, hmap["practice_hours"]).value
             ctype = _cell_str(ws.cell(r, hmap["course_type"]).value)
+            exam_v = _cell_str(ws.cell(r, hmap["exam_type"]).value) if "exam_type" in hmap else ""
+            desc_v = _cell_str(ws.cell(r, hmap["description"]).value) if "description" in hmap else ""
+            status_v = _cell_str(ws.cell(r, hmap["status"]).value) if "status" in hmap else ""
             if not any([course_code, course_name, college_v,
                         _cell_str(credits_raw), _cell_str(hours_raw),
-                        _cell_str(theory_raw), _cell_str(practice_raw), ctype]):
+                        _cell_str(theory_raw), _cell_str(practice_raw), ctype,
+                        exam_v, desc_v, status_v]):
                 continue
             rows.append(
                 {
@@ -724,6 +805,7 @@ class ImportService:
                     "college": college_v, "credits_raw": credits_raw,
                     "hours_raw": hours_raw, "theory_raw": theory_raw,
                     "practice_raw": practice_raw, "course_type": ctype,
+                    "exam_type": exam_v, "description": desc_v, "status": status_v,
                 }
             )
             college_vals.add(college_v)
@@ -803,14 +885,20 @@ class ImportService:
             if ctype not in CourseType.ALL:
                 errors.append(fail("course_type", f"课程类型非法：{row['course_type']}")); continue
 
+            try:
+                exam_type = _translate(row["exam_type"], _EXAM_TYPE_VALUES, "考核形式") or "EXAM"
+                status = _translate(row["status"], _STATUS_VALUES, "状态") or "ACTIVE"
+            except ValueError as e:
+                errors.append(fail("exam_type", str(e))); continue
+
             if row["course_code"] in existing_codes:
                 errors.append(fail("course_code", f"课程编号已存在：{row['course_code']}")); continue
             if row["course_code"] in seen:
                 errors.append(fail("course_code", f"课程编号在导入文件中重复：{row['course_code']}")); continue
 
             seen.add(row["course_code"])
-            svc.create(
-                {
+            try:
+                svc.create({
                     "code": row["course_code"],
                     "name": row["course_name"],
                     "college_id": college.id,
@@ -819,8 +907,12 @@ class ImportService:
                     "total_hours": int(hours),
                     "theory_hours": theory,
                     "practice_hours": practice,
-                }
-            )
+                    "exam_type": exam_type,
+                    "description": row["description"] or None,
+                    "status": status,
+                })
+            except Exception as e:  # noqa: BLE001
+                errors.append(fail("row", str(e))); continue
             success += 1
 
         return {

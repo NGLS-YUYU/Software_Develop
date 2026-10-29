@@ -25,7 +25,7 @@ def api(path, tok=None, method='GET', body=None):
         except: return e.code,raw
 
 def login(u,p):
-    st,b=api('/auth/login',method='POST',body={'username':u,'password':p}); assert st==200,(st,b); return b
+    st,b=api('/auth/login',method='POST',body={'username':u,'real_name':{'admin':'admin','T001':'钱秀兰','20260001':'钱伟'}.get(u,u),'password':p}); assert st==200,(st,b); return b
 
 def wsc(url):
     u=urlparse(url); s=socket.create_connection((u.hostname,u.port),timeout=10); k=base64.b64encode(os.urandom(16)).decode()

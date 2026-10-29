@@ -90,12 +90,16 @@ onMounted(async () => {
       </el-select>
       <el-button type="primary" @click="t.search">查询</el-button>
       <div class="spacer" />
+      <el-button type="danger" plain :disabled="!t.selectedRows.value.length"
+        :loading="t.batchDeleting.value" @click="t.batchRemoveSelected">批量删除</el-button>
       <el-button type="primary" :icon="'Plus'" @click="t.openCreate">新增方案</el-button>
     </div>
 
     <!-- 桌面：方案表格 -->
     <div class="table-wrap" v-show="t.rows.value.length || t.loading.value">
-      <el-table v-loading="t.loading.value" :data="t.rows.value" stripe>
+      <el-table v-loading="t.loading.value" :data="t.rows.value" stripe
+        @selection-change="t.onSelectionChange">
+        <el-table-column type="selection" width="45" />
         <el-table-column prop="code" label="方案代码" width="130" />
         <el-table-column prop="name" label="方案名称" min-width="200" />
         <el-table-column prop="major_name" label="适用专业" min-width="160" />

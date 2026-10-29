@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { classApi, collegeApi, exportApi, majorApi, studentApi } from '@/api'
@@ -16,6 +16,8 @@ const t = useCrudTable<Student>(studentApi as never, {
   emptyForm: () => ({
     student_no: '',
     real_name: '',
+    college_id: undefined,
+    major_id: undefined,
     class_id: undefined,
     gender: 'UNKNOWN',
     birth_date: undefined,
@@ -25,6 +27,22 @@ const t = useCrudTable<Student>(studentApi as never, {
     password: '',
   }),
 })
+
+const filteredMajors = computed(() =>
+  majors.value.filter((m) => !t.form.value.college_id || m.college_id === t.form.value.college_id),
+)
+const filteredClasses = computed(() =>
+  classes.value.filter((k) => !t.form.value.major_id || k.major_id === t.form.value.major_id),
+)
+
+function onCollegeChange() {
+  t.form.value.major_id = undefined
+  t.form.value.class_id = undefined
+}
+
+function onMajorChange() {
+  t.form.value.class_id = undefined
+}
 
 const GENDER: Record<string, string> = { MALE: '男', FEMALE: '女', UNKNOWN: '-' }
 const STATUS: Record<string, string> = {
@@ -37,6 +55,10 @@ const STATUS_TYPE: Record<string, string> = {
 /** 新增时不传空密码，让后端用「默认密码=学号」的规则。 */
 function payload(): Record<string, unknown> | null {
   const f = { ...t.form.value }
+  if (!f.college_id || !f.major_id || !f.class_id) {
+    ElMessage.warning('请选择所属学院、专业和班级')
+    return null
+  }
 
   // FIX-001：空白邮箱统一为 null；非空邮箱先做一次前端格式提示。
   const email = normalizeEmailInput(f.email)
@@ -98,13 +120,16 @@ onMounted(async () => {
       <el-button type="primary" @click="t.search">查询</el-button>
       <div class="spacer" />
       <el-button @click="exportApi.students()">导出 Excel</el-button>
+      <el-button type="danger" plain :disabled="!t.selectedRows.value.length"
+        :loading="t.batchDeleting.value" @click="t.batchRemoveSelected">批量删除</el-button>
       <el-button type="primary" :icon="'Plus'" @click="t.openCreate">新增学生</el-button>
     </div>
 
     <div class="list" v-loading="t.loading.value">
       <!-- 桌面端：档案表格（表头次要色、行高舒适、操作列贴右固定） -->
       <div v-if="t.rows.value.length" class="table-wrap">
-        <el-table :data="t.rows.value" stripe>
+        <el-table :data="t.rows.value" stripe @selection-change="t.onSelectionChange">
+          <el-table-column type="selection" width="45" />
           <el-table-column label="学号" width="140">
             <template #default="{ row }">
               <span class="cell-no">{{ row.student_no }}</span>
@@ -226,9 +251,22 @@ onMounted(async () => {
         <el-form-item label="姓名" required>
           <el-input v-model="t.form.value.real_name" maxlength="50" />
         </el-form-item>
+        <el-form-item label="所属学院" required>
+          <el-select v-model="t.form.value.college_id" style="width: 100%"
+            placeholder="请选择学院" @change="onCollegeChange">
+            <el-option v-for="c in colleges" :key="c.id" :label="c.name" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="专业" required>
+          <el-select v-model="t.form.value.major_id" style="width: 100%"
+            placeholder="请选择专业" :disabled="!t.form.value.college_id" @change="onMajorChange">
+            <el-option v-for="m in filteredMajors" :key="m.id" :label="m.name" :value="m.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="班级" required>
-          <el-select v-model="t.form.value.class_id" style="width: 100%">
-            <el-option v-for="k in classes" :key="k.id" :label="k.name" :value="k.id" />
+          <el-select v-model="t.form.value.class_id" style="width: 100%"
+            placeholder="请选择班级" :disabled="!t.form.value.major_id">
+            <el-option v-for="k in filteredClasses" :key="k.id" :label="k.name" :value="k.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="性别" for="student-gender">

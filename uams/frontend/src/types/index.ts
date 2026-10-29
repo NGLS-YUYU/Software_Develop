@@ -8,6 +8,12 @@ export interface PageResult<T> {
   total_pages: number
 }
 
+export interface BatchDeleteResult {
+  requested: number
+  deleted: number[]
+  failed: { id: number; reason: string }[]
+}
+
 export interface PageQuery {
   page?: number
   page_size?: number

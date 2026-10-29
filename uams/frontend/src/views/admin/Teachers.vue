@@ -67,12 +67,15 @@ onMounted(async () => {
         clearable @keyup.enter="t.search" @clear="t.search" />
       <el-button type="primary" @click="t.search">查询</el-button>
       <div class="spacer" />
+      <el-button type="danger" plain :disabled="!t.selectedRows.value.length"
+        :loading="t.batchDeleting.value" @click="t.batchRemoveSelected">批量删除</el-button>
       <el-button type="primary" :icon="'Plus'" @click="t.openCreate">新增教师</el-button>
     </div>
 
     <!-- 桌面端：表格 -->
     <div v-loading="t.loading.value" class="table-wrap">
-      <el-table :data="t.rows.value" stripe>
+      <el-table :data="t.rows.value" stripe @selection-change="t.onSelectionChange">
+          <el-table-column type="selection" width="45" />
         <el-table-column prop="teacher_no" label="工号" width="140">
           <template #default="{ row }">
             <span class="cell-no">{{ row.teacher_no }}</span>

@@ -80,6 +80,11 @@ class StudentService(BaseCrudService[Student]):
         major = klass.major
         if major is None:
             raise NotFound("班级未关联专业，数据异常")
+        # FIX-BUSINESS-001：学院/专业以班级派生关系为准，前端传入时必须一致。
+        if data.get("college_id") is not None and int(data["college_id"]) != major.college_id:
+            raise Conflict("学院与所选班级不一致")
+        if data.get("major_id") is not None and int(data["major_id"]) != major.id:
+            raise Conflict("专业与所选班级不一致")
 
         user = User(
             username=username,
@@ -139,6 +144,19 @@ class StudentService(BaseCrudService[Student]):
             stu.class_id = new_cls.id
             stu.major_id = new_cls.major_id
             stu.college_id = new_cls.major.college_id
+            if data.get("college_id") is not None and int(data["college_id"]) != stu.college_id:
+                raise Conflict("学院与所选班级不一致")
+            if data.get("major_id") is not None and int(data["major_id"]) != stu.major_id:
+                raise Conflict("专业与所选班级不一致")
+
+        # 未改班级时，学院/专业也必须与现有班级一致。
+        if "class_id" not in data:
+            klass = self.db.get(Class, stu.class_id)
+            if klass and klass.major:
+                if data.get("college_id") is not None and int(data["college_id"]) != klass.major.college_id:
+                    raise Conflict("学院与所选班级不一致")
+                if data.get("major_id") is not None and int(data["major_id"]) != klass.major_id:
+                    raise Conflict("专业与所选班级不一致")
 
         for f in ("gender", "birth_date", "academic_status"):
             if f in data:

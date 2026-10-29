@@ -4,7 +4,7 @@
 各模块只需声明差异部分（CLAUDE.md §11：业务逻辑集中在 Service）。
 """
 
-from typing import Any, Generic, TypeVar
+from typing import Any, Callable, Generic, TypeVar
 
 from sqlalchemy import Select, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -135,3 +135,31 @@ class BaseCrudService(Generic[ModelT]):
             if conflict is not None:
                 raise conflict from e
             raise
+
+
+def batch_delete_each(ids: list[int], delete_one: Callable[[int], None]) -> dict:
+    """逐条执行删除并汇总结果。
+
+    - 每条删除复用模块自身的 validate_delete / 事务规则；
+    - 某条失败不影响其他条；失败原因原样返回给前端；
+    - 去重并保持输入顺序，单次最多 100 条（Schema 已限制）。
+    调用方负责权限校验。
+    """
+    from app.core.exceptions import BizError
+
+    deleted: list[int] = []
+    failed: list[dict] = []
+    seen: set[int] = set()
+    for raw in ids:
+        obj_id = int(raw)
+        if obj_id in seen:
+            continue
+        seen.add(obj_id)
+        try:
+            delete_one(obj_id)
+            deleted.append(obj_id)
+        except BizError as exc:
+            failed.append({"id": obj_id, "reason": str(exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail)})
+        except Exception as exc:  # noqa: BLE001
+            failed.append({"id": obj_id, "reason": str(exc)[:200]})
+    return {"requested": len(seen), "deleted": deleted, "failed": failed}

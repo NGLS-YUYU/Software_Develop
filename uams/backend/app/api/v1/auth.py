@@ -27,7 +27,7 @@ def login(
 ) -> LoginResponse:
     service = AuthService(db)
     try:
-        user = service.authenticate(payload.username, payload.password)
+        user = service.authenticate(payload.username, payload.real_name, payload.password)
     except Exception as exc:
         try:
             write_log(

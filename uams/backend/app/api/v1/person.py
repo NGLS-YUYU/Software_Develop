@@ -17,7 +17,8 @@ from app.models.person import Student, Teacher
 from app.models.user import User, UserType
 from app.models.selection import CourseSelection, SelectionState
 from app.models.teaching import TeachingClass
-from app.schemas.common import PageParams, PageResult
+from app.schemas.common import BatchDeleteRequest, BatchDeleteResult, PageParams, PageResult
+from app.services.base import batch_delete_each
 from app.schemas.person import (
     StudentCreate,
     StudentOut,
@@ -185,6 +186,18 @@ def delete_student(
     StudentService(db).delete(student_id)
 
 
+@students.post(
+    "/batch-delete", response_model=BatchDeleteResult, summary="批量删除学生"
+)
+def batch_delete_students(
+    payload: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("student:write")),
+):
+    svc = StudentService(db)
+    return batch_delete_each(payload.ids, svc.delete)
+
+
 # =========================== 教师 ===========================
 teachers = APIRouter(prefix="/teachers", tags=["人员管理-教师"])
 
@@ -256,6 +269,18 @@ def delete_teacher(
     _=Depends(RequirePermissions("teacher:write")),
 ):
     TeacherService(db).delete(teacher_id)
+
+
+@teachers.post(
+    "/batch-delete", response_model=BatchDeleteResult, summary="批量删除教师"
+)
+def batch_delete_teachers(
+    payload: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("teacher:write")),
+):
+    svc = TeacherService(db)
+    return batch_delete_each(payload.ids, svc.delete)
 
 
 router.include_router(students)

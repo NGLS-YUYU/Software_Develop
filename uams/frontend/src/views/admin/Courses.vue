@@ -117,12 +117,16 @@ onMounted(async () => {
       <el-button type="primary" @click="t.search">查询</el-button>
       <div class="spacer" />
       <el-button @click="exportApi.courses()">导出 Excel</el-button>
+      <el-button type="danger" plain :disabled="!t.selectedRows.value.length"
+        :loading="t.batchDeleting.value" @click="t.batchRemoveSelected">批量删除</el-button>
       <el-button type="primary" :icon="'Plus'" @click="t.openCreate">新增课程</el-button>
     </div>
 
     <!-- 桌面：表格 -->
     <div class="table-wrap">
-      <el-table v-loading="t.loading.value" :data="t.rows.value" stripe>
+      <el-table v-loading="t.loading.value" :data="t.rows.value" stripe
+        @selection-change="t.onSelectionChange">
+        <el-table-column type="selection" width="45" />
         <el-table-column prop="code" label="课程代码" width="112" />
         <el-table-column prop="name" label="课程名称" min-width="180" />
         <el-table-column prop="college_name" label="开课学院" min-width="150" />

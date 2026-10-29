@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import RequirePermissions, get_current_user
 from app.db.session import get_db
 from app.models.course import Course
-from app.schemas.common import PageParams, PageResult
+from app.schemas.common import BatchDeleteRequest, BatchDeleteResult, PageParams, PageResult
+from app.services.base import batch_delete_each
 from app.schemas.course import (
     CourseCreate,
     CourseOut,
@@ -85,6 +86,18 @@ def delete_course(
     _=Depends(RequirePermissions("course:write")),
 ):
     CourseService(db).delete(course_id)
+
+
+@courses.post(
+    "/batch-delete", response_model=BatchDeleteResult, summary="批量删除课程"
+)
+def batch_delete_courses(
+    payload: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("course:write")),
+):
+    svc = CourseService(db)
+    return batch_delete_each(payload.ids, svc.delete)
 
 
 # --- 先修课程 ---
@@ -199,6 +212,18 @@ def delete_plan(
     _=Depends(RequirePermissions("curriculum:write")),
 ):
     CurriculumService(db).delete(plan_id)
+
+
+@plans.post(
+    "/batch-delete", response_model=BatchDeleteResult, summary="批量删除培养方案"
+)
+def batch_delete_plans(
+    payload: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("curriculum:write")),
+):
+    svc = CurriculumService(db)
+    return batch_delete_each(payload.ids, svc.delete)
 
 
 @plans.get(

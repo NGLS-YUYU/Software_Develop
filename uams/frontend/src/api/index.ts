@@ -2,6 +2,7 @@
 
 import { del, download, get, post, put, upload, uploadForm } from './request'
 import type {
+  BatchDeleteResult,
   Adjustment,
   AdminAccount,
   Announcement,
@@ -48,8 +49,8 @@ import type {
 
 // --- 认证 ---
 export const authApi = {
-  login: (username: string, password: string) =>
-    post<LoginResponse>('/auth/login', { username, password }),
+  login: (username: string, real_name: string, password: string) =>
+    post<LoginResponse>('/auth/login', { username, real_name, password }),
   me: () =>
     get<{ user: UserInfo; roles: string[]; permissions: string[] }>('/auth/me'),
   changePassword: (old_password: string, new_password: string) =>
@@ -98,6 +99,8 @@ export const studentApi = {
   create: (b: Record<string, unknown>) => post<Student>('/students', b),
   update: (id: number, b: Record<string, unknown>) => put<Student>(`/students/${id}`, b),
   remove: (id: number) => del(`/students/${id}`),
+  batchRemove: (ids: number[]) =>
+    post<BatchDeleteResult>('/students/batch-delete', { ids }),
 }
 
 export const teacherApi = {
@@ -107,6 +110,8 @@ export const teacherApi = {
   create: (b: Record<string, unknown>) => post<Teacher>('/teachers', b),
   update: (id: number, b: Record<string, unknown>) => put<Teacher>(`/teachers/${id}`, b),
   remove: (id: number) => del(`/teachers/${id}`),
+  batchRemove: (ids: number[]) =>
+    post<BatchDeleteResult>('/teachers/batch-delete', { ids }),
 }
 
 // --- 课程 ---
@@ -117,6 +122,8 @@ export const courseApi = {
   create: (b: Partial<Course>) => post<Course>('/courses', b),
   update: (id: number, b: Partial<Course>) => put<Course>(`/courses/${id}`, b),
   remove: (id: number) => del(`/courses/${id}`),
+  batchRemove: (ids: number[]) =>
+    post<BatchDeleteResult>('/courses/batch-delete', { ids }),
   prerequisites: (id: number) => get<Prerequisite[]>(`/courses/${id}/prerequisites`),
   addPrerequisite: (id: number, prerequisite_course_id: number, min_score = 60) =>
     post<Prerequisite>(`/courses/${id}/prerequisites`, {
@@ -135,6 +142,8 @@ export const curriculumApi = {
   update: (id: number, b: Partial<CurriculumPlan>) =>
     put<CurriculumPlan>(`/curriculum-plans/${id}`, b),
   remove: (id: number) => del(`/curriculum-plans/${id}`),
+  batchRemove: (ids: number[]) =>
+    post<BatchDeleteResult>('/curriculum-plans/batch-delete', { ids }),
   courses: (id: number) => get<CurriculumCourse[]>(`/curriculum-plans/${id}/courses`),
   addCourse: (id: number, course_id: number, suggested_semester: number, is_required = true) =>
     post<CurriculumCourse>(`/curriculum-plans/${id}/courses`, {
@@ -154,6 +163,8 @@ export const teachingApi = {
   updateTask: (id: number, b: Record<string, unknown>) =>
     put<TeachingTask>(`/teaching-tasks/${id}`, b),
   removeTask: (id: number) => del(`/teaching-tasks/${id}`),
+  batchRemoveTasks: (ids: number[]) =>
+    post<BatchDeleteResult>('/teaching-tasks/batch-delete', { ids }),
 
   classes: (q?: PageQuery & {
     semester?: string
@@ -166,6 +177,8 @@ export const teachingApi = {
   updateClass: (id: number, b: Record<string, unknown>) =>
     put<TeachingClass>(`/teaching-classes/${id}`, b),
   removeClass: (id: number) => del(`/teaching-classes/${id}`),
+  batchRemoveClasses: (ids: number[]) =>
+    post<BatchDeleteResult>('/teaching-classes/batch-delete', { ids }),
   toggleSelection: (id: number, open: boolean) =>
     post<TeachingClass>(`/teaching-classes/${id}/selection?open=${open}`),
 
@@ -193,6 +206,10 @@ export const teachingApi = {
   /** 教务手动移除学生（FIX-002；已有成绩时后端 409）。 */
   removeStudent: (id: number, studentId: number) =>
     del(`/teaching-classes/${id}/students/${studentId}`),
+  batchRemoveStudents: (id: number, studentIds: number[]) =>
+    post<BatchDeleteResult>(`/teaching-classes/${id}/students/batch-delete`, {
+      student_ids: studentIds,
+    }),
 }
 
 // --- 选课 ---
@@ -232,6 +249,8 @@ export const scheduleApi = {
   update: (id: number, b: Record<string, unknown>) =>
     put<Schedule>(`/teaching-schedules/${id}`, b),
   remove: (id: number) => del(`/teaching-schedules/${id}`),
+  batchRemove: (ids: number[]) =>
+    post<BatchDeleteResult>('/teaching-schedules/batch-delete', { ids }),
 
   /** 教师课表（身份取自 token，不接受 teacher_id）。 */
   mine: (semester?: string, week?: number) =>

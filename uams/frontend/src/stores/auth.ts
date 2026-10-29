@@ -68,8 +68,8 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function login(username: string, password: string) {
-    const res = await authApi.login(username, password)
+  async function login(username: string, real_name: string, password: string) {
+    const res = await authApi.login(username, real_name, password)
     // 后端返回 200 但没有有效凭证时，绝不能进入系统。
     if (
       !res?.access_token ||

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=50, description="学号/工号/用户名")
+    real_name: str = Field(..., min_length=1, max_length=50, description="账号个人姓名")
     password: str = Field(..., min_length=1, max_length=128)
 
 

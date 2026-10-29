@@ -141,7 +141,11 @@ SQLAlchemy → PyMySQL → MySQL
 
 ### 3.3 认证与权限
 
-- 登录：`AuthService.authenticate()`；
+- 登录：`AuthService.authenticate()`，**用户名 + 个人姓名 + 密码三字段联合校验**（FIX-BUSINESS-001）；
+  - `users.username` 唯一，`users.real_name` 为建档姓名（学生/教师/管理员共用同一来源）；
+  - 姓名不符与密码错误统一返回 `AUTH_INVALID_CREDENTIALS`，并计入同一失败次数与锁定策略；
+  - 初始管理员 `admin` 额外接受姓名 `admin`（历史库显示名为「系统管理员」时仍可登录）；
+  - `user_roles` 多对多，教师兼任管理员只增加角色，不改 `user_type`、不复制账号；
 - Token：JWT，`sub` 为用户 ID，附 username/user_type；
 - 每次请求 `get_current_user` 重新读取用户并检查 ACTIVE；
 - 权限依赖 `RequirePermissions`；
@@ -263,7 +267,7 @@ uams/
 | 服务 | 职责 |
 |---|---|
 | `auth.py` | 认证、锁定、JWT 签发、改密 |
-| `base.py` | 通用 CRUD、分页、唯一性、搜索 |
+| `base.py` | 通用 CRUD、分页、唯一性、搜索；`batch_delete_each` 逐条批量删除汇总 |
 | `assessment.py` | 课程考核结构与权重 |
 | `score_service.py` | 总评/绩点/补考/及格计算 |
 | `gpa_service.py` | 实时 GPA |
@@ -275,7 +279,7 @@ uams/
 | `term.py` | 学期状态与 ACTIVE |
 | `person.py` | 学生/教师建档与账号联动 |
 | `course.py` / `organization.py` | 课程/组织 |
-| `import_service.py` | Excel 导入 |
+| `import_service.py` | Excel 导入；模板字段与新增表单一致（FIX-BUSINESS-001） |
 | `audit.py` | 操作日志写入 |
 | `email.py` / `integrity.py` | 邮箱治理 / 唯一约束翻译 |
 
@@ -573,10 +577,10 @@ cd backend
 ### 9.4 典型调用
 
 ```bash
-# 登录
+# 登录（三字段：用户名 + 个人姓名 + 密码）
 curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/v1/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"..."}'
+  -d '{"username":"admin","real_name":"admin","password":"..."}'
 
 # 学生可选课程
 curl --noproxy '*' -s 'http://127.0.0.1:8000/api/v1/course-selections/available?semester=2026-2027-1' \
@@ -605,7 +609,8 @@ curl --noproxy '*' -s -X POST http://127.0.0.1:8000/api/v1/grades/approve \
 | RBAC | 用户→角色→权限；后端依赖校验 |
 | 对象级权限 | 学生本人；教师本人教学班；管理员全校 |
 | 管理员判定 | `ACADEMIC_ADMIN` 角色，支持教师双身份 |
-| 登录失败 | 默认 5 次锁定 15 分钟；返回剩余秒数 |
+| 登录失败 | 默认 5 次锁定 15 分钟；返回剩余秒数；姓名/密码错误合并计数 |
+| 批量删除 | 逐条复用单条删除校验；失败项返回原因，不级联删除选课/成绩/教学任务 |
 | 敏感配置 | `.env` Git 忽略，权限 600 |
 | 文件 | 类型/大小/路径/归属校验 |
 | 数据库 | 应用账号仅授权业务库；正式/测试分离 |

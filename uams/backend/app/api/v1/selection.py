@@ -14,7 +14,9 @@ from app.models.person import Student
 from app.models.selection import SelectionPeriod
 from app.models.term import AcademicTerm
 from app.models.user import User, UserType
+from app.schemas.common import BatchDeleteResult
 from app.schemas.teaching import TeachingClassOut
+from app.services.base import batch_delete_each
 from app.services.person import StudentService
 from app.services.selection import SelectionService, selection_source_label
 from app.services.teaching import TeachingClassService
@@ -384,6 +386,29 @@ def add_student_to_class(
         "source_label": selection_source_label(sel.source),
         "message": "已加入教学班",
     }
+
+
+class BatchStudents(BaseModel):
+    student_ids: list[int] = Field(..., min_length=1, max_length=100)
+
+
+@mgmt.post(
+    "/{class_id}/students/batch-delete",
+    response_model=BatchDeleteResult,
+    summary="教务批量移除教学班学生",
+)
+def batch_remove_students(
+    class_id: int,
+    payload: BatchStudents,
+    db: Session = Depends(get_db),
+    current: User = Depends(RequirePermissions("selection:manage")),
+):
+    svc = TeachingClassService(db)
+
+    def remove_one(student_id: int) -> None:
+        svc.remove_student(class_id, student_id, operator=current)
+
+    return batch_delete_each(payload.student_ids, remove_one)
 
 
 @mgmt.delete(

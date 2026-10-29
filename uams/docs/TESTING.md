@@ -21,22 +21,23 @@ cd backend
 
 ---
 
-## 2. 后端自动化测试（44 项）
+## 2. 后端自动化测试（57 项）
 
 | 文件 | 收集数 | 覆盖 |
 |---|---:|---|
 | `tests/test_core_regressions.py` | 6 | 隔离库目标、邮箱规范化、成绩快照、考试时长、成绩历史表、未知学期窗口 |
 | `tests/test_v31_fixes.py` | 24 | 成绩撤销/更正/历史、ACTIVE 学期、考试冲突/考场、教学任务、教学班开放校验、评价任务、审计、双身份、数据隔离、排名、导出、培养方案、资料、调停课、登录相关对象校验 |
-| `tests/test_login_errors.py` | 6 | 登录成功、错误密码/未知账号统一响应、停用、锁定（5 次/剩余秒数）、空值校验、强制 500 |
+| `tests/test_login_errors.py` | 9 | 登录成功、错误密码/未知账号统一响应、停用、锁定（5 次/剩余秒数）、空值校验、强制 500；**新增**姓名错误拒绝、缺少姓名为 422、初始 admin 姓名兼容 |
 | `tests/test_env_guard.py` | 8 | 模式映射、URL 只改库名、特殊字符密码、未知模式、配置缺失、库名不符、版本不符 |
+| `tests/test_business_fixes.py` | 10 | FIX-BUSINESS-001：学生学院/专业层级校验、学生/教师/课程批量删除（含关联保护）、教学班名单批量移除（有成绩拒绝）、批量删除空列表 422、导入模板字段与性别校验、三字段登录、教师兼任管理员复用账号与姓名 |
 | `frontend/tests/latest.test.mjs` | 2 | 最近请求守卫（`npm run test:unit`） |
 
-**最近结果：44 passed，0 failed。**
+**最近结果：57 passed，0 failed。**
 
 ```bash
 cd backend
 .venv/bin/pytest -q
-# 44 passed
+# 57 passed
 ```
 
 ---
@@ -45,7 +46,7 @@ cd backend
 
 | 检查 | 命令 | 最近结果 |
 |---|---|---|
-| 前端类型与构建 | `cd frontend && npm run build` | 通过（无 chunk >500kB 警告） |
+| 前端类型与构建 | `cd frontend && npm run build` | 通过（存在 >500kB chunk 提示，不影响构建） |
 | 后端编译 | `cd backend && .venv/bin/python -m compileall -q app tests scripts` | 通过 |
 | 启动器语法 | `bash -n start.sh deploy/*.sh` | 通过 |
 | systemd unit | `systemd-analyze verify deploy/systemd/uams-backend.service` | 通过（无 UAMS unit 错误） |
@@ -124,6 +125,17 @@ E2E 环境：`uams_test` 后端 8010、Vite 5180、Chrome/CDP；脚本强制检�
 - 点击性别分组标签已验证聚焦首个 radio（`activeElement` 为 `student-gender|radio`）。
 
 未验证/未执行：未直接读取 DevTools Issues 面板（使用等价 DOM 规则检查）；最新前端构建尚未发布到正式站点。
+
+### FIX-BUSINESS-001 验证（2026-10-29）
+
+| 项目 | 方法 | 结果 |
+|---|---|---|
+| 后端全量 | `cd backend && .venv/bin/pytest -q`（隔离库 `uams_test`） | 57 passed |
+| 学生学院/专业层级 | 新增/编辑时传入与班级不一致的学院或专业 | 409，未写库 |
+| 批量删除安全性 | 学生（有选课）、教师（有教学班）、课程（有教学任务）、名单学生（有成绩）混入可删除项 | 可删项成功、受限项失败并返回原因；历史记录不变 |
+| 四类导入模板 | 下载模板、按模板导入学生（含性别）、非法性别 | 模板列与新增表单一致；成功 1 行 / 非法行返回 `gender` 字段错误 |
+| 三字段登录 | 缺姓名、错误姓名、正确三字段、初始 admin 兼容名、教师兼任管理员 | 422 / 401 / 200 / 200 / 200；兼任后 `user_type` 仍为 TEACHER |
+| 前端 | `npm run build`、`npm run test:unit` | 构建通过；单测 2 passed |
 
 ## 5. 未覆盖范围
 

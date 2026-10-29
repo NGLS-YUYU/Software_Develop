@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { exportApi, selectionApi, teachingApi } from '@/api'
 import { currentSemester, semesterOptions } from '@/composables/useSemester'
 import { createLatestGuard } from '@/utils/latest'
-import type { SelectionPeriod, TeachingClass } from '@/types'
+import type { ClassRosterStudent, SelectionPeriod, TeachingClass } from '@/types'
 
 const semester = ref(currentSemester())
 const periods = ref<SelectionPeriod[]>([])
@@ -22,8 +22,11 @@ const editingId = ref<number | null>(null)
 const saving = ref(false)
 
 const rosterVisible = ref(false)
-const roster = ref<{ student_no: string; real_name: string; class_name?: string | null }[]>([])
+const roster = ref<ClassRosterStudent[]>([])
 const rosterTitle = ref('')
+const rosterClass = ref<TeachingClass | null>(null)
+const rosterSelection = ref<ClassRosterStudent[]>([])
+const rosterBusy = ref(false)
 
 const STATUS: Record<string, string> = { PENDING: '未开始', ACTIVE: '进行中', CLOSED: '已结束' }
 const STATUS_TYPE: Record<string, string> = { PENDING: 'info', ACTIVE: 'success', CLOSED: 'warning' }
@@ -118,9 +121,41 @@ async function toggle(row: TeachingClass) {
 }
 
 async function showRoster(row: TeachingClass) {
+  rosterClass.value = row
   roster.value = await teachingApi.students(row.id)
   rosterTitle.value = `${row.course_name} — 选课名单（${roster.value.length} 人）`
+  rosterSelection.value = []
   rosterVisible.value = true
+}
+
+function onRosterSelection(rows: ClassRosterStudent[]) {
+  rosterSelection.value = rows
+}
+
+async function batchRemoveRoster() {
+  if (!rosterClass.value || !rosterSelection.value.length) {
+    ElMessage.warning('请先选择要移除的学生')
+    return
+  }
+  const students = rosterSelection.value.map((r) => r.student_id)
+  try {
+    await ElMessageBox.confirm(
+      `确认从教学班移除选中的 ${students.length} 名学生？已有成绩的学生会被拒绝。`,
+      '批量移除学生',
+      { type: 'warning', confirmButtonText: '移除', cancelButtonText: '取消' },
+    )
+  } catch { return }
+  rosterBusy.value = true
+  try {
+    const res = await teachingApi.batchRemoveStudents(rosterClass.value.id, students)
+    if (res.failed.length) {
+      ElMessage.warning(`已移除 ${res.deleted.length} 人，失败 ${res.failed.length} 人：${res.failed.slice(0,3).map(f=>`#${f.id} ${f.reason}`).join('；')}`)
+    } else {
+      ElMessage.success(`已移除 ${res.deleted.length} 名学生`)
+    }
+    await showRoster(rosterClass.value)
+    await loadClasses()
+  } finally { rosterBusy.value = false }
 }
 
 async function loadPeriods() {
@@ -435,12 +470,19 @@ onMounted(async () => {
     <!-- ==================== 选课名单弹窗 ==================== -->
     <el-dialog v-model="rosterVisible" :title="rosterTitle" width="560px">
       <el-empty v-if="!roster.length" description="该教学班暂无学生选课" :image-size="70" />
-      <el-table v-else :data="roster" max-height="420" size="small" stripe>
-        <el-table-column type="index" label="#" width="55" align="center" />
+      <el-table v-else :data="roster" max-height="420" size="small" stripe
+        @selection-change="onRosterSelection">
+        <el-table-column type="selection" width="45" />
         <el-table-column prop="student_no" label="学号" width="140" />
         <el-table-column prop="real_name" label="姓名" width="110" />
         <el-table-column prop="class_name" label="班级" min-width="150" />
+        <el-table-column prop="source_label" label="来源" width="130" />
       </el-table>
+      <template #footer>
+        <el-button type="danger" plain :disabled="!rosterSelection.length"
+          :loading="rosterBusy" @click="batchRemoveRoster">批量移除学生</el-button>
+        <el-button @click="rosterVisible = false">关闭</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>

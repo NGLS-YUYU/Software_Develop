@@ -47,9 +47,10 @@ def _cleanup(uid: int) -> None:
         db.commit()
 
 
-def _login(client: TestClient, username: str, password: str):
+def _login(client: TestClient, username: str, password: str, real_name: str = "pytest login"):
     return client.post(
-        "/api/v1/auth/login", json={"username": username, "password": password}
+        "/api/v1/auth/login",
+        json={"username": username, "real_name": real_name, "password": password},
     )
 
 
@@ -71,7 +72,7 @@ def test_wrong_password_and_unknown_user_share_response(client):
     uid = _make_user()
     try:
         wrong = _login(client, _username(uid), "wrong-password")
-        unknown = _login(client, f"NO_SUCH_{uuid4().hex[:8]}", "whatever")
+        unknown = _login(client, f"NO_SUCH_{uuid4().hex[:8]}", "whatever", "nobody")
         assert wrong.status_code == unknown.status_code == 401
         assert wrong.json()["code"] == unknown.json()["code"] == "AUTH_INVALID_CREDENTIALS"
         assert wrong.json()["message"] == unknown.json()["message"]
@@ -116,8 +117,35 @@ def test_lockout_after_repeated_failures(client):
         _cleanup(uid)
 
 
+def test_wrong_personal_name_rejected(client):
+    uid = _make_user()
+    try:
+        r = _login(client, _username(uid), "GoodPass123", "错误姓名")
+        assert r.status_code == 401, r.text
+        assert r.json()["code"] == "AUTH_INVALID_CREDENTIALS"
+    finally:
+        _cleanup(uid)
+
+
+def test_missing_personal_name_is_validation_error(client):
+    r = client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "admin123"},
+    )
+    assert r.status_code == 422
+    assert r.json()["code"] == "VALIDATION_ERROR"
+
+
+def test_initial_admin_name_compatibility(client):
+    # 初始 admin 兼容姓名 admin；历史显示名也可用
+    r = _login(client, "admin", "admin123", "admin")
+    assert r.status_code == 200, r.text
+    r = _login(client, "admin", "admin123", "系统管理员")
+    assert r.status_code == 200, r.text
+
+
 def test_empty_credentials_are_validation_error(client):
-    r = _login(client, "", "")
+    r = _login(client, "", "", "")
     assert r.status_code == 422
     assert r.json()["code"] == "VALIDATION_ERROR"
 
@@ -130,7 +158,7 @@ def test_internal_error_returns_500(monkeypatch):
     with TestClient(app, raise_server_exceptions=False) as c:
         r = c.post(
             "/api/v1/auth/login",
-            json={"username": "admin", "password": "whatever"},
+            json={"username": "admin", "real_name": "admin", "password": "whatever"},
         )
     assert r.status_code == 500
 

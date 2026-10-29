@@ -53,6 +53,10 @@ const classes = ref<TeachingClass[]>([])
 const classesTotal = ref(0)
 const classPage = ref(1)
 const loading = ref(false)
+const taskSelection = ref<TeachingTask[]>([])
+const classSelection = ref<TeachingClass[]>([])
+const scheduleSelection = ref<Schedule[]>([])
+const batchBusy = ref(false)
 const taskGuard = createLatestGuard()
 const classGuard = createLatestGuard()
 
@@ -372,6 +376,59 @@ function scheduleText(tc: TeachingClass) {
     .join('；')
 }
 
+// --- 批量删除 ---
+function onTaskSelection(rows: TeachingTask[]) { taskSelection.value = rows }
+function onClassSelection(rows: TeachingClass[]) { classSelection.value = rows }
+function onScheduleSelection(rows: Schedule[]) { scheduleSelection.value = rows }
+
+async function batchDeleteTasks() {
+  const ids = taskSelection.value.map((r) => r.id)
+  if (!ids.length) { ElMessage.warning('请先选择教学任务'); return }
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 个教学任务？`, '批量删除', { type: 'warning' })
+  } catch { return }
+  batchBusy.value = true
+  try {
+    const res = await teachingApi.batchRemoveTasks(ids)
+    if (res.failed.length) ElMessage.warning(`已删除 ${res.deleted.length}，失败 ${res.failed.length}：${res.failed.slice(0,3).map(f=>`#${f.id} ${f.reason}`).join('；')}`)
+    else ElMessage.success(`已删除 ${res.deleted.length} 个教学任务`)
+    await loadTasks()
+    await loadClasses()
+  } finally { batchBusy.value = false }
+}
+
+async function batchDeleteClasses() {
+  const ids = classSelection.value.map((r) => r.id)
+  if (!ids.length) { ElMessage.warning('请先选择教学班'); return }
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 个教学班？`, '批量删除', { type: 'warning' })
+  } catch { return }
+  batchBusy.value = true
+  try {
+    const res = await teachingApi.batchRemoveClasses(ids)
+    if (res.failed.length) ElMessage.warning(`已删除 ${res.deleted.length}，失败 ${res.failed.length}：${res.failed.slice(0,3).map(f=>`#${f.id} ${f.reason}`).join('；')}`)
+    else ElMessage.success(`已删除 ${res.deleted.length} 个教学班`)
+    await loadClasses()
+    await loadTasks()
+  } finally { batchBusy.value = false }
+}
+
+async function batchDeleteSchedules() {
+  const ids = scheduleSelection.value.map((r) => r.id)
+  if (!ids.length) { ElMessage.warning('请先选择排课记录'); return }
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 条排课？不会删除教学班和学生。`, '批量删除', { type: 'warning' })
+  } catch { return }
+  batchBusy.value = true
+  try {
+    const res = await scheduleApi.batchRemove(ids)
+    if (res.failed.length) ElMessage.warning(`已删除 ${res.deleted.length}，失败 ${res.failed.length}：${res.failed.slice(0,3).map(f=>`#${f.id} ${f.reason}`).join('；')}`)
+    else ElMessage.success(`已删除 ${res.deleted.length} 条排课`)
+    await reloadSchedules()
+    await loadClasses()
+  } finally { batchBusy.value = false }
+}
+
 // --- 加载 ---
 async function loadTasks() {
   const seq = taskGuard.next()
@@ -445,6 +502,14 @@ onMounted(async () => {
         <el-option v-for="s in semesterOptions()" :key="s" :label="s" :value="s" />
       </el-select>
       <div class="spacer" />
+      <el-button v-if="tab === 'task'" type="danger" plain
+        :disabled="!taskSelection.length" :loading="batchBusy" @click="batchDeleteTasks">
+        批量删除
+      </el-button>
+      <el-button v-else type="danger" plain
+        :disabled="!classSelection.length" :loading="batchBusy" @click="batchDeleteClasses">
+        批量删除
+      </el-button>
       <el-button v-if="tab === 'task'" type="primary" :icon="'Plus'" @click="openTask">
         新增教学任务
       </el-button>
@@ -457,7 +522,8 @@ onMounted(async () => {
       <el-tab-pane label="教学班" name="class">
         <!-- 桌面端：表格 -->
         <div class="table-wrap">
-          <el-table :data="classes" stripe>
+          <el-table :data="classes" stripe @selection-change="onClassSelection">
+            <el-table-column type="selection" width="45" />
             <el-table-column prop="code" label="教学班号" min-width="170" />
             <el-table-column prop="course_name" label="课程" min-width="150" />
             <el-table-column prop="credits" label="学分" width="70" align="center" />
@@ -581,7 +647,8 @@ onMounted(async () => {
       <el-tab-pane label="教学任务" name="task">
         <!-- 桌面端：表格 -->
         <div class="table-wrap">
-          <el-table :data="tasks" stripe>
+          <el-table :data="tasks" stripe @selection-change="onTaskSelection">
+            <el-table-column type="selection" width="45" />
             <el-table-column prop="semester" label="学期" width="130" />
             <el-table-column prop="course_code" label="课程代码" width="110" />
             <el-table-column prop="course_name" label="课程名称" min-width="170" />
@@ -790,6 +857,8 @@ onMounted(async () => {
       </div>
 
       <div class="sched-submit">
+        <el-button type="danger" plain :disabled="!scheduleSelection.length"
+          :loading="batchBusy" @click="batchDeleteSchedules">批量删除</el-button>
         <el-button type="primary" :loading="schedSaving" @click="saveSchedule">
           {{ schedEditingId != null ? '保存修改' : '添加' }}
         </el-button>
@@ -798,7 +867,8 @@ onMounted(async () => {
 
       <!-- 已排课列表：桌面表格，每行突出 星期 + 节次 + 教室 -->
       <div class="table-wrap sched-table-wrap">
-        <el-table :data="schedList" size="small" stripe>
+        <el-table :data="schedList" @selection-change="onScheduleSelection" size="small" stripe>
+          <el-table-column type="selection" width="42" />
           <el-table-column label="星期" width="80" align="center">
             <template #default="{ row }">
               <span class="when-day">{{ DAY[row.day_of_week] }}</span>

@@ -19,7 +19,9 @@ from app.core.exceptions import PermissionDenied
 from app.db.session import get_db
 from app.models.person import Student, Teacher
 from app.models.user import User, UserType
+from app.schemas.common import BatchDeleteRequest, BatchDeleteResult
 from app.schemas.teaching import ScheduleOut, ScheduleUpdate, TeachingScheduleCreate
+from app.services.base import batch_delete_each
 from app.services.teaching import ScheduleService
 
 router = APIRouter(prefix="/teaching-schedules", tags=["教学安排"])
@@ -149,6 +151,18 @@ def update_schedule(
 ):
     s = ScheduleService(db).update(schedule_id, payload.model_dump(exclude_unset=True))
     return _sched_out(ScheduleService(db).get_or_404(s.id))
+
+
+@router.post(
+    "/batch-delete", response_model=BatchDeleteResult, summary="批量删除教学安排"
+)
+def batch_delete_schedules(
+    payload: BatchDeleteRequest,
+    db: Session = Depends(get_db),
+    _=Depends(RequirePermissions("schedule:write")),
+):
+    svc = ScheduleService(db)
+    return batch_delete_each(payload.ids, svc.delete)
 
 
 @router.delete(

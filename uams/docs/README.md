@@ -27,7 +27,7 @@
 |---|---|
 | [archive/audits/](archive/audits/) | V0.2 审计、V3.1 功能差距审计与预检 |
 | [archive/fixes/](archive/fixes/) | FIX-001～009、V3.1 FIX-001～004、登录错误修复 |
-| [archive/reports/](archive/reports/) | 部署/验收/阶段基线/启动管理器/工程清理/最终交付报告 |
+| [archive/reports/](archive/reports/) | 部署/验收/阶段基线/启动管理器/工程清理/最终交付/FIX-BUSINESS-001 报告 |
 
 归档索引见 [archive/README.md](archive/README.md)。
 

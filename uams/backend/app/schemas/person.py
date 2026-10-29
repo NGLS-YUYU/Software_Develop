@@ -14,6 +14,9 @@ class StudentCreate(BaseModel):
     student_no: str = Field(..., min_length=1, max_length=30, description="学号，同时作为登录名")
     real_name: str = Field(..., min_length=1, max_length=50)
     class_id: int
+    # 学院/专业为组织校验字段：最终以班级所属专业/学院为准，不单独存储。
+    college_id: int | None = Field(None, description="所属学院（必须与班级一致）")
+    major_id: int | None = Field(None, description="所属专业（必须与班级一致）")
     gender: str = Field("UNKNOWN", pattern=GENDER)
     birth_date: date | None = None
     enrollment_year: int = Field(..., ge=1900, le=2200)
@@ -27,6 +30,8 @@ class StudentCreate(BaseModel):
 class StudentUpdate(BaseModel):
     real_name: str | None = Field(None, max_length=50)
     class_id: int | None = None
+    college_id: int | None = Field(None, description="所属学院（必须与班级一致）")
+    major_id: int | None = Field(None, description="所属专业（必须与班级一致）")
     gender: str | None = Field(None, pattern=GENDER)
     birth_date: date | None = None
     academic_status: str | None = Field(

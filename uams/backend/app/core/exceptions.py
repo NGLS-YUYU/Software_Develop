@@ -28,7 +28,8 @@ class BizError(HTTPException):
 class InvalidCredentials(BizError):
     code = "AUTH_INVALID_CREDENTIALS"
     http_status = status.HTTP_401_UNAUTHORIZED
-    message = "用户名或密码错误"
+    # 用户名、姓名、密码统一提示，避免泄露具体失败字段。
+    message = "用户名、姓名或密码错误"
 
 
 class AccountLocked(BizError):

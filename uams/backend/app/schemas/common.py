@@ -56,5 +56,24 @@ class IdResponse(BaseModel):
     id: int
 
 
+class BatchDeleteRequest(BaseModel):
+    """批量删除请求；单次上限防止无界操作。"""
+
+    ids: list[int] = Field(..., min_length=1, max_length=100)
+
+
+class BatchDeleteFailure(BaseModel):
+    id: int
+    reason: str
+
+
+class BatchDeleteResult(BaseModel):
+    """批量删除结果：逐条校验，部分成功时明确返回失败原因。"""
+
+    requested: int
+    deleted: list[int]
+    failed: list[BatchDeleteFailure]
+
+
 class MessageResponse(BaseModel):
     message: str

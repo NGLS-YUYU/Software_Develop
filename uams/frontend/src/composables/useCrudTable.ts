@@ -5,13 +5,14 @@
 import { reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import type { PageQuery, PageResult } from '@/types'
+import type { BatchDeleteResult, PageQuery, PageResult } from '@/types'
 
 interface CrudApi<T> {
   list: (q: PageQuery & Record<string, unknown>) => Promise<PageResult<T>>
   create?: (b: Record<string, unknown>) => Promise<T>
   update?: (id: number, b: Record<string, unknown>) => Promise<T>
   remove?: (id: number) => Promise<unknown>
+  batchRemove?: (ids: number[]) => Promise<BatchDeleteResult>
 }
 
 export function useCrudTable<T extends { id: number }>(
@@ -39,6 +40,8 @@ export function useCrudTable<T extends { id: number }>(
   const form = ref<Record<string, unknown>>(options.emptyForm())
   const editingId = ref<number | null>(null)
   const saving = ref(false)
+  const selectedRows = ref<T[]>([])
+  const batchDeleting = ref(false)
   /** 查询序号：较早发出的请求即使晚返回，也不能覆盖较新的结果。 */
   let loadSeq = 0
 
@@ -149,11 +152,62 @@ export function useCrudTable<T extends { id: number }>(
     }
   }
 
+  function onSelectionChange(rowsSelected: T[]) {
+    selectedRows.value = rowsSelected
+  }
+
+  async function batchRemoveSelected() {
+    if (batchDeleting.value) return
+    if (!selectedRows.value.length) {
+      ElMessage.warning(`请先选择要删除的${name}`)
+      return
+    }
+    if (!api.batchRemove) {
+      ElMessage.error(`${name}不支持批量删除`)
+      return
+    }
+    const ids = selectedRows.value.map((r) => r.id)
+    try {
+      await ElMessageBox.confirm(
+        `确认删除选中的 ${ids.length} 条${name}？此操作不可撤销。`,
+        '批量删除',
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+    batchDeleting.value = true
+    try {
+      const res = await api.batchRemove(ids)
+      if (res.failed.length) {
+        ElMessage.warning(
+          `已删除 ${res.deleted.length} 条，失败 ${res.failed.length} 条：` +
+            res.failed.slice(0, 3).map((f) => `#${f.id} ${f.reason}`).join('；'),
+        )
+      } else {
+        ElMessage.success(`已删除 ${res.deleted.length} 条${name}`)
+      }
+      selectedRows.value = []
+      await load()
+      try {
+        await options.afterMutation?.()
+      } catch {
+        // 关联刷新失败由拦截器提示
+      }
+    } finally {
+      batchDeleting.value = false
+    }
+  }
+
   return {
     rows,
     total,
     loading,
     query,
+    selectedRows,
+    batchDeleting,
+    onSelectionChange,
+    batchRemoveSelected,
     dialogVisible,
     dialogMode,
     form,

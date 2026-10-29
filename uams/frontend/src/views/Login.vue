@@ -10,7 +10,7 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
-const form = ref({ username: '', password: '' })
+const form = ref({ username: '', real_name: '', password: '' })
 const loading = ref(false)
 const errorMessage = ref('')
 const passwordRef = ref<{ focus: () => void } | null>(null)
@@ -45,17 +45,17 @@ function loginErrorInfo(err: unknown): { message: string; clearPassword: boolean
 
   switch (data?.code) {
     case 'AUTH_INVALID_CREDENTIALS':
-      return { message: '用户名或密码错误，请重新输入', clearPassword: true }
+      return { message: '用户名、姓名或密码错误，请重新输入', clearPassword: true }
     case 'AUTH_ACCOUNT_DISABLED':
       return { message: '该账号已被停用，请联系管理员', clearPassword: false }
     case 'AUTH_ACCOUNT_LOCKED':
       return { message: lockedMessage(data.retry_after_seconds), clearPassword: false }
     case 'VALIDATION_ERROR':
-      return { message: '请输入用户名和密码', clearPassword: false }
+      return { message: '请输入用户名、个人姓名和密码', clearPassword: false }
   }
 
   if (status === 401) {
-    return { message: '用户名或密码错误，请重新输入', clearPassword: true }
+    return { message: '用户名、姓名或密码错误，请重新输入', clearPassword: true }
   }
   if (status === 403) {
     return { message: '该账号已被停用，请联系管理员', clearPassword: false }
@@ -75,17 +75,18 @@ function clearError() {
 
 async function submit() {
   const username = form.value.username.trim()
+  const real_name = form.value.real_name.trim()
   const password = form.value.password
   errorMessage.value = ''
-  if (!username || !password) {
-    errorMessage.value = '请输入用户名和密码'
+  if (!username || !real_name || !password) {
+    errorMessage.value = '请输入用户名、个人姓名和密码'
     return
   }
 
   loading.value = true
   let res: LoginResponse
   try {
-    res = await auth.login(username, password)
+    res = await auth.login(username, real_name, password)
   } catch (err) {
     const info = loginErrorInfo(err)
     errorMessage.value = info.message
@@ -149,6 +150,16 @@ function fill(a: { username: string; password: string }) {
               size="large"
               placeholder="学号 / 工号 / 用户名"
               :prefix-icon="'User'"
+              clearable
+              @input="clearError"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-input
+              v-model="form.real_name"
+              size="large"
+              placeholder="个人姓名"
+              :prefix-icon="'Postcard'"
               clearable
               @input="clearError"
             />
