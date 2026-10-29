@@ -136,6 +136,7 @@ E2E 环境：`uams_test` 后端 8010、Vite 5180、Chrome/CDP；脚本强制检�
 | 四类导入模板 | 下载模板、按模板导入学生（含性别）、非法性别 | 模板列与新增表单一致；成功 1 行 / 非法行返回 `gender` 字段错误 |
 | 三字段登录 | 缺姓名、错误姓名、正确三字段、初始 admin 兼容名、教师兼任管理员 | 422 / 401 / 200 / 200 / 200；兼任后 `user_type` 仍为 TEACHER |
 | 前端 | `npm run build`、`npm run test:unit` | 构建通过；单测 2 passed |
+| 浏览器 E2E | `python3 tests/e2e/test_business_acceptance.py`（Chrome/CDP，`uams_test`） | **49 项全部通过**；含 Console 无异常、Network 无 5xx |
 
 ## 5. 未覆盖范围
 

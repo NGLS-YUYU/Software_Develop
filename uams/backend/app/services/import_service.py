@@ -305,12 +305,22 @@ def _template_bytes(
     return buf.getvalue()
 
 
-def _label_of(field: str) -> str:
-    """后端字段名 → 模板中文表头。"""
+def _label_of(field: str, overrides: dict[str, str] | None = None) -> str:
+    """后端字段名 → 模板中文表头。
+
+    ``overrides`` 用于同一字段在不同模板中采用各自的表单名称
+    （如 phone 在学生表单叫「手机」、在教师表单叫「联系电话」）。
+    """
+    if overrides and field in overrides:
+        return overrides[field]
     for label, name in _HEADER_ALIASES.items():
         if name == field and not label.endswith("(固定)"):
             return label
     return field
+
+
+def _labels_of(fields: list[str], overrides: dict[str, str] | None = None) -> list[str]:
+    return [_label_of(f, overrides) for f in fields]
 
 
 def _translate(value: str, mapping: dict[str, str], label: str) -> str:
@@ -336,7 +346,8 @@ class ImportService:
 
     def student_template(self) -> bytes:
         return _template_bytes(
-            [_label_of(f) for f in _STUDENT_HEADERS],
+            # 学生表单中电话字段名为「手机」，模板与表单保持一致。
+            _labels_of(_STUDENT_HEADERS, {"phone": "手机"}),
             ["20240001", "张三", "20240001", "男", "信息工程学院", "软件工程", "软件2401班", "", "", "", ""],
             title="学生批量导入模板",
             notes=[

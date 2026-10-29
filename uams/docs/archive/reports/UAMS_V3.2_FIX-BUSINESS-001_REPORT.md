@@ -172,7 +172,7 @@
 | 前端构建/类型 | `cd frontend && npm run build` | 通过 |
 | 前端单测 | `npm run test:unit` | 2 passed |
 
-未执行：浏览器 E2E（需启动 `uams_test` 后端 8010、Vite 5180 与 Chrome/CDP）。脚本已同步三字段登录参数，留待发布验收环境执行。
+浏览器 E2E：已在隔离栈（`uams_test` 后端 8010、Vite 5180、Chrome/CDP）执行 `test_business_acceptance.py`，49 项全部通过（含 Console/Network 检查）。详见 `UAMS_V3.2_FIX-BUSINESS-001_ACCEPTANCE.md`。
 
 测试中发现并修复的问题：
 
@@ -210,4 +210,4 @@
 - 批量删除单次上限 100 条；
 - 学生/教师的“学院、专业”为班级派生字段，API 传入仅用于校验，不能独立指定；
 - 三字段登录使所有旧客户端必须补充 `real_name`，属预期破坏性变更，已在 API 与手册中说明；
-- 浏览器 E2E 尚未在本会话执行。
+- 浏览器 E2E 已在隔离环境执行通过（49 项）。
